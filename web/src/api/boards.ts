@@ -24,9 +24,10 @@ export interface BoardSummary {
 
 const boardsKey = ['boards'] as const;
 
-export function useBoards() {
+export function useBoards(enabled = true) {
   return useQuery({
     queryKey: boardsKey,
+    enabled,
     queryFn: async (): Promise<BoardSummary[]> => {
       const { data, response } = await api.GET('/api/boards');
       if (!data) throw new Error(`could not list boards: ${response.status}`);

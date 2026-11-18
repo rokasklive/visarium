@@ -10,6 +10,7 @@ import {
 import { useHealth } from '~/api/health';
 import { useSession, useSignOut } from '~/api/session';
 import { useUiStore } from '~/app/ui-store';
+import { GENERATED_BOARDS } from '~/features/canvas/board-fixture';
 import { LibraryPanel } from '~/features/library/library-panel';
 import { ConfirmButton } from './confirm-button';
 import { Wordmark } from './wordmark';
@@ -125,7 +126,8 @@ function SignedInPerson() {
  */
 function BoardTitle() {
   const match = useMatchRoute()({ to: '/boards/$boardId' });
-  const boards = useBoards();
+  // A generated board is in no list, and must not ask the server for one.
+  const boards = useBoards(match !== false && !(match.boardId in GENERATED_BOARDS));
   const rename = useRenameBoard();
   const [editing, setEditing] = useState(false);
   const board = match ? boards.data?.find((b) => b.id === match.boardId) : undefined;

@@ -18,6 +18,27 @@ import {
  * a uniform grid is the one distribution a spatial index never struggles with.
  */
 
+/**
+ * The generated boards, which stay generated.
+ *
+ * M01's and M02's numbers are reproducible only if the boards they were measured
+ * on are reproducible, and a 100,000-item board is not something to persist in
+ * order to benchmark drawing it. These four names never touch the server; every
+ * other id is a real board.
+ */
+export const GENERATED_BOARDS: Readonly<Record<string, number>> = {
+  smoke: 10_000,
+  small: 1_000,
+  large: 100_000,
+  /**
+   * The memory board: built from whatever real assets the library holds, so
+   * every item carries a real intrinsic size and the tiers the cache ends up
+   * holding are the tiers a real board would hold. Eight reused fixtures cannot
+   * exercise a byte budget — see OPEN_QUESTIONS Q7.
+   */
+  assets: 2_000,
+};
+
 export interface BoardSpec {
   readonly count: number;
   readonly seed?: number;
