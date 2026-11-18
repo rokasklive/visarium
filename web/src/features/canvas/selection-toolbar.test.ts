@@ -8,6 +8,7 @@ import {
   type GroupId,
   type ItemId,
   newGroupId,
+  type Transform,
 } from '@visarium/canvas-core';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -178,6 +179,23 @@ describe('duplicating', () => {
     expect(doc.itemCount).toBe(5);
   });
 
+  it('keeps the crop', () => {
+    const { doc, ids } = board(1);
+    const crop = { x: 0.1, y: 0.2, width: 0.5, height: 0.6 };
+    const source = doc.item(ids[0] as ItemId);
+    doc.apply({
+      type: 'item.transform',
+      itemId: ids[0] as ItemId,
+      transform: source?.transform as Transform,
+      crop,
+    });
+
+    const { bodies, itemIds } = duplicateSelection(doc, new Set(ids));
+    for (const body of bodies) doc.apply(body);
+
+    expect(doc.item(itemIds[0] as ItemId)?.crop).toEqual(crop);
+  });
+
   it('gives the copies of a group a new group carrying the same label', () => {
     const { doc, ids, selection } = board(3);
     const history = new CanvasHistory(doc);
@@ -248,6 +266,8 @@ function markup(kind: 'image' | 'placeholder', collapsed = false) {
       labelSignal: 0,
       collapsed,
       onToggleCollapsed: () => {},
+      cropping: false,
+      onToggleCrop: () => {},
     }),
   );
 }
@@ -267,6 +287,8 @@ describe('the order of the tools', () => {
       'Frame',
       'Flip H',
       'Flip V',
+      'Crop',
+      'Reset crop',
       'Front',
       'Back',
       'Group',
@@ -275,6 +297,11 @@ describe('the order of the tools', () => {
       'Delete',
       'Hide tools',
     ]);
+  });
+
+  it('offers crop only for exactly one stored image, and says so', () => {
+    // Two images selected: present, dim, and saying why.
+    expect(markup('image')).toMatch(/title="Select one image to crop it"/);
   });
 
   it('gives every icon a name, so none of them is hover-only', () => {
@@ -341,6 +368,8 @@ describe('the frame toggle', () => {
         labelSignal: 0,
         collapsed: false,
         onToggleCollapsed: () => {},
+        cropping: false,
+        onToggleCrop: () => {},
       }),
     );
   }

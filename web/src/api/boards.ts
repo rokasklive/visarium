@@ -9,6 +9,7 @@ import {
   type CanvasGroup,
   type CanvasItem,
   DEFAULT_APPEARANCE,
+  FULL_CROP,
 } from '@visarium/canvas-core';
 
 export interface BoardSummary {
@@ -185,6 +186,8 @@ function toItem(item: components['schemas']['Item']): CanvasItem[] {
         flipX: item.appearance?.flipX ?? DEFAULT_APPEARANCE.flipX,
         flipY: item.appearance?.flipY ?? DEFAULT_APPEARANCE.flipY,
       },
+      // Absent is the whole image: the server stores a full crop as NULL.
+      crop: item.crop ?? FULL_CROP,
       content: {
         kind: 'image',
         asset: {

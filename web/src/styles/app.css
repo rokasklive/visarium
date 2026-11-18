@@ -72,13 +72,13 @@
   --color-group-edge: oklch(0.46 0.034 265);
 
   /*
-   * The ground grid: the drafting-paper texture that gives an empty board a
-   * sense of scale. Deliberately decorative and deliberately faint — like
+   * The ground grid: the dot texture that gives an empty board a sense of
+   * scale. Deliberately decorative and deliberately faint — like
    * --color-line it is exempt from contrast minimums, but unlike `line` its
    * job is to be ALMOST invisible, so tokens.test.ts holds it inside a band
    * above surface-sunken rather than below a floor: findable, never loud.
    */
-  --color-grid: oklch(0.2 0.008 265);
+  --color-grid: oklch(0.3 0.012 265);
 
   /*
    * Presence. One token per actor the product supports at once, and that count

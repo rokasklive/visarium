@@ -183,6 +183,22 @@ describe('parseServerMessage', () => {
       ).toBeNull();
     });
 
+    it('accepts a valid crop or none, and refuses one outside the original', () => {
+      const withCrop = (crop: unknown) =>
+        frame({
+          t: 'op',
+          fromRevision: 0,
+          toRevision: 1,
+          operations: [{ type: 'item.transform', itemId: uuid(), transform, crop }],
+        });
+      expect(withCrop(undefined)).not.toBeNull();
+      expect(withCrop({ x: 0.25, y: 0, width: 0.5, height: 1 })).not.toBeNull();
+      expect(withCrop({ x: 0.6, y: 0, width: 0.5, height: 1 })).toBeNull();
+      expect(withCrop({ x: 0, y: 0, width: 0, height: 1 })).toBeNull();
+      expect(withCrop({ x: 'NaN', y: 0, width: 0.5, height: 1 })).toBeNull();
+      expect(withCrop(null)).toBeNull();
+    });
+
     it('rejects a range that runs backwards', () => {
       expect(frame({ t: 'op', fromRevision: 5, toRevision: 2, operations: [] })).toBeNull();
     });

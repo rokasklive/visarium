@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { CanvasDocument } from './document';
 import { transformBounds } from './geometry';
 import { asCanvasId, asGroupId, asItemId } from './ids';
-import { type CanvasItem, DEFAULT_APPEARANCE } from './model';
+import { type CanvasItem, DEFAULT_APPEARANCE, FULL_CROP } from './model';
 import type { CanvasOperationBody } from './operations';
 
 const canvasId = asCanvasId('board-1');
@@ -180,6 +180,55 @@ describe('appearance', () => {
   });
 });
 
+describe('crop', () => {
+  const half = { x: 0.5, y: 0, width: 0.5, height: 1 };
+
+  it('creates uncropped unless told otherwise', () => {
+    const d = doc();
+    d.apply(create());
+    expect(d.item(A)?.crop).toEqual(FULL_CROP);
+    d.apply({ ...create(B), crop: half } as CanvasOperationBody);
+    expect(d.item(B)?.crop).toEqual(half);
+  });
+
+  it('undoes a crop and its box together, in one inverse', () => {
+    const d = doc();
+    d.apply(create());
+    const inverse = d.apply({
+      type: 'item.transform',
+      itemId: A,
+      transform: { ...at(25, 0), width: 50 },
+      crop: half,
+    });
+    expect(d.item(A)?.crop).toEqual(half);
+    expect(inverse).toEqual({
+      type: 'item.transform',
+      itemId: A,
+      transform: at(0, 0),
+      crop: FULL_CROP,
+    });
+    d.apply(inverse as CanvasOperationBody);
+    expect(d.item(A)?.transform).toEqual(at(0, 0));
+    expect(d.item(A)?.crop).toEqual(FULL_CROP);
+  });
+
+  it('leaves a crop alone on a plain move, and its undo does not name one', () => {
+    const d = doc();
+    d.apply({ ...create(), crop: half } as CanvasOperationBody);
+    const inverse = d.apply({ type: 'item.transform', itemId: A, transform: at(9, 9) });
+    expect(d.item(A)?.crop).toEqual(half);
+    expect(inverse).toEqual({ type: 'item.transform', itemId: A, transform: at(0, 0) });
+  });
+
+  it('brings a crop back with delete-then-undo', () => {
+    const d = doc();
+    d.apply({ ...create(), crop: half } as CanvasOperationBody);
+    const inverse = d.apply({ type: 'item.delete', itemId: A }) as CanvasOperationBody;
+    d.apply(inverse);
+    expect(d.item(A)?.crop).toEqual(half);
+  });
+});
+
 describe('groups', () => {
   it('stamps and clears membership on its items', () => {
     const d = doc();
@@ -266,6 +315,7 @@ describe('snapshots', () => {
         z: 1,
         content: { kind: 'placeholder', intrinsicWidth: 10, intrinsicHeight: 10 },
         appearance: DEFAULT_APPEARANCE,
+        crop: FULL_CROP,
       },
     ];
     d.loadSnapshot(items, [], 77);

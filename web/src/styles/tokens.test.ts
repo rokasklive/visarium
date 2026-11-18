@@ -165,13 +165,15 @@ describe('chrome holds WCAG 2.2 AA', () => {
  * to be almost invisible — so "subtle" is a band, not a vibe: loud enough to
  * find when looked for (a floor), far below anything that could read as a
  * boundary or compete with content (a ceiling). A nudge in either direction
- * fails here rather than shipping.
+ * fails here rather than shipping. The grid is 2px dots, not hairlines: a dot
+ * carries a fraction of a line's ink, so its band sits higher than a line's
+ * would.
  */
 describe('the ground grid', () => {
   it('stays inside its subtle band above the canvas ground', () => {
     const ratio = contrast('grid', 'surface-sunken');
-    expect(ratio).toBeGreaterThanOrEqual(1.05);
-    expect(ratio).toBeLessThanOrEqual(1.25);
+    expect(ratio).toBeGreaterThanOrEqual(1.3);
+    expect(ratio).toBeLessThanOrEqual(1.6);
   });
 
   it('stays quieter than any real boundary on the same ground', () => {

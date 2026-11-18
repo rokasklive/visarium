@@ -7,18 +7,26 @@ import {
   CanvasHistory,
   type CanvasItem,
   type CanvasOperationBody,
+  type Crop,
+  type CropFrame,
+  clampEdges,
   computeActiveSet,
+  cropFrame,
   DEFAULT_CAMERA,
+  type Edges,
   expandToGroups,
   type FlipAxis,
   fitRect,
   flipSelection,
+  fromEdges,
   GRID_PITCH,
   type GroupId,
   groupOutline,
   type ItemId,
   ItemLod,
   marqueeSelect,
+  movingEdges,
+  originalTransform,
   panBy,
   type Rect,
   rotateSelection,
@@ -26,10 +34,14 @@ import {
   scaleSelection,
   screenToWorld,
   selectionState,
+  slideCrop,
   type Transform,
+  toFrame,
+  toWorld,
   transformBounds,
   unionRects,
   type VisibleItem,
+  visibleEdges,
   visibleWorldRect,
   zoomAt,
 } from '@visarium/canvas-core';
@@ -39,6 +51,7 @@ import {
   paintAggregate,
   toKonvaAppearance,
   toKonvaAttrs,
+  toKonvaCrop,
   toStageAttrs,
 } from '@visarium/canvas-renderer-konva';
 import type Konva from 'konva';
@@ -75,6 +88,7 @@ import { copySelection, NO_ORIGINALS, NOTICES } from './interchange';
 import { PresenceRoster, previewFor, RemoteCursors, remoteSelectionMarks } from './presence-layer';
 import { BoardRealtime, EMPTY_PRESENCE, type RemotePresence } from './realtime';
 import {
+  cropTargetOf,
   duplicateSelection,
   opacityBodies,
   SelectionToolbar,
@@ -134,9 +148,43 @@ const FRAME_STROKE = 1.5;
  */
 const GRID_FADE_BELOW = 12;
 const GRID_HIDE_BELOW = 6;
+/** A grid dot's radius in screen pixels, the same at every zoom. */
+const GRID_DOT_RADIUS = 1;
 
 /** Prefix for the full-strength outline node beside a selected or held item. */
 const SELECTION_MARK = 'sel-';
+
+/** The ghost of the whole original behind an item being cropped (ADR-0029). */
+const CROP_GHOST = 'crop-ghost';
+const CROP_GHOST_EDGE = 'crop-ghost-edge';
+const CROP_GHOST_OPACITY = 0.3;
+/** Smallest a crop may make an item, in screen pixels: a guess, like the lab's. */
+const MIN_CROP_PX = 12;
+
+/**
+ * A crop gesture in flight. Latched when it starts, so letting go of Ctrl+Alt
+ * mid-drag changes nothing; `item` and `frame` are the item as committed then.
+ */
+interface CropGesture {
+  readonly kind: 'edges' | 'slide';
+  readonly item: CanvasItem;
+  readonly frame: CropFrame;
+  readonly was: Edges;
+  /** Where the node was when a slide started; the node is held there. */
+  readonly start: { readonly x: number; readonly y: number };
+  /** World pointer at the press that began a slide; the slide is measured from it. */
+  readonly pointer: { readonly x: number; readonly y: number };
+  last?: { readonly transform: Transform; readonly crop: Crop };
+}
+
+/** Konva's Transformer box, in absolute (screen) coordinates. */
+interface TransformerBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation: number;
+}
 
 /** One derived contour and the geometry signature it was derived from. */
 interface FrameEntry {
@@ -205,6 +253,13 @@ export function CanvasSurface({
    * changes; it moves twice per gesture, not once per pointermove.
    */
   const [gesturing, setGesturing] = useState(false);
+  /** Ctrl+Alt is down: a handle drag now crops instead of resizing. */
+  const [cropHeld, setCropHeld] = useState(false);
+  /** A crop gesture is running, which keeps the ghost up if the keys are let go. */
+  const [cropLive, setCropLive] = useState(false);
+  const cropGesture = useRef<CropGesture | null>(null);
+  /** Where the last press on an item landed, in world space: a slide's origin. */
+  const pressedAt = useRef<{ x: number; y: number } | null>(null);
   /**
    * The opacity under the slider, before it is committed.
    *
@@ -256,6 +311,13 @@ export function CanvasSurface({
   const tool = useUiStore((s) => s.tool);
   const setSelection = useUiStore((s) => s.setSelection);
   const selection = useUiStore((s) => s.selectedItemIds) as ReadonlySet<ItemId>;
+  const cropItemId = useUiStore((s) => s.cropItemId);
+  const setCropItemId = useUiStore((s) => s.setCropItemId);
+  // Crop acts on exactly one stored image; anything else and every path to it
+  // is a resize, exactly as before crop existed.
+  const cropTarget = readOnly ? undefined : cropTargetOf(doc, selection);
+  const cropSticky = cropTarget !== undefined && cropItemId === cropTarget.id;
+  const cropping = cropTarget !== undefined && (cropSticky || cropHeld || cropLive);
 
   const size = useMemo(() => ({ width, height }), [width, height]);
   // The gesture listeners below are attached once; they read the live camera
@@ -922,6 +984,7 @@ export function CanvasSurface({
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      setCropHeld(event.ctrlKey && event.altKey);
       // Nothing on this canvas is a shortcut while a text field has focus,
       // including the selection toolbar's own label field: otherwise naming a
       // cluster "40s cinema" sets its opacity to 40% and deletes it.
@@ -938,6 +1001,13 @@ export function CanvasSurface({
       if (mod && event.key.toLowerCase() === 'a') {
         event.preventDefault();
         selectAll();
+        return;
+      }
+      // Crop mode is left before anything else Escape or Enter would mean: the
+      // first press ends the crop, the image stays selected.
+      if ((event.key === 'Escape' || event.key === 'Enter') && useUiStore.getState().cropItemId) {
+        event.preventDefault();
+        setCropItemId(null);
         return;
       }
       if (event.key === 'Escape') {
@@ -973,6 +1043,16 @@ export function CanvasSurface({
          * and therefore one operation and one history entry: pressing `5` then
          * `7` is two undos, because it was two acts.
          */
+        if (!mod && !event.altKey && event.key.toLowerCase() === 'c') {
+          // The store, not this effect's `selection`: a click then C within one
+          // frame would otherwise read the selection from before the click.
+          const live = useUiStore.getState().selectedItemIds as ReadonlySet<ItemId>;
+          const target = cropTargetOf(doc, live);
+          if (!target) return;
+          event.preventDefault();
+          setCropItemId(useUiStore.getState().cropItemId === target.id ? null : target.id);
+          return;
+        }
         const digit = DIGITS[event.key];
         if (digit !== undefined && !mod) {
           event.preventDefault();
@@ -1047,12 +1127,17 @@ export function CanvasSurface({
     };
     const onKeyUp = (event: KeyboardEvent) => {
       if (event.code === 'Space') spaceHeld.current = false;
+      setCropHeld(event.ctrlKey && event.altKey);
     };
+    // A keyup that happens in another window never arrives here.
+    const onBlur = () => setCropHeld(false);
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
     return () => {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
     };
   }, [
     abandonGesture,
@@ -1063,6 +1148,7 @@ export function CanvasSurface({
     readOnly,
     selectAll,
     selection,
+    setCropItemId,
     setInterchangeNotice,
     setSelection,
   ]);
@@ -1153,6 +1239,7 @@ export function CanvasSurface({
   // --- item gestures -------------------------------------------------------
 
   const onItemPointerDown = (item: CanvasItem, e: Konva.KonvaEventObject<PointerEvent>) => {
+    pressedAt.current = stageRef.current?.getRelativePointerPosition() ?? null;
     if (tool === 'pan' || spaceHeld.current || e.evt.button === 1) return;
     // Selecting someone else's item is fine; manipulating it is not. `draggable`
     // already refuses the drag, and this keeps it out of a multi-item gesture.
@@ -1160,6 +1247,19 @@ export function CanvasSurface({
     const mode = selectionMode(e.evt);
     if (mode === 'replace' && selection.has(item.id)) return; // keep the multi-selection
     select([item.id], mode);
+  };
+
+  /**
+   * Double-click: just this image, even inside a group, in crop mode.
+   *
+   * Picking one member out of a group is the point: a click selects the whole
+   * group, and crop acts on exactly one image.
+   */
+  const enterCrop = (item: CanvasItem) => {
+    if (readOnly || tool !== 'select' || item.content.kind !== 'image') return;
+    if (realtimeRef.current?.heldByOther(item.id)) return;
+    setSelection([item.id]);
+    setCropItemId(item.id);
   };
 
   /**
@@ -1267,6 +1367,23 @@ export function CanvasSurface({
   };
 
   const onDragStart = (item: CanvasItem) => {
+    if (cropping && cropTarget?.id === item.id) {
+      const node = stageRef.current?.findOne(`#${item.id}`);
+      if (!node) return;
+      const frame = cropFrame(item);
+      cropGesture.current = {
+        kind: 'slide',
+        item,
+        frame,
+        was: visibleEdges(item, frame),
+        start: { x: node.x(), y: node.y() },
+        pointer: pressedAt.current ?? { x: 0, y: 0 },
+      };
+      setGesturing(true);
+      setCropLive(true);
+      claim([item.id]);
+      return;
+    }
     setGesturing(true);
     dragOrigins.current.clear();
     for (const id of selection) {
@@ -1279,6 +1396,24 @@ export function CanvasSurface({
 
   /** Siblings follow imperatively — no React render per pointermove. */
   const onDragMove = (item: CanvasItem, e: Konva.KonvaEventObject<DragEvent>) => {
+    const slide = cropGesture.current;
+    if (slide?.kind === 'slide') {
+      // The window stays; the original moves under it.
+      //
+      // Measured from the POINTER, not from the node: Konva fires `dragmove`
+      // even for an event that did not move the node (WebKit and trackpads send
+      // repeats at one position), and the node is pinned back to `start` every
+      // time — so a node-based delta reads zero on a repeat and the crop snaps
+      // back to where the slide began, then forward again on the next move.
+      const pointer = e.target.getStage()?.getRelativePointerPosition();
+      e.target.position(slide.start);
+      if (!pointer) return;
+      const delta = { x: pointer.x - slide.pointer.x, y: pointer.y - slide.pointer.y };
+      const crop = slideCrop(slide.item, delta);
+      slide.last = { transform: slide.item.transform, crop };
+      showCrop(slide.item, slide.last);
+      return;
+    }
     const origin = dragOrigins.current.get(item.id);
     const moved = new Map<ItemId, Transform>();
     const at = (id: ItemId, x: number, y: number) => {
@@ -1320,6 +1455,10 @@ export function CanvasSurface({
   };
 
   const onDragEnd = (item: CanvasItem) => {
+    if (cropGesture.current?.kind === 'slide') {
+      endCrop();
+      return;
+    }
     setGesturing(false);
     const bodies: CanvasOperationBody[] = [];
     for (const id of dragOrigins.current.keys()) {
@@ -1350,23 +1489,144 @@ export function CanvasSurface({
     releaseWhenDurable();
   };
 
+  /**
+   * Draw a crop in flight straight onto the nodes — the item, its outline and
+   * the ghost — with no React render per pointermove. The commit at the end
+   * redraws them from the document with the same values.
+   */
+  const showCrop = (item: CanvasItem, next: { transform: Transform; crop: Crop }) => {
+    const stage = stageRef.current;
+    const node = stage?.findOne(`#${item.id}`);
+    if (!stage || !node) return;
+    const attrs = toKonvaAttrs(next.transform);
+    const { scaleX, scaleY } = toKonvaAppearance(item.appearance);
+    // The colour-rect LOD has no image, and no crop to show.
+    const image = (node as Konva.Image).image?.() as { width: number; height: number } | undefined;
+    node.setAttrs({ ...attrs, scaleX, scaleY, ...(image ? toKonvaCrop(next.crop, image) : {}) });
+    stage.findOne(`#${SELECTION_MARK}${item.id}`)?.setAttrs(attrs);
+    const original = toKonvaAttrs(originalTransform(cropFrame({ ...item, ...next })));
+    stage.findOne(`#${CROP_GHOST}`)?.setAttrs(original);
+    stage.findOne(`#${CROP_GHOST_EDGE}`)?.setAttrs(original);
+    transformerRef.current?.forceUpdate();
+    stage.batchDraw();
+  };
+
+  /** One operation for the whole gesture: undo restores box and crop together. */
+  const endCrop = () => {
+    const g = cropGesture.current;
+    cropGesture.current = null;
+    setCropLive(false);
+    setGesturing(false);
+    if (g?.last) {
+      commit({ type: 'item.transform', itemId: g.item.id, ...g.last });
+    } else {
+      redraw();
+    }
+    releaseWhenDurable();
+  };
+
+  const onTransformStart = () => {
+    setGesturing(true);
+    const anchor = transformerRef.current?.getActiveAnchor() ?? '';
+    if (!cropping || !cropTarget || anchor.startsWith('rotater')) return;
+    const frame = cropFrame(cropTarget);
+    cropGesture.current = {
+      kind: 'edges',
+      item: cropTarget,
+      frame,
+      was: visibleEdges(cropTarget, frame),
+      start: { x: 0, y: 0 },
+      pointer: { x: 0, y: 0 },
+    };
+    setCropLive(true);
+  };
+
+  /**
+   * The Transformer's proposed box, reduced to the edges the handle owns and
+   * clamped to the original.
+   *
+   * Konva forces centred scaling whenever Alt is down, so under Ctrl+Alt the
+   * proposal moves BOTH sides; taking only the dragged edges from it is what
+   * keeps the far side still. Boxes are in absolute coordinates, so they go
+   * through the stage's transform to reach the item's frame and back.
+   */
+  const cropBoundBox = (_old: TransformerBox, box: TransformerBox): TransformerBox => {
+    const g = cropGesture.current;
+    const stage = stageRef.current;
+    if (g?.kind !== 'edges' || !stage) return box;
+    const toAbsolute = stage.getAbsoluteTransform();
+    const fromAbsolute = toAbsolute.copy().invert();
+    const cos = Math.cos(box.rotation);
+    const sin = Math.sin(box.rotation);
+    const corners = [
+      [0, 0],
+      [box.width, 0],
+      [0, box.height],
+      [box.width, box.height],
+    ].map(([u = 0, v = 0]) =>
+      toFrame(
+        g.frame,
+        fromAbsolute.point({ x: box.x + u * cos - v * sin, y: box.y + u * sin + v * cos }),
+      ),
+    );
+    const xs = corners.map((p) => p.x);
+    const ys = corners.map((p) => p.y);
+    const proposed = {
+      left: Math.min(...xs),
+      right: Math.max(...xs),
+      top: Math.min(...ys),
+      bottom: Math.max(...ys),
+    };
+    // A mirrored node can report its box turned half round; its "left" anchor
+    // then sits on the frame's right, and every edge name swaps with it.
+    let moving = movingEdges(transformerRef.current?.getActiveAnchor() ?? '');
+    if (Math.cos(box.rotation - g.frame.rotation) < 0) {
+      moving = { left: moving.right, right: moving.left, top: moving.bottom, bottom: moving.top };
+    }
+    const zoom = stage.scaleX();
+    const edges = clampEdges(g.frame, g.was, proposed, moving, MIN_CROP_PX / zoom);
+    const width = (edges.right - edges.left) * zoom;
+    const height = (edges.bottom - edges.top) * zoom;
+    const centre = toAbsolute.point(
+      toWorld(g.frame, { x: (edges.left + edges.right) / 2, y: (edges.top + edges.bottom) / 2 }),
+    );
+    return {
+      x: centre.x - (width / 2) * cos + (height / 2) * sin,
+      y: centre.y - (width / 2) * sin - (height / 2) * cos,
+      width,
+      height,
+      rotation: box.rotation,
+    };
+  };
+
+  const onTransform = () => {
+    const g = cropGesture.current;
+    const node = transformerRef.current?.nodes()[0];
+    if (g?.kind !== 'edges' || !node) return;
+    const t = nodeTransform(node);
+    const c = toFrame(g.frame, { x: t.x, y: t.y });
+    g.last = fromEdges(g.item, g.frame, {
+      left: c.x - t.width / 2,
+      right: c.x + t.width / 2,
+      top: c.y - t.height / 2,
+      bottom: c.y + t.height / 2,
+    });
+    showCrop(g.item, g.last);
+    // Others see the edge move the way they see a drag: the outline follows.
+    previewNow(new Map([[g.item.id, g.last.transform]]));
+  };
+
   const onTransformEnd = () => {
+    if (cropGesture.current?.kind === 'edges') {
+      endCrop();
+      return;
+    }
     setGesturing(false);
     const bodies: CanvasOperationBody[] = [];
     for (const node of transformerRef.current?.nodes() ?? []) {
       const id = node.id() as ItemId;
       if (!doc.item(id)) continue;
-      const transform = bakeScale({
-        x: node.x(),
-        y: node.y(),
-        width: node.width(),
-        height: node.height(),
-        rotation: node.rotation(),
-        offsetX: node.offsetX(),
-        offsetY: node.offsetY(),
-        scaleX: node.scaleX(),
-        scaleY: node.scaleY(),
-      });
+      const transform = nodeTransform(node);
       // Scale lives in width/height from here on, so the node must not keep it.
       node.scaleX(1);
       node.scaleY(1);
@@ -1398,7 +1658,12 @@ export function CanvasSurface({
   });
 
   return (
-    <div ref={containerRef} className="absolute inset-0 touch-none select-none">
+    <div
+      ref={containerRef}
+      className="absolute inset-0 touch-none select-none"
+      // The ground grid sits beneath the Stage as the container's own background.
+      style={gridBackground(camera, size, theme.grid)}
+    >
       <Stage
         ref={stageRef}
         width={width}
@@ -1408,21 +1673,12 @@ export function CanvasSurface({
         scaleX={stage.scaleX}
         scaleY={stage.scaleY}
         onPointerDown={onPointerDown}
+        // macOS makes Ctrl+click a right-click, and Ctrl+Alt is the crop
+        // modifier. A plain right-click keeps the browser's menu.
+        onContextMenu={(e) => {
+          if (e.evt.ctrlKey) e.evt.preventDefault();
+        }}
       >
-        {/*
-          The ground grid: world-anchored hairlines that give the surface its
-          sense of scale. Beneath everything, hit-testable by nothing, gone
-          before it could ever compete with content.
-        */}
-        <Layer listening={false}>
-          <Shape
-            perfectDrawEnabled={false}
-            sceneFunc={(ctx) =>
-              paintGrid(ctx as unknown as Konva.Context, camera, size, theme.grid)
-            }
-          />
-        </Layer>
-
         <Layer listening={false}>
           <Shape
             perfectDrawEnabled={false}
@@ -1474,27 +1730,38 @@ export function CanvasSurface({
         </Layer>
 
         <Layer>
-          {nodes.map((item) => (
-            <ItemNode
-              key={item.id}
-              item={item}
-              lod={lodOf(active.visible, item.id)}
-              bitmap={bitmaps.bitmapFor(item)}
-              opacity={
-                opacityPreview !== null && selection.has(item.id)
-                  ? opacityPreview
-                  : item.appearance.opacity
-              }
-              selected={selection.has(item.id)}
-              draggable={tool === 'select' && !readOnly}
-              heldBy={holderColour(item.id)}
-              zoom={camera.zoom}
-              onPointerDown={onItemPointerDown}
-              onDragStart={onDragStart}
-              onDragMove={onDragMove}
-              onDragEnd={onDragEnd}
-            />
-          ))}
+          {nodes.map((item) => {
+            const bitmap = bitmaps.bitmapFor(item);
+            const node = (
+              <ItemNode
+                key={item.id}
+                item={item}
+                lod={lodOf(active.visible, item.id)}
+                bitmap={bitmap}
+                opacity={
+                  opacityPreview !== null && selection.has(item.id)
+                    ? opacityPreview
+                    : item.appearance.opacity
+                }
+                selected={selection.has(item.id)}
+                draggable={tool === 'select' && !readOnly}
+                heldBy={holderColour(item.id)}
+                zoom={camera.zoom}
+                onPointerDown={onItemPointerDown}
+                onDragStart={onDragStart}
+                onDragMove={onDragMove}
+                onDragEnd={onDragEnd}
+                onDoubleClick={enterCrop}
+                cropping={cropping && cropTarget?.id === item.id}
+              />
+            );
+            // The whole original, faded, directly beneath the item it frames.
+            if (!cropping || cropTarget?.id !== item.id || !bitmap) return node;
+            return [
+              <CropGhost key={`${item.id}-ghost`} item={item} bitmap={bitmap} zoom={camera.zoom} />,
+              node,
+            ];
+          })}
           {/*
             Another actor's selection: the same interface stroke as the local
             one, in their colour, specified in screen pixels and divided by zoom
@@ -1527,14 +1794,20 @@ export function CanvasSurface({
           {!readOnly && (
             <Transformer
               ref={transformerRef}
-              rotateEnabled
+              // Cropping: no rotation, free aspect (Shift keeps it, Konva's own
+              // rule), and the box run through cropBoundBox. The dash that says
+              // "crop" is on the item's own outline, which is drawn over this.
+              rotateEnabled={!cropping}
+              keepRatio={!cropping}
+              boundBoxFunc={cropBoundBox}
               ignoreStroke
               borderStroke={theme.accent}
               borderStrokeWidth={1}
               anchorStroke={theme.accent}
               anchorFill={theme.surface}
               anchorSize={8}
-              onTransformStart={() => setGesturing(true)}
+              onTransformStart={onTransformStart}
+              onTransform={onTransform}
               onTransformEnd={onTransformEnd}
             />
           )}
@@ -1575,6 +1848,8 @@ export function CanvasSurface({
           labelSignal={labelSignal}
           collapsed={toolbarCollapsed}
           onToggleCollapsed={toggleToolbar}
+          cropping={cropSticky}
+          onToggleCrop={() => setCropItemId(cropSticky ? null : (cropTarget?.id ?? null))}
         />
       )}
 
@@ -1733,46 +2008,36 @@ export function frameFor(
 }
 
 /**
- * The ground grid, across the viewport and no further.
+ * The ground grid: a dot at every world grid intersection.
  *
  * World-anchored so it pans and zooms with the content — that is the whole
- * point of it, a sense of scale. Every vertical and horizontal in one path,
- * spanning the viewport and no further, recomputed per camera frame, which is
- * the same cadence everything else here already redraws at. Fades out before
- * cells get small enough to moiré.
+ * point of it, a sense of scale. A tiled CSS background on the container rather
+ * than a Konva path: the browser repeats one gradient, so there is no per-dot
+ * work per camera frame, and the dot stays one screen size at every zoom.
+ * Fades out before cells get small enough to moiré.
  */
-export function paintGrid(
-  ctx: Konva.Context,
+export function gridBackground(
   camera: Camera,
   size: { width: number; height: number },
   colour: string,
-): void {
+): { backgroundImage: string; backgroundSize: string; backgroundPosition: string } | undefined {
   const cellPx = GRID_PITCH * camera.zoom;
   if (cellPx < GRID_HIDE_BELOW) {
-    return;
+    return undefined;
   }
-  const stage = toStageAttrs(camera, size);
-  const left = -stage.x / stage.scaleX;
-  const top = -stage.y / stage.scaleY;
-  const right = (size.width - stage.x) / stage.scaleX;
-  const bottom = (size.height - stage.y) / stage.scaleY;
-  ctx.strokeStyle = colour;
-  ctx.lineWidth = 1 / camera.zoom;
-  ctx.globalAlpha =
+  const strength =
     cellPx >= GRID_FADE_BELOW
-      ? 1
-      : (cellPx - GRID_HIDE_BELOW) / (GRID_FADE_BELOW - GRID_HIDE_BELOW);
-  ctx.beginPath();
-  for (let x = Math.ceil(left / GRID_PITCH) * GRID_PITCH; x <= right; x += GRID_PITCH) {
-    ctx.moveTo(x, top);
-    ctx.lineTo(x, bottom);
-  }
-  for (let y = Math.ceil(top / GRID_PITCH) * GRID_PITCH; y <= bottom; y += GRID_PITCH) {
-    ctx.moveTo(left, y);
-    ctx.lineTo(right, y);
-  }
-  ctx.stroke();
-  ctx.globalAlpha = 1;
+      ? 100
+      : Math.round((100 * (cellPx - GRID_HIDE_BELOW)) / (GRID_FADE_BELOW - GRID_HIDE_BELOW));
+  const ink = strength === 100 ? colour : `color-mix(in oklch, ${colour} ${strength}%, transparent)`;
+  const stage = toStageAttrs(camera, size);
+  return {
+    backgroundImage: `radial-gradient(circle, ${ink} ${GRID_DOT_RADIUS}px, transparent ${GRID_DOT_RADIUS + 0.5}px)`,
+    backgroundSize: `${cellPx}px ${cellPx}px`,
+    // The gradient centres its dot in the tile; half a cell back puts the dots
+    // on world multiples of the pitch, where stage.x/y is world (0, 0).
+    backgroundPosition: `${stage.x - cellPx / 2}px ${stage.y - cellPx / 2}px`,
+  };
 }
 
 function ItemNode({
@@ -1788,6 +2053,8 @@ function ItemNode({
   onDragStart,
   onDragMove,
   onDragEnd,
+  onDoubleClick,
+  cropping,
 }: {
   item: CanvasItem;
   lod: string;
@@ -1803,6 +2070,9 @@ function ItemNode({
   onDragStart: (item: CanvasItem) => void;
   onDragMove: (item: CanvasItem, e: Konva.KonvaEventObject<DragEvent>) => void;
   onDragEnd: (item: CanvasItem) => void;
+  onDoubleClick: (item: CanvasItem) => void;
+  /** Being cropped: the outline goes dashed, the one sign the cage changed job. */
+  cropping: boolean;
 }) {
   const theme = canvasTheme();
   const { form, outline: outlineAttrs } = itemNodeAttrs(
@@ -1821,6 +2091,8 @@ function ItemNode({
     onDragStart: () => onDragStart(item),
     onDragMove: (e: Konva.KonvaEventObject<DragEvent>) => onDragMove(item, e),
     onDragEnd: () => onDragEnd(item),
+    onDblClick: () => onDoubleClick(item),
+    onDblTap: () => onDoubleClick(item),
     perfectDrawEnabled: false,
     shadowForStrokeEnabled: false,
   };
@@ -1840,6 +2112,7 @@ function ItemNode({
       id={`${SELECTION_MARK}${item.id}`}
       {...outlineAttrs}
       stroke={heldBy ?? theme.accent}
+      dash={cropping ? [4 / zoom, 3 / zoom] : []}
       listening={false}
       perfectDrawEnabled={false}
       shadowForStrokeEnabled={false}
@@ -1851,7 +2124,7 @@ function ItemNode({
   return (
     <>
       {bitmap && IMAGE_LODS.has(lod) ? (
-        <KonvaImage {...shared} image={bitmap} />
+        <KonvaImage {...shared} image={bitmap} {...toKonvaCrop(item.crop, bitmap)} />
       ) : (
         <KonvaRect
           {...shared}
@@ -1977,7 +2250,66 @@ function moveBy(
   return bodies;
 }
 
-function selectionMode(event: PointerEvent | MouseEvent): SelectionMode {
+/** A node's placement after a Transformer gesture, with Konva's scale baked into the size. */
+function nodeTransform(node: Konva.Node): Transform {
+  return bakeScale({
+    x: node.x(),
+    y: node.y(),
+    width: node.width(),
+    height: node.height(),
+    rotation: node.rotation(),
+    offsetX: node.offsetX(),
+    offsetY: node.offsetY(),
+    scaleX: node.scaleX(),
+    scaleY: node.scaleY(),
+  });
+}
+
+/**
+ * The whole original behind an item being cropped: what un-cropping would
+ * bring back. Faded, outlined in the accent at screen thickness, never
+ * hit-testable, and mirrored with the item so it lines up with what shows.
+ */
+function CropGhost({
+  item,
+  bitmap,
+  zoom,
+}: {
+  item: CanvasItem;
+  bitmap: ImageBitmap;
+  zoom: number;
+}) {
+  const theme = canvasTheme();
+  const attrs = toKonvaAttrs(originalTransform(cropFrame(item)));
+  const { scaleX, scaleY } = toKonvaAppearance(item.appearance);
+  return (
+    <>
+      <KonvaImage
+        id={CROP_GHOST}
+        {...attrs}
+        scaleX={scaleX}
+        scaleY={scaleY}
+        image={bitmap}
+        opacity={CROP_GHOST_OPACITY}
+        listening={false}
+        perfectDrawEnabled={false}
+      />
+      <KonvaRect
+        id={CROP_GHOST_EDGE}
+        {...attrs}
+        stroke={theme.accent}
+        strokeWidth={1 / zoom}
+        dash={[4 / zoom, 3 / zoom]}
+        listening={false}
+        perfectDrawEnabled={false}
+      />
+    </>
+  );
+}
+
+export function selectionMode(event: PointerEvent | MouseEvent): SelectionMode {
+  // Ctrl+Alt is the crop modifier, so it must not also be Ctrl's "toggle".
+  if (event.ctrlKey && event.altKey) return 'replace';
   if (event.shiftKey) return 'add';
   if (event.ctrlKey || event.metaKey) return 'toggle';
   return 'replace';

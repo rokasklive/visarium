@@ -6,15 +6,21 @@ import {
   CanvasDocument,
   type CanvasItem,
   DEFAULT_APPEARANCE,
+  FULL_CROP,
   GRID_PITCH,
   type GroupId,
   type ItemId,
   newGroupId,
   transformBounds,
 } from '@visarium/canvas-core';
-import type Konva from 'konva';
 import { describe, expect, it } from 'vitest';
-import { frameFor, groupLabelsFor, itemNodeAttrs, paintGrid } from './canvas-surface';
+import {
+  frameFor,
+  gridBackground,
+  groupLabelsFor,
+  itemNodeAttrs,
+  selectionMode,
+} from './canvas-surface';
 
 /**
  * The two decisions the surface makes about what to draw, extracted so they can
@@ -34,6 +40,7 @@ function item(overrides: Partial<CanvasItem> = {}): CanvasItem {
     z: 1,
     content: { kind: 'placeholder', intrinsicWidth: 300, intrinsicHeight: 200 },
     appearance: DEFAULT_APPEARANCE,
+    crop: FULL_CROP,
     ...overrides,
   };
 }
@@ -250,56 +257,27 @@ describe('derived frames', () => {
 });
 
 describe('the ground grid', () => {
-  /** A Konva context that records finished segments instead of drawing them. */
-  function captured(zoom: number, cameraX = 0, cameraY = 0) {
-    const state = { lineWidth: 0, globalAlpha: 1, strokeStyle: '' };
-    const segments: { x1: number; y1: number; x2: number; y2: number }[] = [];
-    let start: { x: number; y: number } | undefined;
-    let alphaAtStroke = 0;
-    const ctx = {
-      ...state,
-      beginPath: () => {},
-      moveTo: (x: number, y: number) => {
-        start = { x, y };
-      },
-      lineTo: (x: number, y: number) => {
-        if (start) segments.push({ x1: start.x, y1: start.y, x2: x, y2: y });
-      },
-      // paintGrid restores globalAlpha after stroking, so the value that
-      // matters is the one present at the moment of the stroke.
-      stroke: () => {
-        alphaAtStroke = ctx.globalAlpha;
-      },
-    };
-    paintGrid(
-      ctx as unknown as Konva.Context,
+  const grid = (zoom: number, cameraX = 0, cameraY = 0) =>
+    gridBackground(
       { zoom, x: cameraX, y: cameraY } as never,
       { width: 1200, height: 800 },
       'colour-from-token',
     );
-    return { alpha: alphaAtStroke, strokeStyle: ctx.strokeStyle, segments };
-  }
 
   it('draws nothing once cells would render below the floor', () => {
-    expect(captured(0.2).segments).toHaveLength(0); // 24 * 0.2 = 4.8px cells
+    expect(grid(0.2)).toBeUndefined(); // 24 * 0.2 = 4.8px cells
   });
 
   it('is at full faint strength at working zoom and fades on the way out', () => {
-    const full = captured(1);
-    expect(full.alpha).toBe(1);
-    expect(full.strokeStyle).toBe('colour-from-token');
-    expect(captured(0.3).alpha).toBeCloseTo((7.2 - 6) / (12 - 6), 5); // mid-fade
+    expect(grid(1)?.backgroundImage).toContain('colour-from-token 1px');
+    expect(grid(0.3)?.backgroundImage).toContain('colour-from-token 20%'); // (7.2 - 6) / (12 - 6)
   });
 
-  it('anchors to world coordinates: pan moves the lines, pitch never changes', () => {
-    const pitchOf = (xs: number[]) =>
-      Math.min(...xs.slice(1).map((x, i) => Math.abs(x - (xs[i] as number))));
-    const verticals = (c: ReturnType<typeof captured>) =>
-      c.segments.filter((s) => s.x1 === s.x2).map((s) => s.x1);
-    expect(verticals(captured(0.5))).toHaveLength(101); // 2400 world units / 24, ends inclusive
-    expect(pitchOf(verticals(captured(0.5)))).toBeCloseTo(GRID_PITCH, 5);
-    expect(pitchOf(verticals(captured(0.5, 37, 11)))).toBeCloseTo(GRID_PITCH, 5);
-    expect(verticals(captured(0.5))[0]).not.toBe(verticals(captured(0.5, 37, 11))[0]);
+  it('anchors to world coordinates: the tile is one pitch, pan moves the dots', () => {
+    expect(grid(0.5)?.backgroundSize).toBe(`${GRID_PITCH * 0.5}px ${GRID_PITCH * 0.5}px`);
+    // World (0, 0) at the viewport centre, minus half a 12px cell.
+    expect(grid(0.5)?.backgroundPosition).toBe('594px 394px');
+    expect(grid(0.5, 37, 11)?.backgroundPosition).toBe('575.5px 388.5px');
   });
 });
 
@@ -347,5 +325,16 @@ describe('an act on a selection is reachable from one place', () => {
     for (const act of ['Select', 'Pan', 'Undo', 'Redo', 'Frame']) {
       expect(canvasToolbar).toContain(act);
     }
+  });
+});
+
+describe('selecting with modifiers', () => {
+  const press = (keys: Partial<Pick<MouseEvent, 'ctrlKey' | 'altKey' | 'shiftKey' | 'metaKey'>>) =>
+    ({ ctrlKey: false, altKey: false, shiftKey: false, metaKey: false, ...keys }) as MouseEvent;
+
+  it('keeps Ctrl as toggle but never for Ctrl+Alt, which is crop', () => {
+    expect(selectionMode(press({ ctrlKey: true }))).toBe('toggle');
+    expect(selectionMode(press({ ctrlKey: true, altKey: true }))).toBe('replace');
+    expect(selectionMode(press({ shiftKey: true }))).toBe('add');
   });
 });

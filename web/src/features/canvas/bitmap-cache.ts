@@ -79,7 +79,11 @@ export function bitmapSourceOf(item: CanvasItem): BitmapSource | undefined {
 
 /** The tier this item would render at, given the zoom tiers are being chosen for. */
 export function tierFor(item: CanvasItem, zoom: number): BitmapTier {
-  const screenWidth = item.transform.width * zoom * (globalThis.devicePixelRatio ?? 1);
+  // The WHOLE original's width on screen, not the visible box's: a crop shows a
+  // part of the bitmap at full size, so a tenth-wide crop needs the tier a ten
+  // times wider item would (ADR-0029).
+  const screenWidth =
+    (item.transform.width / item.crop.width) * zoom * (globalThis.devicePixelRatio ?? 1);
   const wanted = pickDerivative(screenWidth);
   // A tier wider than the image itself does not exist on the server, so asking
   // for it is a 404 rather than a bigger picture.

@@ -6,6 +6,7 @@
  */
 
 export * from './camera';
+export * from './crop';
 export * from './document';
 export * from './geometry';
 export * from './history';

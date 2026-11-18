@@ -63,6 +63,27 @@ export interface Appearance {
  */
 export const DEFAULT_APPEARANCE: Appearance = { opacity: 1, flipX: false, flipY: false };
 
+/**
+ * The part of the original an item shows, as fractions of the original's width
+ * and height, in source orientation (before any flip). ADR-0029.
+ *
+ * The transform stays the VISIBLE box, so nothing that only needs bounds ever
+ * learns about crop; the image's scale is derived, never stored.
+ */
+export interface Crop {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/** The one default, for the same reason as {@link DEFAULT_APPEARANCE}. */
+export const FULL_CROP: Crop = { x: 0, y: 0, width: 1, height: 1 };
+
+export function isFullCrop(crop: Crop): boolean {
+  return crop.x === 0 && crop.y === 0 && crop.width === 1 && crop.height === 1;
+}
+
 export interface CanvasItem {
   readonly id: ItemId;
   readonly transform: Transform;
@@ -71,6 +92,7 @@ export interface CanvasItem {
   readonly groupId?: GroupId;
   readonly content: CanvasItemContent;
   readonly appearance: Appearance;
+  readonly crop: Crop;
 }
 
 export interface CanvasGroup {

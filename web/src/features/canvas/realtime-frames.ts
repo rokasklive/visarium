@@ -60,6 +60,27 @@ function appearance(value: unknown): boolean {
   return typeof flipX === 'boolean' && typeof flipY === 'boolean';
 }
 
+/**
+ * An optional crop: absent is "unchanged" or "whole image", present must be a
+ * non-empty window inside the original. The server already refused anything
+ * else; this is the same line drawn again where a frame enters the document.
+ */
+function optionalCrop(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!isObject(value)) return false;
+  const { x, y, width, height } = value;
+  if (!num(x) || !num(y) || !num(width) || !num(height)) return false;
+  const TOLERANCE = 1e-9;
+  return (
+    x >= 0 &&
+    y >= 0 &&
+    width > 0 &&
+    height > 0 &&
+    x + width <= 1 + TOLERANCE &&
+    y + height <= 1 + TOLERANCE
+  );
+}
+
 function transform(value: unknown): Transform | null {
   if (!isObject(value)) return null;
   const { x, y, width, height, rotation } = value;
@@ -118,12 +139,14 @@ function operation(value: unknown): unknown | null {
       if (value.groupId !== undefined && !str(value.groupId)) return null;
       // Optional, so an older client's creation is still a frame we accept.
       if (value.appearance !== undefined && !appearance(value.appearance)) return null;
-      return value;
+      return optionalCrop(value.crop) ? value : null;
     }
     case 'item.delete':
       return str(value.itemId) ? value : null;
     case 'item.transform':
-      return str(value.itemId) && transform(value.transform) ? value : null;
+      return str(value.itemId) && transform(value.transform) && optionalCrop(value.crop)
+        ? value
+        : null;
     case 'item.content':
       return str(value.itemId) && content(value.content) ? value : null;
     case 'item.z':

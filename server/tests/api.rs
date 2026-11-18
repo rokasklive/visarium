@@ -304,6 +304,38 @@ async fn assets_boards_library_and_lifecycle() {
     assert_ne!(copy_snap["groups"][0]["id"], group.as_str());
     assert_eq!(copy_snap["groups"][0]["memberIds"][0], copy_snap["items"][0]["id"]);
 
+    // Crop (ADR-0029): round-trips, survives a plain move, is copied by board
+    // duplication, goes back to absent when full, and is refused outside 0..1.
+    let ops_url = format!("/api/boards/{b}/operations");
+    let crop = json!({ "x": 0.25, "y": 0.0, "width": 0.5, "height": 1.0 });
+    let half = json!({ "x": 1.0, "y": 2.0, "width": 150.0, "height": 200.0, "rotation": 0.0 });
+    let cropped = json!({ "operations": [{ "body": { "type": "item.transform", "itemId": item, "transform": half, "crop": crop } }] });
+    assert_eq!(c.json("POST", &ops_url, cropped).await.status, StatusCode::OK);
+    let moved = json!({ "operations": [{ "body": { "type": "item.transform", "itemId": item, "transform": t } }] });
+    assert_eq!(c.json("POST", &ops_url, moved).await.status, StatusCode::OK);
+    let snap = c.get(&format!("/api/boards/{b}/snapshot")).await.json();
+    assert_eq!(snap["items"][0]["crop"], crop, "a transform without a crop leaves it alone");
+    let copy = c.json("POST", &format!("/api/boards/{b}/duplicate"), json!(null)).await.json();
+    let copy_snap = c.get(&format!("/api/boards/{}/snapshot", copy["id"].as_str().unwrap())).await.json();
+    assert_eq!(copy_snap["items"][0]["crop"], crop, "board duplication names the crop columns");
+    let gone = c.send("DELETE", &format!("/api/boards/{}", copy["id"].as_str().unwrap()), None, vec![], &[]).await;
+    assert!(gone.status.is_success(), "the extra copy goes, so later board counts stay as they were");
+    let revision = c.get(&format!("/api/boards/{b}")).await.json()["revision"].clone();
+    for bad in [
+        json!({ "x": 0.6, "y": 0.0, "width": 0.5, "height": 1.0 }),
+        json!({ "x": -0.1, "y": 0.0, "width": 0.5, "height": 1.0 }),
+        json!({ "x": 0.0, "y": 0.0, "width": 0.0, "height": 1.0 }),
+    ] {
+        let body = json!({ "operations": [{ "body": { "type": "item.transform", "itemId": item, "transform": t, "crop": bad } }] });
+        assert_eq!(c.json("POST", &ops_url, body).await.status, StatusCode::BAD_REQUEST);
+    }
+    assert_eq!(c.get(&format!("/api/boards/{b}")).await.json()["revision"], revision, "a refused crop stores nothing");
+    let drift = json!({ "x": 1e-12, "y": 0.0, "width": 1.0000000001, "height": 1.0 });
+    let full = json!({ "operations": [{ "body": { "type": "item.transform", "itemId": item, "transform": t, "crop": drift } }] });
+    assert_eq!(c.json("POST", &ops_url, full).await.status, StatusCode::OK);
+    let snap = c.get(&format!("/api/boards/{b}/snapshot")).await.json();
+    assert!(snap["items"][0].get("crop").is_none(), "a full crop is stored as absent");
+
     // Library: name order, paged two at a time, nameless last.
     for (i, name) in ["b.png", "A.png", "c.png"].iter().enumerate() {
         assert_eq!(c.upload(name, &png(40, 30, 10 + i as u8)).await.status, StatusCode::CREATED);

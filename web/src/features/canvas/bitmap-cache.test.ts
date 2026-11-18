@@ -1,6 +1,13 @@
-import { asAssetId } from '@visarium/canvas-core';
+import {
+  asAssetId,
+  asItemId,
+  type CanvasItem,
+  type Crop,
+  DEFAULT_APPEARANCE,
+  FULL_CROP,
+} from '@visarium/canvas-core';
 import { describe, expect, it, vi } from 'vitest';
-import { BitmapCache, bitmapKey, bitmapUrl } from './bitmap-cache';
+import { BitmapCache, bitmapKey, bitmapUrl, tierFor } from './bitmap-cache';
 
 const MB = 1024 * 1024;
 
@@ -59,6 +66,26 @@ describe('keys and urls', () => {
 
   it('uses the local url for a drop that has not uploaded yet', () => {
     expect(bitmapUrl({ kind: 'preview', url: 'blob:x' }, 256)).toBe('blob:x');
+  });
+});
+
+describe('choosing a tier', () => {
+  const image = (width: number, crop: Crop): CanvasItem => ({
+    id: asItemId('i'),
+    transform: { x: 0, y: 0, width, height: width, rotation: 0 },
+    z: 0,
+    content: {
+      kind: 'image',
+      asset: { assetId: asAssetId('a'), intrinsicWidth: 8000, intrinsicHeight: 8000 },
+    },
+    appearance: DEFAULT_APPEARANCE,
+    crop,
+  });
+
+  it('picks for the whole original, so a tight crop stays sharp', () => {
+    const tenth = { x: 0.45, y: 0.45, width: 0.1, height: 0.1 };
+    expect(tierFor(image(100, tenth), 1)).toBe(tierFor(image(1000, FULL_CROP), 1));
+    expect(tierFor(image(100, tenth), 1)).not.toBe(tierFor(image(100, FULL_CROP), 1));
   });
 });
 

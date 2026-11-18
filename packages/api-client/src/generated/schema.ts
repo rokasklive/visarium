@@ -485,6 +485,17 @@ export interface components {
             flipX?: boolean;
             flipY?: boolean;
         };
+        /** @description The part of the original shown, as fractions of its size (ADR-0029). Absent means the whole image. */
+        Crop: {
+            /** Format: double */
+            x: number;
+            /** Format: double */
+            y: number;
+            /** Format: double */
+            width: number;
+            /** Format: double */
+            height: number;
+        };
         AssetRef: {
             /** Format: uuid */
             assetId?: string;
@@ -592,6 +603,7 @@ export interface components {
             /** Format: uuid */
             groupId?: string;
             appearance?: components["schemas"]["Appearance"];
+            crop?: components["schemas"]["Crop"];
         } & {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -613,6 +625,7 @@ export interface components {
             /** Format: uuid */
             itemId?: string;
             transform?: components["schemas"]["Transform"];
+            crop?: components["schemas"]["Crop"];
         } & {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -727,6 +740,7 @@ export interface components {
             groupId?: string;
             content?: components["schemas"]["Content"];
             appearance?: components["schemas"]["Appearance"];
+            crop?: components["schemas"]["Crop"];
         };
         LibraryPage: {
             assets?: components["schemas"]["AssetView"][];

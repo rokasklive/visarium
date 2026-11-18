@@ -16,7 +16,7 @@
 
 import type { Transform } from './geometry';
 import type { ActorId, CanvasId, GroupId, ItemId, OperationId } from './ids';
-import type { Appearance, CanvasItemContent } from './model';
+import type { Appearance, CanvasItemContent, Crop } from './model';
 
 export type CanvasOperationBody =
   | {
@@ -36,12 +36,21 @@ export type CanvasOperationBody =
        * Without it, fading an image while it uploads loses the fade silently.
        */
       readonly appearance?: Appearance;
+      /** Optional for the same reasons as `appearance`; absent is uncropped. */
+      readonly crop?: Crop;
     }
   | { readonly type: 'item.delete'; readonly itemId: ItemId }
   | {
       readonly type: 'item.transform';
       readonly itemId: ItemId;
       readonly transform: Transform;
+      /**
+       * Absent means "leave the crop as it is", so every move, resize and nudge
+       * stays crop-unaware. Present is absolute. It rides here rather than in an
+       * op of its own because moving a crop edge moves the centre too, and the
+       * two must never be applied apart. ADR-0029.
+       */
+      readonly crop?: Crop;
     }
   /** Resolves a local placeholder into a persisted image once its upload lands. */
   | {

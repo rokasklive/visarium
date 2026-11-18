@@ -107,6 +107,15 @@ pub struct Appearance {
     pub flip_y: bool,
 }
 
+/// The window on the original an item shows, as fractions of it (ADR-0029).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Crop {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Op {
@@ -119,11 +128,19 @@ pub enum Op {
         content: Content,
         group_id: Option<Uuid>,
         appearance: Option<Appearance>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        crop: Option<Crop>,
     },
     #[serde(rename = "item.delete", rename_all = "camelCase")]
     ItemDelete { item_id: Uuid },
     #[serde(rename = "item.transform", rename_all = "camelCase")]
-    ItemTransform { item_id: Uuid, transform: Transform },
+    ItemTransform {
+        item_id: Uuid,
+        transform: Transform,
+        /// Absent leaves the stored crop alone; present replaces it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        crop: Option<Crop>,
+    },
     #[serde(rename = "item.content", rename_all = "camelCase")]
     ItemContent { item_id: Uuid, content: Content },
     #[serde(rename = "item.z", rename_all = "camelCase")]
@@ -158,6 +175,28 @@ fn check_appearance(a: &Appearance) -> ApiResult<()> {
     }
 }
 
+/// The four columns for a crop: `None` for the whole image, which is stored as
+/// NULL so the default stays the meaning. Float drift up to 1e-9 past an edge is
+/// clamped away; anything further is the caller's mistake.
+type CropColumns = Option<(f64, f64, f64, f64)>;
+
+fn check_crop(c: &Crop) -> ApiResult<CropColumns> {
+    const TOLERANCE: f64 = 1e-9;
+    let finite = [c.x, c.y, c.width, c.height].iter().all(|v| v.is_finite());
+    let fits = c.x >= 0.0
+        && c.y >= 0.0
+        && c.width > 0.0
+        && c.height > 0.0
+        && c.x + c.width <= 1.0 + TOLERANCE
+        && c.y + c.height <= 1.0 + TOLERANCE;
+    if !finite || !fits {
+        return Err(ApiError::bad_request("crop must be a non-empty rectangle inside the original (fractions 0 to 1)"));
+    }
+    let (w, h) = ((1.0 - c.x).min(c.width), (1.0 - c.y).min(c.height));
+    let full = c.x < TOLERANCE && c.y < TOLERANCE && w > 1.0 - TOLERANCE && h > 1.0 - TOLERANCE;
+    Ok(if full { None } else { Some((c.x, c.y, w, h)) })
+}
+
 /// A broken reference (an asset or group that is not stored) or a value the
 /// schema refuses is the caller's mistake, not the server's.
 fn integrity(e: sqlx::Error) -> ApiError {
@@ -187,13 +226,14 @@ async fn join(tx: &mut Transaction<'_, Sqlite>, board: &str, group: &Uuid, membe
 async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> ApiResult<()> {
     let bump = format!("revision = revision + 1, updated_at = {NOW}");
     match op {
-        Op::ItemCreate { item_id, transform: t, z, content, group_id, appearance } => {
+        Op::ItemCreate { item_id, transform: t, z, content, group_id, appearance, crop } => {
             let a = appearance.clone().unwrap_or(Appearance { opacity: 1.0, flip_x: false, flip_y: false });
             check_appearance(&a)?;
+            let c = crop.as_ref().map(check_crop).transpose()?.flatten();
             sqlx::query(
                 "INSERT INTO canvas_item (id, canvas_id, asset_id, group_id, x, y, width, height, rotation, z,
-                                          opacity, flip_x, flip_y)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                          opacity, flip_x, flip_y, crop_x, crop_y, crop_w, crop_h)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT (id) DO NOTHING",
             )
             .bind(item_id.to_string())
@@ -209,6 +249,10 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
             .bind(a.opacity)
             .bind(a.flip_x)
             .bind(a.flip_y)
+            .bind(c.map(|c| c.0))
+            .bind(c.map(|c| c.1))
+            .bind(c.map(|c| c.2))
+            .bind(c.map(|c| c.3))
             .execute(&mut **tx)
             .await
             .map_err(integrity)?;
@@ -220,17 +264,24 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
                 .execute(&mut **tx)
                 .await?;
         }
-        Op::ItemTransform { item_id, transform: t } => {
-            sqlx::query(sqlx::AssertSqlSafe(format!(
-                "UPDATE canvas_item SET x = ?, y = ?, width = ?, height = ?, rotation = ?, {bump}
+        Op::ItemTransform { item_id, transform: t, crop } => {
+            // Absent crop: the columns are not in the statement at all, so a
+            // plain move can never undo someone else's crop.
+            let c = crop.as_ref().map(check_crop).transpose()?;
+            let set_crop = if c.is_some() { "crop_x = ?, crop_y = ?, crop_w = ?, crop_h = ?," } else { "" };
+            let mut q = sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE canvas_item SET x = ?, y = ?, width = ?, height = ?, rotation = ?, {set_crop} {bump}
                   WHERE id = ? AND canvas_id = ?"
             )))
             .bind(t.x)
             .bind(t.y)
             .bind(t.width)
             .bind(t.height)
-            .bind(t.rotation)
-            .bind(item_id.to_string())
+            .bind(t.rotation);
+            if let Some(c) = c {
+                q = q.bind(c.map(|c| c.0)).bind(c.map(|c| c.1)).bind(c.map(|c| c.2)).bind(c.map(|c| c.3));
+            }
+            q.bind(item_id.to_string())
             .bind(board)
             .execute(&mut **tx)
             .await
@@ -455,8 +506,8 @@ async fn duplicate(
     for i in items {
         sqlx::query(
             "INSERT INTO canvas_item (id, canvas_id, asset_id, group_id, x, y, width, height, rotation, z,
-                                      opacity, flip_x, flip_y)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                      opacity, flip_x, flip_y, crop_x, crop_y, crop_w, crop_h)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(new_id())
         .bind(&copy)
@@ -471,6 +522,10 @@ async fn duplicate(
         .bind(i.opacity)
         .bind(i.flip_x)
         .bind(i.flip_y)
+        .bind(i.crop_x)
+        .bind(i.crop_y)
+        .bind(i.crop_w)
+        .bind(i.crop_h)
         .execute(&mut *tx)
         .await?;
     }
@@ -491,13 +546,17 @@ struct ItemRow {
     opacity: f64,
     flip_x: bool,
     flip_y: bool,
+    crop_x: Option<f64>,
+    crop_y: Option<f64>,
+    crop_w: Option<f64>,
+    crop_h: Option<f64>,
     asset_id: String,
     intrinsic_width: i64,
     intrinsic_height: i64,
 }
 
 const ITEMS_SQL: &str = "SELECT i.id, i.group_id, i.x, i.y, i.width, i.height, i.rotation, i.z,
-                                i.opacity, i.flip_x, i.flip_y,
+                                i.opacity, i.flip_x, i.flip_y, i.crop_x, i.crop_y, i.crop_w, i.crop_h,
                                 i.asset_id, a.width AS intrinsic_width, a.height AS intrinsic_height
                            FROM canvas_item i JOIN asset a ON a.id = i.asset_id
                           WHERE i.canvas_id = ? ORDER BY i.z";
@@ -536,7 +595,7 @@ pub async fn snapshot_of(db: &sqlx::SqlitePool, id: &str) -> ApiResult<serde_jso
     let items: Vec<_> = rows
         .iter()
         .map(|r| {
-            json!({
+            let mut item = json!({
                 "id": r.id,
                 "transform": { "x": r.x, "y": r.y, "width": r.width, "height": r.height, "rotation": r.rotation },
                 "z": r.z,
@@ -544,7 +603,12 @@ pub async fn snapshot_of(db: &sqlx::SqlitePool, id: &str) -> ApiResult<serde_jso
                 "content": { "kind": "image", "asset": {
                     "assetId": r.asset_id, "intrinsicWidth": r.intrinsic_width, "intrinsicHeight": r.intrinsic_height } },
                 "appearance": { "opacity": r.opacity, "flipX": r.flip_x, "flipY": r.flip_y },
-            })
+            });
+            // Absent is the whole image; the CHECK keeps the four all-or-nothing.
+            if let (Some(x), Some(y), Some(w), Some(h)) = (r.crop_x, r.crop_y, r.crop_w, r.crop_h) {
+                item["crop"] = json!({ "x": x, "y": y, "width": w, "height": h });
+            }
+            item
         })
         .collect();
     Ok(json!({ "revision": revision, "items": items, "groups": groups }))

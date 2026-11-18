@@ -102,6 +102,13 @@ interface UiState {
   placeAssets: ((assets: readonly DraggedAsset[]) => void) | null;
   /** Selection is small and drives chrome, so the ids (not the items) live here. */
   selectedItemIds: ReadonlySet<string>;
+  /**
+   * The item in crop mode, if any (ADR-0029). Ephemeral and local: never
+   * persisted, never broadcast. It only ever names the sole selected item, so
+   * any selection change that would leave it naming something else clears it.
+   */
+  cropItemId: string | null;
+  setCropItemId: (id: string | null) => void;
   setTool: (tool: Tool) => void;
   toggleSidebar: () => void;
   setSelection: (ids: Iterable<string>) => void;
@@ -124,6 +131,7 @@ export const useUiStore = create<UiState>((set) => ({
   libraryFilter: { q: '', collection: undefined },
   placeAssets: null,
   selectedItemIds: new Set(),
+  cropItemId: null,
   uploads: IDLE,
   uploadFailures: [],
   sync: SYNCED,
@@ -133,7 +141,14 @@ export const useUiStore = create<UiState>((set) => ({
   toolbarCollapsed: false,
   setTool: (tool) => set({ tool }),
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
-  setSelection: (ids) => set({ selectedItemIds: new Set(ids) }),
+  setSelection: (ids) =>
+    set((s) => {
+      const selectedItemIds = new Set(ids);
+      const keep =
+        s.cropItemId !== null && selectedItemIds.size === 1 && selectedItemIds.has(s.cropItemId);
+      return { selectedItemIds, cropItemId: keep ? s.cropItemId : null };
+    }),
+  setCropItemId: (cropItemId) => set({ cropItemId }),
   setLibraryFilter: (libraryFilter) => set({ libraryFilter }),
   // Wrapped: zustand reads a bare function argument as an updater, and this
   // value IS a function.

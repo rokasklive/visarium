@@ -1,13 +1,16 @@
 import {
   type Camera,
   type CanvasDocument,
+  type CanvasItem,
   type CanvasOperationBody,
   type FlipAxis,
   flipSelection,
   type GroupId,
   type ItemId,
+  isFullCrop,
   newGroupId,
   newItemId,
+  resetCrop,
   selectionBounds,
   type ViewportSize,
   worldToScreen,
@@ -111,6 +114,8 @@ export function SelectionToolbar({
   labelSignal,
   collapsed,
   onToggleCollapsed,
+  cropping,
+  onToggleCrop,
 }: {
   doc: CanvasDocument;
   camera: Camera;
@@ -129,6 +134,9 @@ export function SelectionToolbar({
    * needs already arrives this way. */
   collapsed: boolean;
   onToggleCollapsed: () => void;
+  /** Crop mode (ADR-0029): whether it is on, and the press that turns it on or off. */
+  cropping: boolean;
+  onToggleCrop: () => void;
 }) {
   const bar = useRef<HTMLDivElement | null>(null);
   const [box, setBox] = useState({ width: 0, height: 0 });
@@ -355,6 +363,9 @@ export function SelectionToolbar({
   /** Desktop app only: every original is on disk, so a drag leaves as files. */
   const native = nativeDragReady(outward.map((asset) => asset.assetId));
 
+  const cropTarget = cropTargetOf(doc, selection);
+  const cropped = cropTarget !== undefined && !isFullCrop(cropTarget.crop);
+
   const runDuplicate = () => {
     const copy = duplicateSelection(doc, selection);
     if (copy.bodies.length === 0) return;
@@ -509,12 +520,42 @@ export function SelectionToolbar({
           </Button>
           <Divider />
 
-          {/* Slot 3 — the two flips. */}
+          {/*
+            Slot 3 — what is shown of the image: the two flips, then crop and its
+            reset. Crop is present for every selection, like frame, and able to
+            act only on exactly one stored image, which its dimness says first.
+          */}
           <Button label="Flip H" onClick={() => commit(...flipSelection(doc, selection, 'x'))}>
             <FlipIcon vertical={false} />
           </Button>
           <Button label="Flip V" onClick={() => commit(...flipSelection(doc, selection, 'y'))}>
             <FlipIcon vertical />
+          </Button>
+          <Button
+            label="Crop"
+            hint={
+              cropTarget
+                ? 'Crop (C) — or hold Ctrl+Alt and drag a handle'
+                : 'Select one image to crop it'
+            }
+            dim={!cropTarget}
+            pressed={cropping || undefined}
+            onClick={() => {
+              if (cropTarget) onToggleCrop();
+            }}
+          >
+            <CropIcon />
+          </Button>
+          <Button
+            label="Reset crop"
+            hint={cropped ? 'Show the whole original again' : 'Nothing is cropped'}
+            dim={!cropped}
+            onClick={() => {
+              if (!cropTarget || !cropped) return;
+              commit({ type: 'item.transform', itemId: cropTarget.id, ...resetCrop(cropTarget) });
+            }}
+          >
+            <ResetCropIcon />
           </Button>
           <Divider />
 
@@ -671,6 +712,22 @@ export function labelBodies(
 }
 
 /**
+ * The item crop can act on: exactly one selected item, and a stored image.
+ *
+ * A placeholder is refused for the reason `duplicateSelection` gives — its
+ * upload resolves by item id, and a crop made meanwhile would be a second thing
+ * `BoardSync` has to carry across that resolution for no gain.
+ */
+export function cropTargetOf(
+  doc: CanvasDocument,
+  selection: ReadonlySet<ItemId>,
+): CanvasItem | undefined {
+  if (selection.size !== 1) return undefined;
+  const item = doc.item([...selection][0] as ItemId);
+  return item?.content.kind === 'image' ? item : undefined;
+}
+
+/**
  * Copies of a selection, as operations — no new operation type needed.
  *
  * A still-uploading item is skipped, and that is not a shortcut: its content
@@ -703,6 +760,7 @@ export function duplicateSelection(
       z: top + itemIds.length,
       content: item.content,
       appearance: item.appearance,
+      ...(isFullCrop(item.crop) ? {} : { crop: item.crop }),
     });
   }
   if (bodies.length === 0) return { bodies, itemIds };
@@ -899,6 +957,26 @@ function FrameIcon({ framed }: { framed: boolean }) {
       <path d="M1.5 3.5h6v2h4v6H5V9.5h-3.5z" strokeDasharray={framed ? undefined : '2 2'} />
       <path d="M4 6.5h2.5v3H4z" />
       <path d="M8.5 8h2.5v2.5H8.5z" />
+    </Glyph>
+  );
+}
+
+/** Two L-shaped corners overlapping: the crop mark every tool draws. */
+function CropIcon() {
+  return (
+    <Glyph>
+      <path d="M4 1.5v8.5h8.5" />
+      <path d="M1.5 4H10v8.5" />
+    </Glyph>
+  );
+}
+
+/** The whole original, dashed, around the part that was showing. */
+function ResetCropIcon() {
+  return (
+    <Glyph>
+      <path d="M1.5 1.5h11v11h-11z" strokeDasharray="2 2" />
+      <path d="M4.5 4.5h5v5h-5z" />
     </Glyph>
   );
 }

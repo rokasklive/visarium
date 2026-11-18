@@ -9,7 +9,7 @@
  * If Konva is ever replaced, this file is the shape of the work.
  */
 
-import type { Appearance, Transform } from '@visarium/canvas-core';
+import { type Appearance, type Crop, isFullCrop, type Transform } from '@visarium/canvas-core';
 
 /** Konva node attributes: position, size, and rotation in degrees. */
 export interface KonvaNodeAttrs {
@@ -62,6 +62,33 @@ export function toKonvaAppearance(appearance: Appearance): KonvaAppearanceAttrs 
     opacity: appearance.opacity,
     scaleX: appearance.flipX ? -1 : 1,
     scaleY: appearance.flipY ? -1 : 1,
+  };
+}
+
+/** Konva's image crop, in the pixels of whichever bitmap is drawn. */
+export interface KonvaCropAttrs {
+  cropX: number;
+  cropY: number;
+  cropWidth: number;
+  cropHeight: number;
+}
+
+/**
+ * A crop is a fraction of the original in the domain and bitmap pixels in
+ * Konva, because the bitmap drawn is one of several derivatives (ADR-0029).
+ *
+ * The whole image is all zeros, which is Konva's own "no crop": it then draws
+ * with the three-argument `drawImage` exactly as before crop existed, so an
+ * uncropped item takes the same path it always did. Flip needs nothing here —
+ * Konva crops the source first and mirrors the result with the node's scale.
+ */
+export function toKonvaCrop(crop: Crop, image: { width: number; height: number }): KonvaCropAttrs {
+  if (isFullCrop(crop)) return { cropX: 0, cropY: 0, cropWidth: 0, cropHeight: 0 };
+  return {
+    cropX: crop.x * image.width,
+    cropY: crop.y * image.height,
+    cropWidth: crop.width * image.width,
+    cropHeight: crop.height * image.height,
   };
 }
 

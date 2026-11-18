@@ -12,7 +12,13 @@
 
 import { type Rect, transformBounds, unionRects } from './geometry';
 import type { CanvasId, GroupId, ItemId } from './ids';
-import { type CanvasGroup, type CanvasItem, DEFAULT_APPEARANCE } from './model';
+import {
+  type CanvasGroup,
+  type CanvasItem,
+  DEFAULT_APPEARANCE,
+  FULL_CROP,
+  isFullCrop,
+} from './model';
 import type { CanvasOperationBody } from './operations';
 import { SpatialIndex } from './spatial-index';
 
@@ -170,6 +176,7 @@ export class CanvasDocument {
           z: body.z,
           content: body.content,
           appearance: body.appearance ?? DEFAULT_APPEARANCE,
+          crop: body.crop ?? FULL_CROP,
           ...(body.groupId !== undefined ? { groupId: body.groupId } : {}),
         });
         return { type: 'item.delete', itemId: body.itemId };
@@ -189,6 +196,7 @@ export class CanvasDocument {
           // whose absence is silent: without it, delete-then-undo is an
           // appearance reset that gets reported as "undo is broken" weeks later.
           appearance: existing.appearance,
+          ...(isFullCrop(existing.crop) ? {} : { crop: existing.crop }),
           ...(existing.groupId !== undefined ? { groupId: existing.groupId } : {}),
         };
       }
@@ -196,8 +204,15 @@ export class CanvasDocument {
       case 'item.transform': {
         const existing = this.#items.get(body.itemId);
         if (!existing) return undefined;
-        this.#put({ ...existing, transform: body.transform });
-        return { type: 'item.transform', itemId: body.itemId, transform: existing.transform };
+        this.#put({ ...existing, transform: body.transform, crop: body.crop ?? existing.crop });
+        // The inverse names the crop exactly when the body did: a plain move's
+        // undo must not overwrite a crop someone else made in between.
+        return {
+          type: 'item.transform',
+          itemId: body.itemId,
+          transform: existing.transform,
+          ...(body.crop ? { crop: existing.crop } : {}),
+        };
       }
 
       case 'item.content': {

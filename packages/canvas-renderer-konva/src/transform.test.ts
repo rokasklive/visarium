@@ -1,7 +1,13 @@
-import type { Transform } from '@visarium/canvas-core';
+import { FULL_CROP, type Transform } from '@visarium/canvas-core';
 import { describe, expect, it } from 'vitest';
 import { toStageAttrs } from './stage-camera';
-import { bakeScale, fromKonvaAttrs, toKonvaAppearance, toKonvaAttrs } from './transform';
+import {
+  bakeScale,
+  fromKonvaAttrs,
+  toKonvaAppearance,
+  toKonvaAttrs,
+  toKonvaCrop,
+} from './transform';
 
 const t: Transform = { x: 100, y: -40, width: 320, height: 180, rotation: Math.PI / 3 };
 
@@ -105,5 +111,28 @@ describe('stage camera', () => {
     const attrs = toStageAttrs({ x: 50, y: 20, zoom: 2 }, { width: 800, height: 600 });
     expect(attrs).toEqual({ x: 300, y: 260, scaleX: 2, scaleY: 2 });
     // world (50,20) -> 300 + 50*2 = 400 = half of 800. Centred.
+  });
+});
+
+describe('crop', () => {
+  it("gives Konva its own 'no crop' for the whole image, so uncropped items draw as before", () => {
+    expect(toKonvaCrop(FULL_CROP, { width: 800, height: 600 })).toEqual({
+      cropX: 0,
+      cropY: 0,
+      cropWidth: 0,
+      cropHeight: 0,
+    });
+  });
+
+  it('scales a fractional crop to whichever bitmap is drawn', () => {
+    const crop = { x: 0.25, y: 0.5, width: 0.5, height: 0.25 };
+    expect(toKonvaCrop(crop, { width: 800, height: 600 })).toEqual({
+      cropX: 200,
+      cropY: 300,
+      cropWidth: 400,
+      cropHeight: 150,
+    });
+    // A smaller derivative of the same original crops the same region.
+    expect(toKonvaCrop(crop, { width: 400, height: 300 }).cropX).toBe(100);
   });
 });
