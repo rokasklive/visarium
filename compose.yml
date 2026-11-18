@@ -1,0 +1,46 @@
+# Visarium: one container and two directories.
+#
+#   docker compose up -d
+#
+# Put your own reverse proxy in front if you want TLS — none is bundled.
+
+name: visarium
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile
+    image: visarium:local
+    restart: unless-stopped
+    networks:
+      - default
+      - proxy
+    # Match the owner of your data directories. On a NAS mount this is the
+    # difference between "it works" and a week of permission errors.
+    user: "${APP_UID:-1000}:${APP_GID:-1000}"
+    # VISARIUM_* settings — public URL, sign-in providers, sharing — come from
+    # .env as well (DEPLOYMENT.md lists them).
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      # Loopback only; expose it through your own proxy. Every endpoint needs an
+      # account, and the first request claims the instance — claim it before
+      # you point a proxy at it.
+      - "127.0.0.1:${APP_PORT:-8080}:8080"
+    volumes:
+      # CANONICAL DATA. Back this up. A LOCAL disk, never an NFS/SMB mount:
+      # SQLite's write-ahead log needs shared memory and working locks, which
+      # network filesystems do not reliably give. See DEPLOYMENT.md.
+      - ${DATABASE_HOST_PATH:-./data/db}:/data/db:z
+      # CANONICAL DATA. Back this up. A NAS mount is fine here.
+      - ${ASSETS_HOST_PATH:-./data/assets}:/data/assets:z
+      # Regenerable cache. Losing it costs CPU, not data.
+      - ${DERIVATIVES_HOST_PATH:-./data/derivatives}:/data/derivatives:z
+    stop_grace_period: 10s
+
+networks:
+  default:
+  proxy:
+    external: true

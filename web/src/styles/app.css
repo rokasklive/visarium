@@ -1,0 +1,218 @@
+@import "tailwindcss";
+
+/*
+ * Wordmark face. "Edit Undo Dot" by Brian Kent, ÆNIGMA FONTS — freeware.
+ * A dot-matrix face on the product name resolves the open "identity typeface"
+ * decision: identity from typography, not a mark, while the wordmark stays
+ * dim, small, and in the corner. Smoothing is off so the fixed grid stays crisp.
+ */
+@font-face {
+  font-family: "Edit Undo Dot";
+  src: url("/fonts/editundo-dot.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/*
+ * Annotation face. "Departure Mono" by Helena Zhang — SIL OFL 1.1 (licence
+ * beside the file). The SECOND face in the stylesheet, and the last: it speaks
+ * for canvas group annotations and nothing else — not chrome, not the wordmark,
+ * not a person's name. The bound is recorded in DESIGN_SYSTEM.md and ADR-0022;
+ * a second family becomes a display face by drift unless its lane is written
+ * down. Smoothing stays on: unlike the dot face this one is drawn for small
+ * sizes.
+ */
+@font-face {
+  font-family: "Departure Mono";
+  src: url("/fonts/DepartureMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/*
+ * Visarium is a tool, not a landing page. The palette is deliberately narrow and
+ * low-contrast at the edges so that the only saturated things on screen are the
+ * user's own references. See docs/product/UX_PRINCIPLES.md.
+ */
+/*
+ * `static`, because Tailwind only emits a theme variable when a utility uses
+ * one — and the canvas colours below have no utility: canvas-theme.ts reads
+ * them out of the stylesheet at runtime and hands them to Konva.
+ */
+@theme static {
+  --color-surface: oklch(0.18 0.006 265);
+  --color-surface-raised: oklch(0.22 0.006 265);
+  --color-surface-sunken: oklch(0.14 0.006 265);
+  --color-line: oklch(0.3 0.008 265);
+  /* A border that is the ONLY thing bounding a control needs 3:1 (WCAG 1.4.11);
+   * --color-line is 1.38:1 and separates filled surfaces, nothing more. The
+   * floating canvas toolbar is the case: 3.27:1 against its own fill and 3.46:1
+   * against the canvas it floats over. tokens.test.ts holds both. */
+  --color-line-strong: oklch(0.51 0.008 265);
+  --color-ink: oklch(0.92 0.004 265);
+  --color-ink-dim: oklch(0.66 0.006 265);
+  /* Disabled controls. WCAG exempts inactive controls from contrast, but 3.13:1
+   * still has to be readable at 13px — the previous opacity-40 was 1.96:1. */
+  --color-ink-disabled: oklch(0.5 0.006 265);
+  --color-accent: oklch(0.72 0.15 215);
+  /* Marquee fill. Konva cannot compose alpha from a token, so the wash is its
+   * own value; it is --color-accent at 15%. */
+  --color-accent-wash: oklch(0.72 0.15 215 / 0.15);
+
+  /*
+   * Canvas marks. The same hue as the chrome, carrying more chroma (0.02–0.034
+   * against chrome's 0.004–0.008) so a placeholder reads as content rather than
+   * as chrome that wandered onto the board. Konva resolves these through
+   * canvas-theme.ts; nothing on the canvas hardcodes a colour.
+   */
+  --color-item: oklch(0.32 0.02 265);
+  --color-item-edge: oklch(0.4 0.028 265);
+  --color-group-edge: oklch(0.46 0.034 265);
+
+  /*
+   * The ground grid: the drafting-paper texture that gives an empty board a
+   * sense of scale. Deliberately decorative and deliberately faint — like
+   * --color-line it is exempt from contrast minimums, but unlike `line` its
+   * job is to be ALMOST invisible, so tokens.test.ts holds it inside a band
+   * above surface-sunken rather than below a floor: findable, never loud.
+   */
+  --color-grid: oklch(0.2 0.008 265);
+
+  /*
+   * Presence. One token per actor the product supports at once, and that count
+   * IS the concurrency ceiling — north star 9 says two or three people, and
+   * PRESENCE_COLOUR_SLOTS in protocol.ts is six because a ceiling should have
+   * room to be wrong.
+   *
+   * The wire carries a SLOT INDEX, never a colour: a hex string arriving over a
+   * socket would be a palette entering the product without being chosen here.
+   *
+   * None of these is --color-accent, deliberately. The accent marks what THIS
+   * person has focused, selected or activated; another person's cursor is none
+   * of those, and reusing it would make "the accent means you" false. They are
+   * spread around the hue circle away from the accent's 215 so that three
+   * simultaneous actors are told apart at a glance, at chroma 0.16 and lightness
+   * 0.72 to stay legible against the canvas without competing with the images.
+   */
+  --color-presence-0: oklch(0.72 0.16 25);
+  --color-presence-1: oklch(0.72 0.16 145);
+  --color-presence-2: oklch(0.72 0.16 305);
+  --color-presence-3: oklch(0.72 0.16 85);
+  --color-presence-4: oklch(0.72 0.16 355);
+  --color-presence-5: oklch(0.72 0.16 185);
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--color-surface-sunken);
+    color: var(--color-ink);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 13px;
+    /* The canvas owns gestures; the page must never rubber-band or bounce. */
+    overscroll-behavior: none;
+    -webkit-font-smoothing: antialiased;
+    /* A tool, not a document: labels, buttons and the wordmark don't select.
+     * Text fields do — a link shown once to copy lives in one. */
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  input,
+  textarea,
+  [contenteditable="true"] {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  /* Visible focus is not optional, including for keyboard-driven canvas work. */
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+  }
+}
+
+@layer components {
+  /*
+   * The wordmark: the product name in the toolbar corner. The dot grid is the
+   * identity; smoothing off keeps it crisp rather than smeared.
+   */
+  .wordmark {
+    font-family: "Edit Undo Dot", ui-sans-serif, system-ui, sans-serif;
+    -webkit-font-smoothing: none;
+  }
+
+  /*
+   * The opacity control on the selection toolbar.
+   *
+   * A slider is the first continuous control in this product, and it is the one
+   * every other design system draws as a circle on a line. This one may not:
+   * DESIGN_SYSTEM.md permits one radius and states that nothing is circular or
+   * pill-shaped. So the handle is an 8x16 rectangle at the same 4px radius as
+   * every button, and the track is a 2px line.
+   *
+   * It is a restyled native `input[type=range]` rather than a div with a
+   * pointer handler, so arrow-key stepping, Home/End and the platform's own
+   * screen-reader semantics come free and correct. Focus is the global
+   * `:focus-visible` accent ring — the accent appears nowhere else on the bar,
+   * because it means "focused, selected or active", and a slider's value is
+   * none of those.
+   */
+  .slider {
+    appearance: none;
+    width: 72px;
+    height: 16px;
+    background: transparent;
+    cursor: pointer;
+  }
+
+  /*
+   * The filled portion. Firefox has `::-moz-range-progress` for it; WebKit and
+   * Blink have nothing, so the fill is a hard-stopped gradient on the track at
+   * the percentage the component writes into `--slider-fill`.
+   */
+  .slider::-webkit-slider-runnable-track {
+    height: 2px;
+    background: linear-gradient(
+      to right,
+      var(--color-ink-dim) var(--slider-fill, 0%),
+      var(--color-line-strong) var(--slider-fill, 0%)
+    );
+  }
+
+  .slider::-moz-range-track {
+    height: 2px;
+    background: var(--color-line-strong);
+  }
+
+  .slider::-moz-range-progress {
+    height: 2px;
+    background: var(--color-ink-dim);
+  }
+
+  .slider::-webkit-slider-thumb {
+    appearance: none;
+    width: 8px;
+    height: 16px;
+    /* Centres the handle on a 2px track: (2 - 16) / 2. */
+    margin-top: -7px;
+    border-radius: 4px;
+    background: var(--color-ink-dim);
+  }
+
+  .slider::-moz-range-thumb {
+    width: 8px;
+    height: 16px;
+    border: 0;
+    border-radius: 4px;
+    background: var(--color-ink-dim);
+  }
+}

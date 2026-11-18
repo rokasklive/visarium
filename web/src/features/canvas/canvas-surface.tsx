@@ -1,0 +1,1993 @@
+import { useQueryClient } from '@tanstack/react-query';
+import {
+  applySelection,
+  asAssetId,
+  type Camera,
+  type CanvasDocument,
+  CanvasHistory,
+  type CanvasItem,
+  type CanvasOperationBody,
+  computeActiveSet,
+  DEFAULT_CAMERA,
+  expandToGroups,
+  type FlipAxis,
+  fitRect,
+  flipSelection,
+  GRID_PITCH,
+  type GroupId,
+  groupOutline,
+  type ItemId,
+  ItemLod,
+  marqueeSelect,
+  panBy,
+  type Rect,
+  rotateSelection,
+  type SelectionMode,
+  scaleSelection,
+  screenToWorld,
+  selectionState,
+  type Transform,
+  transformBounds,
+  unionRects,
+  type VisibleItem,
+  visibleWorldRect,
+  zoomAt,
+} from '@visarium/canvas-core';
+import {
+  type AggregateContext,
+  bakeScale,
+  paintAggregate,
+  toKonvaAppearance,
+  toKonvaAttrs,
+  toStageAttrs,
+} from '@visarium/canvas-renderer-konva';
+import type Konva from 'konva';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import {
+  Image as KonvaImage,
+  Line as KonvaLine,
+  Rect as KonvaRect,
+  Text as KonvaText,
+  Layer,
+  Shape,
+  Stage,
+  Transformer,
+} from 'react-konva';
+import { assetsById } from '~/api/assets';
+import { loadSnapshotInto } from '~/api/boards';
+import { loadSharedSnapshotInto } from '~/api/sharing';
+import { useUiStore } from '~/app/ui-store';
+import { installBench, noteRender } from './bench';
+import { useBitmaps } from './bitmap-cache';
+import { BoardSync } from './board-sync';
+import { canvasTheme } from './canvas-theme';
+import { CanvasToolbar, zEdge } from './canvas-toolbar';
+import {
+  createItem,
+  createPlacement,
+  type DraggedAsset,
+  outwardAssets,
+  placeCapture,
+  readCapture,
+  readTransfer,
+} from './capture';
+import { copySelection, NO_ORIGINALS, NOTICES } from './interchange';
+import { PresenceRoster, previewFor, RemoteCursors, remoteSelectionMarks } from './presence-layer';
+import { BoardRealtime, EMPTY_PRESENCE, type RemotePresence } from './realtime';
+import {
+  duplicateSelection,
+  opacityBodies,
+  SelectionToolbar,
+  soleGroupId,
+} from './selection-toolbar';
+import { type UploadedAsset, UploadQueue } from './upload';
+
+/**
+ * The canvas.
+ *
+ * Three rules hold this file together:
+ *
+ *  1. The scene comes from `computeActiveSet` and nowhere else. There is no code
+ *     path here that iterates the document's items.
+ *  2. Nothing mutates the document except through `history.apply`, which routes
+ *     into `CanvasDocument.apply` and keeps the inverse (ADR-0004).
+ *  3. Motion during a gesture is Konva's; the document only hears the result.
+ *     A React state update per pointermove is how the frame budget is lost.
+ */
+
+const IMAGE_LODS = new Set<string>([ItemLod.FULL, ItemLod.PREVIEW, ItemLod.THUMBNAIL]);
+
+/**
+ * Ceiling on instantiated scene nodes.
+ *
+ * `maxItems` in canvas-core bounds the active SET, and an aggregate entry costs
+ * a rect in a shared path — nearly nothing. A node costs a Konva shape, a React
+ * element and a draw. The benchmark put ~1300 nodes on screen at an intermediate
+ * zoom on the 100k board and the frame budget went with them, so the ceiling
+ * that matters is this one. Items above it are aggregated, lowest z first,
+ * because those are the ones already behind something.
+ */
+const MAX_NODES = 500;
+
+/**
+ * A group's annotation, in screen pixels — divided by zoom at the point of
+ * use, like every other interface stroke on the canvas, so it is one size at
+ * every zoom.
+ *
+ * The label is the annotation face (ADR-0022): uppercase Departure Mono, well
+ * past the 11px body-label size it replaces — a group's name is wayfinding on
+ * the board, not small print. `HALO` is the ground-coloured stroke under the
+ * fill that breaks the frame's line beneath the text; interruption is the
+ * association.
+ */
+const GROUP_LABEL_SIZE = 15;
+const GROUP_LABEL_FAMILY = '"Departure Mono", ui-monospace, monospace';
+const GROUP_LABEL_TRACKING = 2;
+const GROUP_LABEL_HALO = 4;
+const GROUP_LABEL_GAP = 6;
+/** A framed group's outline. Screen pixels, subordinate to every image. */
+const FRAME_STROKE = 1.5;
+/**
+ * The ground grid yields as cells approach single-digit screen size: fading
+ * out from `FADE_BELOW`, gone entirely below `HIDE_BELOW`. Hypotheses with a
+ * milestone attached — see OPEN_QUESTIONS.
+ */
+const GRID_FADE_BELOW = 12;
+const GRID_HIDE_BELOW = 6;
+
+/** Prefix for the full-strength outline node beside a selected or held item. */
+const SELECTION_MARK = 'sel-';
+
+/** One derived contour and the geometry signature it was derived from. */
+interface FrameEntry {
+  signature: string;
+  points: number[];
+  minX: number;
+  minY: number;
+}
+
+type Gesture =
+  | { kind: 'none' }
+  | { kind: 'pan'; x: number; y: number }
+  | { kind: 'marquee'; origin: { x: number; y: number } };
+
+export function CanvasSurface({
+  doc,
+  width,
+  height,
+  bitmapBudgetBytes,
+  boardId,
+  readOnly = false,
+}: {
+  doc: CanvasDocument;
+  width: number;
+  height: number;
+  /** Q7's budget, overridable so it can be measured rather than asserted. */
+  bitmapBudgetBytes?: number;
+  /**
+   * The board to persist to. Absent for a generated board — the benchmark
+   * fixtures have nowhere to be saved and nothing to be saved from.
+   */
+  boardId?: string;
+  /**
+   * A share-link viewer's board (ADR-0026): pan, zoom, select to look closer,
+   * and nothing that changes it. Everything durable goes through `commit`, so
+   * making that a no-op is the whole of the guarantee on this side — the
+   * server refuses a viewer's writes regardless. The socket is the viewer's
+   * receive-only one, and nothing is persisted, so there is no queue.
+   */
+  readOnly?: boolean;
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const stageRef = useRef<Konva.Stage | null>(null);
+  const transformerRef = useRef<Konva.Transformer | null>(null);
+  const gesture = useRef<Gesture>({ kind: 'none' });
+  const dragOrigins = useRef(new Map<ItemId, { x: number; y: number }>());
+  /** Derived group contours, invalidated by the geometry signature inside each entry. */
+  const frameCacheRef = useRef(new Map<GroupId, FrameEntry>());
+  const spaceHeld = useRef(false);
+
+  const [camera, setCamera] = useState<Camera>(DEFAULT_CAMERA);
+  const [marquee, setMarqueeState] = useState<Rect | null>(null);
+  // Mirrored in a ref: the native gesture listeners read it without becoming a
+  // dependency, and reading it in a state updater would run during render.
+  const marqueeRef = useRef<Rect | null>(null);
+  const setMarquee = useCallback((area: Rect | null) => {
+    marqueeRef.current = area;
+    setMarqueeState(area);
+  }, []);
+  const [, redraw] = useReducer((n: number) => n + 1, 0);
+  const [presence, setPresence] = useState<RemotePresence>(EMPTY_PRESENCE);
+  /**
+   * A gesture is in flight — a drag, a resize, a marquee, a pan.
+   *
+   * State rather than the `gesture` ref because chrome has to re-render when it
+   * changes; it moves twice per gesture, not once per pointermove.
+   */
+  const [gesturing, setGesturing] = useState(false);
+  /**
+   * The opacity under the slider, before it is committed.
+   *
+   * The same shape the canvas already uses for another actor's in-flight
+   * transform: the renderer prefers it to the document's value, and the document
+   * — and therefore history, sync and everyone else — hears only the release.
+   */
+  const [opacityPreview, setOpacityPreview] = useState<number | null>(null);
+  /** Bumped by `F2`. The bar opens the same field its own button does. */
+  const [labelSignal, setLabelSignal] = useState(0);
+  /** The live socket, read by gesture handlers that must not re-subscribe per frame. */
+  const realtimeRef = useRef<BoardRealtime | null>(null);
+  const syncRef = useRef<BoardSync | null>(null);
+  /** Items this gesture claimed, released once its operations are durable. */
+  const claimed = useRef<ItemId[]>([]);
+
+  const theme = canvasTheme();
+  const history = useMemo(() => new CanvasHistory(doc), [doc]);
+  /**
+   * The library is beside the canvas now.
+   *
+   * Before M07 an upload had nothing on screen to tell: the library was a route
+   * you navigated to, and it fetched when you got there. The sidebar panel makes
+   * a dropped image something that should appear a few hundred pixels to the
+   * left without a reload, so the one place that knows an upload finished says
+   * so. Invalidation rather than a cache write, because the server decides an
+   * asset's identity — the same bytes twice are one asset, and guessing here
+   * would put a duplicate in the panel.
+   */
+  const queryClient = useQueryClient();
+  useEffect(installBench, []);
+
+  /**
+   * Konva paints into a bitmap, so a face that has not arrived yet draws in
+   * the fallback and stays there until something else happens to redraw. One
+   * load, one redraw; the promise settles immediately once it is cached.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    document.fonts.load(`${GROUP_LABEL_SIZE}px "Departure Mono"`).then(() => {
+      if (!cancelled) redraw();
+    });
+    return () => {
+      cancelled = true;
+    };
+    // redraw is a reducer dispatch: stable by construction, so no dependency.
+  }, []);
+
+  const tool = useUiStore((s) => s.tool);
+  const setSelection = useUiStore((s) => s.setSelection);
+  const selection = useUiStore((s) => s.selectedItemIds) as ReadonlySet<ItemId>;
+
+  const size = useMemo(() => ({ width, height }), [width, height]);
+  // The gesture listeners below are attached once; they read the live camera
+  // through a ref rather than being torn down and rebuilt every pan frame.
+  const view = useRef({ camera, size });
+  view.current = { camera, size };
+
+  const activeSetStart = performance.now();
+  const active = computeActiveSet(doc, camera, size, { preloadMargin: 0 });
+  const activeSetMs = performance.now() - activeSetStart;
+  const stage = toStageAttrs(camera, size);
+
+  // Bitmaps follow the active set: what is drawn is pinned, what has left is
+  // aborted, and the tier each item wants comes from its size on screen.
+  const bitmaps = useBitmaps(active.visible, camera.zoom, bitmapBudgetBytes);
+
+  /** Split the active set: real nodes, and everything painted as aggregate. */
+  const nodes: CanvasItem[] = [];
+  const aggregated: Rect[] = [];
+  const aggregatedGroups = new Set<GroupId>();
+  /** Every group the active set touches. Labels are bounded by this, never by the document. */
+  const activeGroups = new Set<GroupId>();
+  // Walked top down, so the ceiling sheds the items furthest back.
+  for (let i = active.visible.length - 1; i >= 0; i--) {
+    const { item, lod } = active.visible[i] as VisibleItem;
+    if (item.groupId) activeGroups.add(item.groupId);
+    if (lod !== ItemLod.AGGREGATE && nodes.length < MAX_NODES) {
+      nodes.push(item);
+      continue;
+    }
+    const bounds = doc.index.boundsOf(item.id);
+    if (bounds) aggregated.push(bounds);
+    if (item.groupId) aggregatedGroups.add(item.groupId);
+  }
+  nodes.reverse(); // back to painter's order
+
+  // Truncation is not permission to draw less (invariant 8): whatever the
+  // ceiling clipped is aggregated instead, from the ids the active set already
+  // handed back rather than a second query.
+  for (const id of active.overflow) {
+    const bounds = doc.index.boundsOf(id);
+    if (bounds) aggregated.push(bounds);
+    const groupId = doc.item(id)?.groupId;
+    if (groupId) {
+      aggregatedGroups.add(groupId);
+      activeGroups.add(groupId);
+    }
+  }
+
+  // Only groups with aggregated members: outlining every group on the board
+  // would be work proportional to the document, which is exactly what the
+  // active set exists to avoid.
+  const groupOutlines: Rect[] = [];
+  for (const groupId of aggregatedGroups) {
+    const bounds = doc.groupBounds(groupId);
+    if (bounds) groupOutlines.push(bounds);
+  }
+
+  /**
+   * Derived contours for framed groups the active set touches.
+   *
+   * The cache is keyed by a signature of everything a contour depends on —
+   * framing plus each member's transform — so it is recomputed only when the
+   * document actually changed. And it cannot jitter mid-drag: motion during a
+   * gesture is Konva's, the document hears about the move once at release, so
+   * this runs then and never per pointermove.
+   *
+   * Suppression: while every member is aggregated away the aggregate layer's
+   * group marks already carry the grouping, and a full contour on top of them
+   * would only be noise.
+   */
+  const instantiatedGroups = new Set<GroupId>();
+  for (const item of nodes) {
+    if (item.groupId) instantiatedGroups.add(item.groupId);
+  }
+  const drawnFrames: (FrameEntry & { groupId: GroupId })[] = [];
+  for (const groupId of activeGroups) {
+    if (!instantiatedGroups.has(groupId)) continue;
+    const entry = frameFor(doc, groupId, frameCacheRef.current);
+    if (!entry) continue;
+    drawnFrames.push({ ...entry, groupId });
+  }
+  const frames = new Map(drawnFrames.map((f) => [f.groupId, f]));
+
+  // A label that cannot be seen is not a label.
+  const groupLabels = groupLabelsFor(doc, activeGroups, camera.zoom, frames);
+
+  noteRender({
+    activeSetMs,
+    nodes: nodes.length,
+    aggregated: aggregated.length,
+    items: doc.itemCount,
+    decodedBytes: bitmaps.cache.bytes,
+    bitmaps: bitmaps.cache.size,
+    bitmapFailures: bitmaps.cache.failed,
+    truncated: active.truncated,
+  });
+
+  /**
+   * The colour of the actor holding an item, when it is not us.
+   *
+   * `undefined` means grabbable. Resolved from a token through the theme, never
+   * from a value on the wire — the socket only ever carries a slot index.
+   */
+  const holderColour = (itemId: ItemId): string | undefined => {
+    const holder = realtimeRef.current?.heldByOther(itemId);
+    if (!holder) return undefined;
+    const actor = presence.actors.get(holder);
+    return actor ? (theme.presence[actor.colourIndex] ?? theme.presence[0]) : theme.presence[0];
+  };
+
+  /** Another actor's selection, as world rectangles the renderer can stroke. */
+  const remoteMarks = remoteSelectionMarks(
+    presence,
+    (id) => {
+      const item = doc.item(id);
+      return item ? transformBounds(previewFor(presence, id) ?? item.transform) : undefined;
+    },
+    theme,
+  );
+
+  const commit = useCallback(
+    (...bodies: CanvasOperationBody[]) => {
+      if (readOnly) return;
+      if (history.apply(...bodies)) redraw();
+    },
+    [history, readOnly],
+  );
+
+  const setSync = useUiStore((s) => s.setSync);
+  const setConnection = useUiStore((s) => s.setConnection);
+  const setLinkViewers = useUiStore((s) => s.setLinkViewers);
+
+  /**
+   * Persistence, attached to the one funnel every durable change goes through.
+   *
+   * Attached HERE and not inside the document, and only after the document
+   * exists: a generated board is filled by applying up to 100,000 operations,
+   * and a listener present during that would try to persist a benchmark.
+   */
+  useEffect(() => {
+    if (!boardId || !readOnly) return;
+    // A viewer: the receive-only socket, and its own snapshot to resync from.
+    const realtime = new BoardRealtime({
+      boardId,
+      doc,
+      path: '/ws/shared',
+      resync: () => loadSharedSnapshotInto(doc),
+      onPresence: () => {},
+      onState: setConnection,
+      onRemoteChange: redraw,
+    });
+    realtime.connect();
+    return () => {
+      realtime.close();
+      setConnection('idle');
+    };
+  }, [boardId, doc, readOnly, setConnection]);
+
+  useEffect(() => {
+    if (!boardId || readOnly) return;
+    const sync = new BoardSync({ boardId, doc, onStatus: setSync });
+    doc.onApplied(sync.applied);
+    syncRef.current = sync;
+
+    /*
+     * The socket, opened beside persistence and never in front of it.
+     *
+     * Only for a persisted board: a generated bench board has nobody to
+     * collaborate with and no id to be reached at. Note the order of the two —
+     * `sync` exists first, because a commit broadcast can arrive before the
+     * first local edit and the queue has to be there to be told our actor id.
+     */
+    const realtime = new BoardRealtime({
+      boardId,
+      doc,
+      resync: () =>
+        loadSnapshotInto(doc, boardId).then(() => gestureRecovery.current.afterResync()),
+      onPresence: setPresence,
+      onState: setConnection,
+      onRemoteChange: redraw,
+      onLockRefused: (itemIds) => gestureRecovery.current.snapBack(itemIds),
+      onViewers: setLinkViewers,
+    });
+    realtimeRef.current = realtime;
+    realtime.connect();
+
+    // The queue learns who it is once the handshake lands, so its posts can say
+    // which socket made them and the server can skip echoing them back.
+    const identify = setInterval(() => sync.setActorId(realtime.actorId), 500);
+
+    // The bounded loss window: an edit applied and the tab killed before the
+    // flush timer fires. `keepalive` lets the request outlive the page.
+    const onHidden = () => {
+      if (globalThis.document.visibilityState === 'hidden') void sync.flush(true);
+    };
+    globalThis.document.addEventListener('visibilitychange', onHidden);
+
+    return () => {
+      globalThis.document.removeEventListener('visibilitychange', onHidden);
+      clearInterval(identify);
+      doc.onApplied(undefined);
+      realtime.close();
+      setConnection('idle');
+      realtimeRef.current = null;
+      syncRef.current = null;
+      setPresence(EMPTY_PRESENCE);
+      setLinkViewers(0);
+      sync.stop();
+      void sync.flush(true);
+    };
+  }, [boardId, doc, readOnly, setSync, setConnection, setLinkViewers]);
+
+  const setUploads = useUiStore((s) => s.setUploads);
+  const addUploadFailure = useUiStore((s) => s.addUploadFailure);
+  const uploads = useMemo(
+    () => new UploadQueue({ onStatus: setUploads, onFailure: addUploadFailure }),
+    [setUploads, addUploadFailure],
+  );
+  // Deliberately NOT stopped when the board unmounts. An upload already in
+  // flight should finish: assets outlive boards, and the resolve callback
+  // already copes with an item that is no longer there. Stopping it in a
+  // cleanup also breaks under StrictMode, whose mount/cleanup/mount would
+  // disable the memoised queue for the life of the page.
+
+  /**
+   * A dropped or pasted image, on the board before the network hears about it.
+   *
+   * Every step after the first is asynchronous and none of it blocks a gesture:
+   * the item is created from locally-read dimensions, and the upload resolves it
+   * later through `item.content` (ADR-0004 — no second mutation path).
+   */
+  const capture = useCallback(
+    async (files: readonly File[], screenPoint: { x: number; y: number }) => {
+      const { camera, size } = view.current;
+      const at = screenToWorld(camera, size, screenPoint);
+      const world = visibleWorldRect(camera, size);
+
+      // Every file is decoded BEFORE anything is committed. A five-image drop
+      // is one gesture, so it is one history entry and one undo press — which
+      // is why this is a `Promise.all` and not a loop with a commit in it. The
+      // awaits stay here, beside the interaction loop and never inside it.
+      const captured = (await Promise.all(files.map((file) => readCapture(file)))).filter(
+        (dropped) => dropped !== undefined,
+      );
+      if (captured.length === 0) return;
+
+      const top = zEdge(doc).max + 1;
+      commit(
+        ...captured.map((dropped, index) =>
+          createItem(dropped, placeCapture(dropped, at, index, world), top + index),
+        ),
+      );
+
+      for (const dropped of captured) {
+        uploads.add(dropped.itemId, dropped.file, (asset: UploadedAsset) => {
+          if (!doc.item(dropped.itemId)) {
+            // Undone or deleted while it uploaded. The asset is stored and stays
+            // stored — assets outlive boards — but nothing on this board wants it.
+            URL.revokeObjectURL(dropped.previewUrl);
+            return;
+          }
+          // The pixels are already decoded under the preview's key; move them
+          // rather than re-fetching what we just sent.
+          bitmaps.cache.adopt(dropped.previewUrl, asset.assetId);
+
+          // Through the document, but NOT through history. Finishing an upload
+          // is not something the user did — it is the rest of what they already
+          // did. An undo slot here would mean one Ctrl+Z turns the image back
+          // into a grey placeholder and a second one removes it, and undoing a
+          // drop has to be one press. The `item.create` entry still inverts to
+          // `item.delete`, which removes the item whichever content it holds.
+          doc.apply({
+            type: 'item.content',
+            itemId: dropped.itemId,
+            content: {
+              kind: 'image',
+              asset: {
+                assetId: asAssetId(asset.assetId),
+                intrinsicWidth: asset.width,
+                intrinsicHeight: asset.height,
+              },
+            },
+          });
+          redraw();
+          URL.revokeObjectURL(dropped.previewUrl);
+          void queryClient.invalidateQueries({ queryKey: ['library'] });
+        });
+      }
+    },
+    [bitmaps, commit, doc, queryClient, uploads],
+  );
+
+  /**
+   * An asset from the library becoming an item — the short path.
+   *
+   * Nothing is uploaded, nothing is a placeholder and nothing resolves later:
+   * the library already carries the asset id and its intrinsic size, which is
+   * exactly what image content needs. One `commit` for the whole batch, so
+   * placing eight selected assets is one undo press, like the drag it was.
+   *
+   * Without a point — a click in the panel rather than a drop — they land at the
+   * centre of what is visible, cascaded so a batch is not one stack.
+   */
+  /*
+   * Where the next centre placement continues the cascade from. Separate clicks
+   * in the panel used to land on the same centre, eight images in one pile that
+   * read as one image. Same camera → carry on down-right; a moved camera is a
+   * new place to put things, so it starts again.
+   *
+   * ponytail: wraps after 10 steps rather than finding free space; add a real
+   * free-space search if people place dozens of images per view.
+   */
+  const cascade = useRef<{ camera: unknown; next: number }>({ camera: null, next: 0 });
+  const place = useCallback(
+    (assets: readonly DraggedAsset[], screenPoint?: { x: number; y: number }) => {
+      if (assets.length === 0) return;
+      const { camera, size } = view.current;
+      let start = 0;
+      if (!screenPoint) {
+        start = cascade.current.camera === camera ? cascade.current.next % 10 : 0;
+        cascade.current = { camera, next: start + assets.length };
+      }
+      const at = screenToWorld(
+        camera,
+        size,
+        screenPoint ?? { x: size.width / 2, y: size.height / 2 },
+      );
+      const world = visibleWorldRect(camera, size);
+      const top = zEdge(doc).max + 1;
+
+      commit(
+        ...assets.map((asset, index) =>
+          createPlacement(
+            { assetId: asAssetId(asset.assetId), width: asset.width, height: asset.height },
+            placeCapture(asset, at, start + index, world),
+            top + index,
+          ),
+        ),
+      );
+    },
+    [commit, doc],
+  );
+
+  /**
+   * The same placement, from ids alone.
+   *
+   * A clipboard carries no private MIME type, so a paste of what Visarium copied
+   * arrives as content URLs and the intrinsic sizes have to be fetched back. The
+   * await is here, beside the interaction loop, and never inside a pointer
+   * handler — a paste is a window event, not a gesture.
+   */
+  const placeById = useCallback(
+    async (assetIds: readonly string[], screenPoint?: { x: number; y: number }) => {
+      place(await assetsById(assetIds), screenPoint);
+    },
+    [place],
+  );
+
+  // The sidebar's library panel is a sibling under the shell, not a child, so
+  // the board hands it a way in while it is mounted and takes it away when it
+  // is not — which is also how the panel knows a board is open.
+  const setPlaceAssets = useUiStore((s) => s.setPlaceAssets);
+  const setInterchangeNotice = useUiStore((s) => s.setInterchangeNotice);
+  const toolbarCollapsed = useUiStore((s) => s.toolbarCollapsed);
+  const toggleToolbar = useUiStore((s) => s.toggleToolbar);
+  useEffect(() => {
+    setPlaceAssets(place);
+    return () => setPlaceAssets(null);
+  }, [place, setPlaceAssets]);
+
+  // Drop is a native listener on the container, like the wheel handler: React's
+  // synthetic drag props on a plain div are an accessibility violation the
+  // linter is right about, and the canvas is not a control anyone can tab to.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || readOnly) return;
+
+    // Without preventDefault on dragover the browser navigates to the file.
+    const onDragOver = (event: DragEvent) => event.preventDefault();
+    const onDrop = (event: DragEvent) => {
+      const at = pointerIn(container, event as unknown as PointerEvent);
+
+      // Ours first — the ordering `readTransfer` states once, unchanged in
+      // meaning since M04 and now shared with the paste handler below.
+      const arrival = readTransfer(event.dataTransfer);
+      if (arrival.kind === 'nothing') return;
+      event.preventDefault();
+      if (arrival.kind === 'assets' && arrival.origin === doc.canvasId) {
+        /*
+         * An export of THIS board, let go over THIS board. Nothing happens.
+         *
+         * Take out sits a few pixels above the selection, so it sits over the
+         * canvas, and the resting place of any drag that does not leave the
+         * window is the board it came from. Treating that as a placement made
+         * every abandoned export silently duplicate the whole selection —
+         * Duplicate is the neighbouring control and is how somebody asks for
+         * that. A drag from the library still places, and so does an export
+         * dropped on a DIFFERENT board: both carry an origin that is not this
+         * one.
+         */
+        return;
+      }
+      if (arrival.kind === 'assets') place(arrival.assets, at);
+      else if (arrival.kind === 'ids') void placeById(arrival.assetIds, at);
+      else void capture(arrival.files, at);
+    };
+
+    container.addEventListener('dragover', onDragOver);
+    container.addEventListener('drop', onDrop);
+    return () => {
+      container.removeEventListener('dragover', onDragOver);
+      container.removeEventListener('drop', onDrop);
+    };
+  }, [capture, doc, place, placeById, readOnly]);
+
+  // Paste is a window event: it has no target inside the canvas to hang off.
+  useEffect(() => {
+    if (readOnly) return;
+    const onPaste = (event: ClipboardEvent) => {
+      const arrival = readTransfer(event.clipboardData);
+      if (arrival.kind === 'nothing') return;
+      // A text field's paste is its own. Narrow on purpose: only the URL payload
+      // is text, so only it can be stolen from a field somebody is typing in —
+      // and an image paste keeps behaving exactly as M02 specified.
+      if (arrival.kind === 'ids' && isTyping(event.target)) return;
+      event.preventDefault();
+      const { width: w, height: h } = view.current.size;
+      const at = { x: w / 2, y: h / 2 };
+      // Pasting what Visarium copied must not re-upload it. `readTransfer` puts
+      // our own payload ahead of the image the clipboard also carries, which is
+      // the same rule the drop handler above has always had — it just had
+      // nothing to protect until Visarium could write a clipboard of its own.
+      if (arrival.kind === 'assets') place(arrival.assets, at);
+      else if (arrival.kind === 'ids') void placeById(arrival.assetIds, at);
+      else void capture(arrival.files, at);
+    };
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, [capture, place, placeById, readOnly]);
+
+  const select = useCallback(
+    (ids: Iterable<ItemId>, mode: SelectionMode) => {
+      setSelection(applySelection(selection, expandToGroups(doc, ids), mode));
+    },
+    [doc, selection, setSelection],
+  );
+
+  const selectRef = useRef(select);
+  selectRef.current = select;
+  // The resync callback is built once inside an effect and must not close over
+  // a stale selection; it reads through this instead.
+  const selectionRef = useRef(selection);
+  selectionRef.current = selection;
+
+  /**
+   * A modified wheel gesture still in flight.
+   *
+   * `before` is where the board was when it started; `ids` is what it is acting
+   * on, held here rather than read at settle time because the selection may
+   * change under a timer.
+   */
+  const adjusting = useRef<{
+    kind: WheelAdjustment;
+    ids: ItemId[];
+    before: CanvasOperationBody[];
+    timer: number;
+  } | null>(null);
+
+  /**
+   * End a wheel gesture and give history exactly one entry for it.
+   *
+   * The gesture ran on the document so it could be SEEN — `doc.apply` and a
+   * redraw, the same local-only path an upload's resolve uses — and history has
+   * heard nothing at all. So the board goes back to where the gesture started
+   * and the finished state is committed once: one undo press, one post, however
+   * many notches the wheel turned. Committing per notch would bury every other
+   * act on the board under a hundred undo steps.
+   */
+  const settleAdjustment = useCallback(() => {
+    const live = adjusting.current;
+    if (!live) return;
+    window.clearTimeout(live.timer);
+    adjusting.current = null;
+
+    // Only the half the gesture actually moved: an opacity gesture has no
+    // business posting a transform per item, and vice versa.
+    const wanted = live.kind === 'opacity' ? 'item.appearance' : 'item.transform';
+    const after = selectionState(doc, live.ids).filter((body) => body.type === wanted);
+    for (const body of live.before) doc.apply(body);
+    commit(...after);
+  }, [commit, doc]);
+
+  /**
+   * The wheel, acting on the selection rather than on the camera.
+   *
+   * Applied live and locally; `settleAdjustment` above is what makes it durable.
+   */
+  const adjustSelection = useCallback(
+    (kind: WheelAdjustment, deltaY: number) => {
+      const ids = [...selectionRef.current];
+      if (ids.length === 0) return;
+
+      // A different modifier mid-scroll ends the gesture it interrupted, so the
+      // two do not merge into one undo step that did two unrelated things.
+      if (adjusting.current?.kind !== kind) {
+        settleAdjustment();
+        adjusting.current = { kind, ids, before: selectionState(doc, ids), timer: 0 };
+      }
+      const live = adjusting.current as NonNullable<typeof adjusting.current>;
+
+      const bodies = wheelBodies(doc, live.ids, kind, deltaY);
+      for (const body of bodies) doc.apply(body);
+      if (bodies.length > 0) redraw();
+
+      // The wheel has no release event, so the gesture ends when it goes quiet.
+      window.clearTimeout(live.timer);
+      live.timer = window.setTimeout(settleAdjustment, ADJUST_SETTLE_MS);
+    },
+    [doc, settleAdjustment],
+  );
+  // Read through a ref for the reason `selectRef` gives: the wheel listener is
+  // attached once and must not close over a stale selection.
+  const adjustRef = useRef(adjustSelection);
+  adjustRef.current = adjustSelection;
+
+  // A gesture left in flight when the board goes away would commit against a
+  // document nobody is looking at.
+  useEffect(() => settleAdjustment, [settleAdjustment]);
+
+  // --- input ---------------------------------------------------------------
+
+  // Wheel is attached by hand: a passive listener cannot preventDefault, and
+  // Chrome makes wheel listeners passive by default. Without this the page
+  // zooms instead of the canvas.
+  //
+  // Coalesced to at most two camera changes per frame. A trackpad flick
+  // delivers wheel events faster than the screen has frames, and M01 measured
+  // the result at 100k items: p95 33–50 ms with p50 unaffected, which is the
+  // signature of more work per frame than there are frames rather than of slow
+  // work.
+  //
+  // Accumulating is exact, not an approximation: multiplicative zoom composes,
+  // `exp(-Σd·k) = Π exp(-d·k)`, so applying the sum once gives the same camera
+  // as applying each event in turn. The anchor is the NEWEST event's, because
+  // that is where the pointer is when the frame is drawn.
+  //
+  // The first event of a frame is applied AT ONCE rather than waiting for it.
+  // A pure trailing-edge version is one line shorter and measurably worse:
+  // ordinary wheeling arrives slower than the frame rate, so every event would
+  // pay a frame of latency to solve a problem only bursts have.
+  useEffect(() => {
+    const element = containerRef.current;
+    if (!element) return;
+    let queued = 0;
+    let anchor = { x: 0, y: 0 };
+    let box = element.getBoundingClientRect();
+    let frame = 0;
+
+    const applyZoom = (delta: number) => {
+      const factor = Math.exp(-delta);
+      setCamera((c) =>
+        zoomAt(c, { width: box.width, height: box.height }, anchor, c.zoom * factor),
+      );
+    };
+
+    const flush = () => {
+      frame = 0;
+      if (queued === 0) return;
+      applyZoom(queued);
+      queued = 0;
+    };
+
+    const onWheel = (event: WheelEvent) => {
+      // Synchronously, on EVERY event. Deferring this would let the page scroll
+      // before the handler that meant to stop it ever ran — and it is what stops
+      // Alt+wheel reaching Firefox's history navigation.
+      event.preventDefault();
+      box = element.getBoundingClientRect();
+      anchor = { x: event.clientX - box.left, y: event.clientY - box.top };
+
+      // A modifier turns the wheel from the CAMERA onto the SELECTION. Ctrl is
+      // not one of them and cannot be: every platform that reports a trackpad
+      // pinch at all reports it as ctrl+wheel, so binding it here would cost
+      // pinch-to-zoom on every laptop.
+      const adjust = adjustmentFor(event);
+      if (adjust) {
+        adjustRef.current(adjust, event.deltaY);
+        return;
+      }
+
+      // ctrlKey means trackpad pinch on every platform that reports it at all.
+      const delta = event.deltaY * (event.ctrlKey ? 0.01 : 0.002);
+
+      if (frame === 0) {
+        // Leading edge. Ordinary wheeling delivers well under one event per
+        // frame, and deferring THAT to a frame would add a frame of latency to
+        // input that was never the problem — measured, and it did.
+        applyZoom(delta);
+        frame = requestAnimationFrame(flush);
+        return;
+      }
+      queued += delta;
+    };
+
+    element.addEventListener('wheel', onWheel, { passive: false });
+    return () => {
+      element.removeEventListener('wheel', onWheel);
+      if (frame !== 0) cancelAnimationFrame(frame);
+    };
+  }, []);
+
+  /**
+   * Everything on the board, selected.
+   *
+   * ponytail: on the 100,000-item board this really does put 100,000 ids in the
+   * store — an explicit act with an explicit cost, and the only way "select all"
+   * could mean anything else is by lying about how many it selected. What is
+   * bounded is what leaves the machine: see `sendSelection`.
+   */
+  const selectAll = useCallback(() => {
+    setSelection([...doc.items()].map((item) => item.id));
+  }, [doc, setSelection]);
+
+  /**
+   * Drop an in-progress gesture without applying it.
+   *
+   * Not the same as finishing early: a marquee abandoned here selects nothing,
+   * and a pan simply stops. That is what Escape means everywhere else, and a
+   * gesture that committed on cancel would be the surprising one.
+   */
+  const abandonGesture = useCallback(() => {
+    gesture.current = { kind: 'none' };
+    setGesturing(false);
+    setMarquee(null);
+  }, [setMarquee]);
+
+  /**
+   * Put the camera where the work is.
+   *
+   * The selection, or the whole board when nothing is selected — one key, two
+   * behaviours, no modifier to remember. It changes no item, so it is not an
+   * operation and takes no undo slot: pressing undo after framing undoes the
+   * last thing that actually changed the board, which is what a person means.
+   *
+   * Framing everything reads the index's root envelope rather than iterating
+   * transforms, so it costs the same on a 100,000-item board as on an empty one.
+   * `fitRect` clamps, so framing one 64px icon does not zoom to 32x.
+   */
+  const frameView = useCallback(() => {
+    const selected = selectionRef.current;
+    const target =
+      selected.size > 0
+        ? unionRects(
+            [...selected].flatMap((id) => {
+              const bounds = doc.index.boundsOf(id);
+              return bounds ? [bounds] : [];
+            }),
+          )
+        : doc.index.bounds();
+    if (!target) return;
+    setCamera(fitRect(view.current.size, target));
+  }, [doc]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      // Nothing on this canvas is a shortcut while a text field has focus,
+      // including the selection toolbar's own label field: otherwise naming a
+      // cluster "40s cinema" sets its opacity to 40% and deletes it.
+      if (isTyping(event.target)) return;
+
+      if (event.code === 'Space') spaceHeld.current = true;
+      const mod = event.ctrlKey || event.metaKey;
+
+      if (mod && event.key.toLowerCase() === 'z') {
+        event.preventDefault();
+        if (event.shiftKey ? history.redo() : history.undo()) redraw();
+        return;
+      }
+      if (mod && event.key.toLowerCase() === 'a') {
+        event.preventDefault();
+        selectAll();
+        return;
+      }
+      if (event.key === 'Escape') {
+        // Abandon, not commit: a marquee or a drag in progress is cancelled
+        // rather than applied, which is what Escape means everywhere else.
+        event.preventDefault();
+        abandonGesture();
+        setSelection([]);
+        return;
+      }
+      if (!mod && event.key.toLowerCase() === 'f') {
+        event.preventDefault();
+        frameView();
+        return;
+      }
+      if (event.key === 'Delete' || event.key === 'Backspace') {
+        if (selection.size === 0) return;
+        event.preventDefault();
+        commit(
+          ...[...selection].map((id): CanvasOperationBody => ({ type: 'item.delete', itemId: id })),
+        );
+        setSelection([]);
+        return;
+      }
+      if (selection.size > 0) {
+        /*
+         * The bar is the fallback, not the interface — so every slot on it has
+         * a key here.
+         *
+         * `1`-`9` are tenths and `0` is full, which is what every tool with an
+         * opacity control does, and without `0` there would be no key for the
+         * value people most want to return to. Each press is one discrete act
+         * and therefore one operation and one history entry: pressing `5` then
+         * `7` is two undos, because it was two acts.
+         */
+        const digit = DIGITS[event.key];
+        if (digit !== undefined && !mod) {
+          event.preventDefault();
+          commit(...opacityBodies(doc, selection, digit));
+          return;
+        }
+        if (event.shiftKey && !mod) {
+          const axis = FLIP_KEYS[event.key.toLowerCase()];
+          if (axis) {
+            event.preventDefault();
+            commit(...flipSelection(doc, selection, axis));
+            return;
+          }
+        }
+        if (event.key === 'F2') {
+          event.preventDefault();
+          setLabelSignal((n) => n + 1);
+          return;
+        }
+        if (event.key === 'F4') {
+          // The frame toggle's keyboard form: the same act the bar's control
+          // commits, guarded the same way — exactly one whole group or nothing.
+          event.preventDefault();
+          const groupId = soleGroupId(doc, selection);
+          const group = groupId ? doc.group(groupId) : undefined;
+          if (!group) return;
+          commit({ type: 'group.frame', groupId: group.id, frame: !(group.frame ?? false) });
+          return;
+        }
+        if (mod && event.key.toLowerCase() === 'd') {
+          // Without this the browser bookmarks the page instead.
+          event.preventDefault();
+          const copy = duplicateSelection(doc, selection);
+          if (copy.bodies.length === 0) return;
+          commit(...copy.bodies);
+          setSelection(copy.itemIds);
+          return;
+        }
+        if (mod && event.key.toLowerCase() === 'c' && !readOnly) {
+          /*
+           * The keyboard half of take out. Dragging has no keyboard form, so
+           * this is the whole of it.
+           *
+           * `isTyping` already returned above, which is what leaves the browser's
+           * own copy alone when text is selected inside the label field.
+           *
+           * No warm: a keypress has no hover to precede it, so the original's
+           * type is unknown at the instant the clipboard demands one and the
+           * write goes out as PNG. Every browser shipping today answers PNG
+           * anyway — `ClipboardItem.supports` exists in one of them and says yes
+           * to nothing else — and the notice states what was carried either way.
+           */
+          event.preventDefault();
+          const outward = outwardAssets(doc, selection);
+          if (outward.length === 0) {
+            setInterchangeNotice(NOTICES.notStored);
+            return;
+          }
+          void copySelection(outward, NO_ORIGINALS).then((outcome) =>
+            setInterchangeNotice(outcome === 'original' ? null : NOTICES[outcome]),
+          );
+          return;
+        }
+      }
+
+      const nudge = NUDGES[event.key];
+      if (nudge && selection.size > 0) {
+        event.preventDefault();
+        const step = event.shiftKey ? 10 : 1;
+        commit(...moveBy(doc, selection, nudge.x * step, nudge.y * step));
+      }
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.code === 'Space') spaceHeld.current = false;
+    };
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+    };
+  }, [
+    abandonGesture,
+    commit,
+    doc,
+    frameView,
+    history,
+    readOnly,
+    selectAll,
+    selection,
+    setInterchangeNotice,
+    setSelection,
+  ]);
+
+  /**
+   * Pointer capture retargets events to the capturing element, which means
+   * Konva's own listeners stop hearing them mid-gesture. So the gesture STARTS
+   * through Konva (it owns hit testing) and then continues on native listeners
+   * attached to the element holding the capture.
+   */
+  const onPointerDown = (e: Konva.KonvaEventObject<PointerEvent>) => {
+    const hitEmpty = e.target === e.target.getStage();
+    const wantsPan = tool === 'pan' || spaceHeld.current || e.evt.button === 1;
+    if (!hitEmpty && !wantsPan) return; // the node's own drag handles it
+
+    const container = containerRef.current;
+    if (!container) return;
+    container.setPointerCapture(e.evt.pointerId);
+
+    setGesturing(true);
+    if (wantsPan) {
+      gesture.current = { kind: 'pan', x: e.evt.clientX, y: e.evt.clientY };
+      return;
+    }
+    const origin = screenToWorld(camera, size, pointerIn(container, e.evt));
+    gesture.current = { kind: 'marquee', origin };
+    setMarquee({ minX: origin.x, minY: origin.y, maxX: origin.x, maxY: origin.y });
+  };
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const onMove = (event: PointerEvent) => {
+      // Where this person is on the BOARD, not on their screen: the receiver
+      // draws it in world space so it survives their own pan and zoom. The
+      // socket throttles, so this costs a subtraction per pointermove.
+      const { camera: pc, size: ps } = view.current;
+      const at = screenToWorld(pc, ps, pointerIn(container, event));
+      realtimeRef.current?.sendCursor(at.x, at.y);
+
+      const g = gesture.current;
+      if (g.kind === 'pan') {
+        const dx = event.clientX - g.x;
+        const dy = event.clientY - g.y;
+        gesture.current = { kind: 'pan', x: event.clientX, y: event.clientY };
+        setCamera((c) => panBy(c, dx, dy));
+        return;
+      }
+      if (g.kind === 'marquee') {
+        const { camera: c, size: s } = view.current;
+        const p = screenToWorld(c, s, pointerIn(container, event));
+        setMarquee({
+          minX: Math.min(g.origin.x, p.x),
+          minY: Math.min(g.origin.y, p.y),
+          maxX: Math.max(g.origin.x, p.x),
+          maxY: Math.max(g.origin.y, p.y),
+        });
+      }
+    };
+
+    const onUp = (event: PointerEvent) => {
+      const g = gesture.current;
+      gesture.current = { kind: 'none' };
+      setGesturing(false);
+      if (container.hasPointerCapture(event.pointerId)) {
+        container.releasePointerCapture(event.pointerId);
+      }
+      if (g.kind !== 'marquee') return;
+
+      const area = marqueeRef.current;
+      setMarquee(null);
+      if (!area) return;
+      const dragged = area.maxX - area.minX > 1 || area.maxY - area.minY > 1;
+      selectRef.current(dragged ? marqueeSelect(doc, area) : [], selectionMode(event));
+    };
+
+    container.addEventListener('pointermove', onMove);
+    container.addEventListener('pointerup', onUp);
+    container.addEventListener('pointercancel', onUp);
+    return () => {
+      container.removeEventListener('pointermove', onMove);
+      container.removeEventListener('pointerup', onUp);
+      container.removeEventListener('pointercancel', onUp);
+    };
+  }, [doc, setMarquee]);
+
+  // --- item gestures -------------------------------------------------------
+
+  const onItemPointerDown = (item: CanvasItem, e: Konva.KonvaEventObject<PointerEvent>) => {
+    if (tool === 'pan' || spaceHeld.current || e.evt.button === 1) return;
+    // Selecting someone else's item is fine; manipulating it is not. `draggable`
+    // already refuses the drag, and this keeps it out of a multi-item gesture.
+    if (realtimeRef.current?.heldByOther(item.id)) return;
+    const mode = selectionMode(e.evt);
+    if (mode === 'replace' && selection.has(item.id)) return; // keep the multi-selection
+    select([item.id], mode);
+  };
+
+  /**
+   * Claim what the gesture touches, and start dragging in the same frame.
+   *
+   * Optimistic on purpose: waiting for the grant would put a round trip inside a
+   * gesture, which is invariant 6. A refusal arrives as a `lock` frame naming
+   * someone else and snaps those items back — rare, because it needs two people
+   * to grab the same image within the same moment, and a better failure than a
+   * canvas that hesitates at the start of every drag.
+   */
+  const claim = (ids: readonly ItemId[]) => {
+    if (ids.length === 0) return;
+    claimed.current = [...ids];
+    realtimeRef.current?.acquire(ids);
+  };
+
+  /**
+   * Give the claim back once the gesture's operations are DURABLE.
+   *
+   * Not on pointerup: until the batch is posted the item's committed state is
+   * still the old one, and someone who grabbed it in that window could have
+   * their commit overwritten by the one still in our queue. If persistence is
+   * failing this never resolves and the ~10 s expiry is the backstop — an item
+   * briefly ungrabbable beats an edit quietly lost.
+   */
+  /*
+   * The socket is created once per board, but the two recovery callbacks it
+   * needs close over live gesture state. Naming them as effect dependencies
+   * would tear the connection down and rebuild it on every render, so they are
+   * read through a ref that is refreshed each pass — the same bargain `view` and
+   * `selectRef` above already make with the native listeners.
+   */
+  const gestureRecovery = useRef({
+    afterResync: () => {},
+    snapBack: (_ids: readonly ItemId[]) => {},
+  });
+
+  /** The full-strength outline beside an item, moved by hand exactly as its item is. */
+  const markAt = (id: ItemId, x: number, y: number) => {
+    stageRef.current?.findOne(`#${SELECTION_MARK}${id}`)?.position({ x, y });
+  };
+
+  /**
+   * Give up items the server refused, mid-gesture.
+   *
+   * Two people grabbed the same image within the same moment and this client
+   * lost. The nodes are put back where the document says they are — the document
+   * was never changed, because a drag only commits at the end — and they drop
+   * out of the gesture so the rest of a multi-item drag carries on.
+   */
+  const snapBack = (itemIds: readonly ItemId[]) => {
+    for (const id of itemIds) {
+      dragOrigins.current.delete(id);
+      claimed.current = claimed.current.filter((held) => held !== id);
+      const node = stageRef.current?.findOne(`#${id}`);
+      const committed = doc.item(id);
+      if (node && committed) {
+        node.position({ x: committed.transform.x, y: committed.transform.y });
+        markAt(id, committed.transform.x, committed.transform.y);
+        node.stopDrag?.();
+      }
+    }
+    stageRef.current?.batchDraw();
+  };
+
+  /**
+   * Put the interface back together after the board was replaced underneath it.
+   *
+   * A resync swaps every item, so anything holding an item id from before is now
+   * holding a reference to something that may not exist. A gesture is ended
+   * rather than continued — its origins describe a board that is gone — and the
+   * selection is pruned to what survived, because a selection naming missing
+   * items is a transformer attached to nothing.
+   *
+   * The camera is deliberately untouched: the person is looking at a region, and
+   * moving them somewhere else because the network hiccuped is worse than
+   * whatever they missed.
+   */
+  const afterResync = () => {
+    gesture.current = { kind: 'none' };
+    dragOrigins.current.clear();
+    claimed.current = [];
+    setMarquee(null);
+    setGesturing(false);
+    const surviving = [...selectionRef.current].filter((id) => doc.item(id));
+    if (surviving.length !== selectionRef.current.size) setSelection(surviving);
+    redraw();
+  };
+
+  gestureRecovery.current = { afterResync, snapBack };
+
+  const releaseWhenDurable = () => {
+    const ids = claimed.current;
+    claimed.current = [];
+    if (ids.length === 0) return;
+    const sync = syncRef.current;
+    const realtime = realtimeRef.current;
+    if (!realtime) return;
+    if (!sync) {
+      realtime.release(ids);
+      return;
+    }
+    void sync.settled().then(() => realtime.release(ids));
+  };
+
+  const onDragStart = (item: CanvasItem) => {
+    setGesturing(true);
+    dragOrigins.current.clear();
+    for (const id of selection) {
+      const node = stageRef.current?.findOne(`#${id}`);
+      if (node) dragOrigins.current.set(id, { x: node.x(), y: node.y() });
+    }
+    const touched = dragOrigins.current.size > 0 ? [...dragOrigins.current.keys()] : [item.id];
+    claim(touched);
+  };
+
+  /** Siblings follow imperatively — no React render per pointermove. */
+  const onDragMove = (item: CanvasItem, e: Konva.KonvaEventObject<DragEvent>) => {
+    const origin = dragOrigins.current.get(item.id);
+    const moved = new Map<ItemId, Transform>();
+    const at = (id: ItemId, x: number, y: number) => {
+      const current = doc.item(id);
+      if (current) moved.set(id, { ...current.transform, x, y });
+    };
+
+    if (!origin) {
+      at(item.id, e.target.x(), e.target.y());
+      markAt(item.id, e.target.x(), e.target.y());
+      previewNow(moved);
+      return;
+    }
+    const dx = e.target.x() - origin.x;
+    const dy = e.target.y() - origin.y;
+    at(item.id, e.target.x(), e.target.y());
+    // The selection outline is its own node so it keeps full strength over a
+    // faded item, which means it has to be moved by hand exactly as its item is.
+    markAt(item.id, e.target.x(), e.target.y());
+    for (const [id, start] of dragOrigins.current) {
+      if (id === item.id) continue;
+      stageRef.current?.findOne(`#${id}`)?.position({ x: start.x + dx, y: start.y + dy });
+      markAt(id, start.x + dx, start.y + dy);
+      at(id, start.x + dx, start.y + dy);
+    }
+    previewNow(moved);
+  };
+
+  /**
+   * Show the gesture to everyone else while it is still happening.
+   *
+   * Whole transforms, never deltas: a dropped preview is corrected by the next
+   * one instead of leaving permanent error. The whole selection goes in one
+   * frame, and the socket throttles — this is called per pointermove and must
+   * cost nothing.
+   */
+  const previewNow = (moved: ReadonlyMap<ItemId, Transform>) => {
+    if (moved.size > 0) realtimeRef.current?.sendPreview(moved);
+  };
+
+  const onDragEnd = (item: CanvasItem) => {
+    setGesturing(false);
+    const bodies: CanvasOperationBody[] = [];
+    for (const id of dragOrigins.current.keys()) {
+      const node = stageRef.current?.findOne(`#${id}`);
+      const current = doc.item(id);
+      if (!node || !current) continue;
+      bodies.push({
+        type: 'item.transform',
+        itemId: id,
+        transform: { ...current.transform, x: node.x(), y: node.y() },
+      });
+    }
+    dragOrigins.current.clear();
+    if (bodies.length === 0) {
+      const node = stageRef.current?.findOne(`#${item.id}`);
+      const current = doc.item(item.id);
+      if (node && current) {
+        commit({
+          type: 'item.transform',
+          itemId: item.id,
+          transform: { ...current.transform, x: node.x(), y: node.y() },
+        });
+      }
+      releaseWhenDurable();
+      return;
+    }
+    commit(...bodies);
+    releaseWhenDurable();
+  };
+
+  const onTransformEnd = () => {
+    setGesturing(false);
+    const bodies: CanvasOperationBody[] = [];
+    for (const node of transformerRef.current?.nodes() ?? []) {
+      const id = node.id() as ItemId;
+      if (!doc.item(id)) continue;
+      const transform = bakeScale({
+        x: node.x(),
+        y: node.y(),
+        width: node.width(),
+        height: node.height(),
+        rotation: node.rotation(),
+        offsetX: node.offsetX(),
+        offsetY: node.offsetY(),
+        scaleX: node.scaleX(),
+        scaleY: node.scaleY(),
+      });
+      // Scale lives in width/height from here on, so the node must not keep it.
+      node.scaleX(1);
+      node.scaleY(1);
+      bodies.push({ type: 'item.transform', itemId: id, transform });
+    }
+    commit(...bodies);
+    releaseWhenDurable();
+  };
+
+  /*
+   * Broadcast the selection whenever it changes.
+   *
+   * Ephemeral: it shows other people what this person is working on and never
+   * touches their own selection. Not throttled, because selecting is a discrete
+   * act — a person cannot produce these at 60 Hz the way a pointer can.
+   */
+  useEffect(() => {
+    realtimeRef.current?.sendSelection([...selection]);
+  }, [selection]);
+
+  // Konva's Transformer takes node instances, so it is synced after render.
+  useEffect(() => {
+    const transformer = transformerRef.current;
+    if (!transformer) return;
+    const attached = [...selection]
+      .map((id) => stageRef.current?.findOne(`#${id}`))
+      .filter((n): n is Konva.Node => Boolean(n));
+    transformer.nodes(attached);
+  });
+
+  return (
+    <div ref={containerRef} className="absolute inset-0 touch-none select-none">
+      <Stage
+        ref={stageRef}
+        width={width}
+        height={height}
+        x={stage.x}
+        y={stage.y}
+        scaleX={stage.scaleX}
+        scaleY={stage.scaleY}
+        onPointerDown={onPointerDown}
+      >
+        {/*
+          The ground grid: world-anchored hairlines that give the surface its
+          sense of scale. Beneath everything, hit-testable by nothing, gone
+          before it could ever compete with content.
+        */}
+        <Layer listening={false}>
+          <Shape
+            perfectDrawEnabled={false}
+            sceneFunc={(ctx) =>
+              paintGrid(ctx as unknown as Konva.Context, camera, size, theme.grid)
+            }
+          />
+        </Layer>
+
+        <Layer listening={false}>
+          <Shape
+            perfectDrawEnabled={false}
+            sceneFunc={(ctx) =>
+              paintAggregate(
+                ctx as unknown as AggregateContext,
+                { items: aggregated, groups: groupOutlines, zoom: camera.zoom },
+                { itemColor: theme.itemEdge, groupColor: theme.groupEdge },
+              )
+            }
+          />
+        </Layer>
+
+        {/*
+          Group annotations, between the aggregate marks and the images so the
+          references stay dominant: a frame reads around its members, and its
+          label interrupts the line with a ground-coloured halo. Screen pixels
+          divided by zoom, like every interface stroke.
+        */}
+        <Layer listening={false}>
+          {drawnFrames.map((frame) => (
+            <KonvaLine
+              key={frame.groupId}
+              points={frame.points}
+              closed
+              stroke={theme.frame}
+              strokeWidth={FRAME_STROKE / camera.zoom}
+              perfectDrawEnabled={false}
+              hitStrokeWidth={0}
+            />
+          ))}
+          {groupLabels.map((group) => (
+            <KonvaText
+              key={group.groupId}
+              x={group.x}
+              y={group.y}
+              text={group.label}
+              fontSize={group.fontSize}
+              fontFamily={GROUP_LABEL_FAMILY}
+              letterSpacing={GROUP_LABEL_TRACKING / camera.zoom}
+              fill={theme.label}
+              stroke={theme.ground}
+              strokeWidth={GROUP_LABEL_HALO / camera.zoom}
+              fillAfterStrokeEnabled
+              listening={false}
+              perfectDrawEnabled={false}
+            />
+          ))}
+        </Layer>
+
+        <Layer>
+          {nodes.map((item) => (
+            <ItemNode
+              key={item.id}
+              item={item}
+              lod={lodOf(active.visible, item.id)}
+              bitmap={bitmaps.bitmapFor(item)}
+              opacity={
+                opacityPreview !== null && selection.has(item.id)
+                  ? opacityPreview
+                  : item.appearance.opacity
+              }
+              selected={selection.has(item.id)}
+              draggable={tool === 'select' && !readOnly}
+              heldBy={holderColour(item.id)}
+              zoom={camera.zoom}
+              onPointerDown={onItemPointerDown}
+              onDragStart={onDragStart}
+              onDragMove={onDragMove}
+              onDragEnd={onDragEnd}
+            />
+          ))}
+          {/*
+            Another actor's selection: the same interface stroke as the local
+            one, in their colour, specified in screen pixels and divided by zoom
+            so it stays one thickness however far the camera is.
+          */}
+          {remoteMarks.map((mark) => (
+            <KonvaRect
+              key={mark.key}
+              x={mark.rect.minX}
+              y={mark.rect.minY}
+              width={mark.rect.maxX - mark.rect.minX}
+              height={mark.rect.maxY - mark.rect.minY}
+              stroke={mark.colour}
+              strokeWidth={1.5 / camera.zoom}
+              dash={[6 / camera.zoom, 4 / camera.zoom]}
+              listening={false}
+              perfectDrawEnabled={false}
+            />
+          ))}
+          {/*
+            Konva's Transformer ships with its own blue and white anchors, which
+            is a third palette nobody chose. It is the most visible thing on a
+            selected item, so it wears the accent like everything else.
+          */}
+          {/*
+            Konva's Transformer ships with its own blue and white anchors, which
+            is a third palette nobody chose. It is the most visible thing on a
+            selected item, so it wears the accent like everything else.
+          */}
+          {!readOnly && (
+            <Transformer
+              ref={transformerRef}
+              rotateEnabled
+              ignoreStroke
+              borderStroke={theme.accent}
+              borderStrokeWidth={1}
+              anchorStroke={theme.accent}
+              anchorFill={theme.surface}
+              anchorSize={8}
+              onTransformStart={() => setGesturing(true)}
+              onTransformEnd={onTransformEnd}
+            />
+          )}
+        </Layer>
+
+        {marquee && (
+          <Layer listening={false}>
+            <KonvaRect
+              x={marquee.minX}
+              y={marquee.minY}
+              width={marquee.maxX - marquee.minX}
+              height={marquee.maxY - marquee.minY}
+              fill={theme.accentWash}
+              stroke={theme.accent}
+              strokeWidth={1 / camera.zoom}
+            />
+          </Layer>
+        )}
+      </Stage>
+
+      <RemoteCursors presence={presence} camera={camera} size={size} theme={theme} />
+      <PresenceRoster
+        presence={presence}
+        selfActorId={realtimeRef.current?.actorId}
+        theme={theme}
+      />
+      {!readOnly && <CanvasToolbar history={history} onHistory={redraw} onFrame={frameView} />}
+      {!readOnly && (
+        <SelectionToolbar
+          doc={doc}
+          camera={camera}
+          size={size}
+          selection={selection}
+          commit={commit}
+          setSelection={setSelection}
+          onOpacityPreview={setOpacityPreview}
+          hidden={gesturing}
+          labelSignal={labelSignal}
+          collapsed={toolbarCollapsed}
+          onToggleCollapsed={toggleToolbar}
+        />
+      )}
+
+      <div
+        className="pointer-events-none absolute bottom-2 left-2 rounded bg-surface/90 px-2 py-1 text-[11px] text-ink-dim tabular-nums"
+        data-testid="canvas-stats"
+      >
+        {/*
+         * The renderer's counters are for measuring it, not for the person — and
+         * a share link shows this to a client. Dev builds (which the e2e suite
+         * runs against) and `?debug` keep them.
+         */}
+        {SHOW_RENDER_COUNTERS ? (
+          <>
+            {doc.itemCount.toLocaleString()} items · {active.candidateCount.toLocaleString()}{' '}
+            candidates · {nodes.length} rendered · {aggregated.length.toLocaleString()} aggregated ·{' '}
+            {selection.size} selected · {(camera.zoom * 100).toFixed(0)}%
+            {active.truncated ? ' · truncated' : ''}
+          </>
+        ) : (
+          <>
+            {doc.itemCount.toLocaleString()} items
+            {selection.size > 0 ? ` · ${selection.size} selected` : ''} ·{' '}
+            {(camera.zoom * 100).toFixed(0)}%
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const SHOW_RENDER_COUNTERS =
+  import.meta.env.DEV || new URLSearchParams(globalThis.location?.search).has('debug');
+
+// --- pieces ----------------------------------------------------------------
+
+/**
+ * One item, as the two sets of attributes it is drawn from.
+ *
+ * The split IS the invariant. `form` carries the item's appearance — its
+ * opacity, and each flip as a scale of -1 about the centre `toKonvaAttrs`
+ * already offsets to. `outline` carries the same geometry and deliberately
+ * neither: Konva applies a node's opacity once for the whole shape, so an
+ * interface stroke sharing the faded node would fade with it, and an item at
+ * zero opacity would be selected with nothing on screen to say so. Invariant 8
+ * is what that would break.
+ */
+export function itemNodeAttrs(
+  item: CanvasItem,
+  opacity: number,
+  zoom: number,
+  chrome: boolean,
+): {
+  form: ReturnType<typeof toKonvaAttrs> & ReturnType<typeof toKonvaAppearance>;
+  outline: (ReturnType<typeof toKonvaAttrs> & { strokeWidth: number }) | undefined;
+} {
+  const attrs = toKonvaAttrs(item.transform);
+  return {
+    form: { ...attrs, ...toKonvaAppearance({ ...item.appearance, opacity }) },
+    outline: chrome ? { ...attrs, strokeWidth: 2 / zoom } : undefined,
+  };
+}
+
+/**
+ * The labels to draw, for the groups handed in.
+ *
+ * The caller passes the groups the ACTIVE SET touches, which is the bound that
+ * matters: a board holding a thousand labelled groups draws as many labels as
+ * the viewport has groups in it and no more. Size and offset are screen pixels
+ * divided by zoom, like every other interface stroke on the canvas, so a label
+ * is one size however far the camera is. No zoom threshold — that would be a
+ * number nobody has measured.
+ *
+ * `anchors` carries the derived contours of framed groups: an anchored label
+ * sits ON its contour's top-left, interrupting the line, because that is what
+ * makes "this label describes these things" true at a glance. Everyone else
+ * floats above their bounds as before.
+ */
+export function groupLabelsFor(
+  doc: CanvasDocument,
+  groupIds: Iterable<GroupId>,
+  zoom: number,
+  anchors?: ReadonlyMap<GroupId, { minX: number; minY: number }>,
+): { groupId: GroupId; label: string; x: number; y: number; fontSize: number }[] {
+  const labels: { groupId: GroupId; label: string; x: number; y: number; fontSize: number }[] = [];
+  for (const groupId of groupIds) {
+    const label = doc.group(groupId)?.label;
+    if (!label) continue;
+    const anchor = anchors?.get(groupId);
+    if (anchor) {
+      labels.push({
+        groupId,
+        label: label.toUpperCase(),
+        x: anchor.minX,
+        y: anchor.minY - GROUP_LABEL_SIZE / 2 / zoom,
+        fontSize: GROUP_LABEL_SIZE / zoom,
+      });
+      continue;
+    }
+    const bounds = doc.groupBounds(groupId);
+    if (!bounds) continue;
+    labels.push({
+      groupId,
+      label: label.toUpperCase(),
+      x: bounds.minX,
+      y: bounds.minY - (GROUP_LABEL_SIZE + GROUP_LABEL_GAP) / zoom,
+      fontSize: GROUP_LABEL_SIZE / zoom,
+    });
+  }
+  return labels;
+}
+
+/**
+ * The cached contour of one framed group, or nothing when there is nothing to
+ * frame. The signature is every input the contour has: the flag itself plus
+ * each member's transform. A member that vanished mid-flight returns nothing —
+ * the next document change settles it.
+ */
+export function frameFor(
+  doc: CanvasDocument,
+  groupId: GroupId,
+  cache: Map<GroupId, FrameEntry>,
+): FrameEntry | undefined {
+  const group = doc.group(groupId);
+  if (!group?.frame) return undefined;
+  let signature = `${group.memberIds.length}`;
+  for (const id of group.memberIds) {
+    const t = doc.item(id)?.transform;
+    if (!t) return undefined;
+    signature += `|${t.x},${t.y},${t.width},${t.height},${t.rotation}`;
+  }
+  const cached = cache.get(groupId);
+  if (cached && cached.signature === signature) return cached;
+
+  const memberRects: Rect[] = [];
+  for (const id of group.memberIds) {
+    const bounds = doc.index.boundsOf(id);
+    if (bounds) memberRects.push(bounds);
+  }
+  const ring = groupOutline(memberRects);
+  if (ring.length === 0) return undefined;
+  let minX = Infinity;
+  let minY = Infinity;
+  for (const p of ring) {
+    minX = Math.min(minX, p.x);
+    minY = Math.min(minY, p.y);
+  }
+  const entry: FrameEntry = {
+    signature,
+    points: ring.flatMap((p) => [p.x, p.y]),
+    minX,
+    minY,
+  };
+  cache.set(groupId, entry);
+  return entry;
+}
+
+/**
+ * The ground grid, across the viewport and no further.
+ *
+ * World-anchored so it pans and zooms with the content — that is the whole
+ * point of it, a sense of scale. Every vertical and horizontal in one path,
+ * spanning the viewport and no further, recomputed per camera frame, which is
+ * the same cadence everything else here already redraws at. Fades out before
+ * cells get small enough to moiré.
+ */
+export function paintGrid(
+  ctx: Konva.Context,
+  camera: Camera,
+  size: { width: number; height: number },
+  colour: string,
+): void {
+  const cellPx = GRID_PITCH * camera.zoom;
+  if (cellPx < GRID_HIDE_BELOW) {
+    return;
+  }
+  const stage = toStageAttrs(camera, size);
+  const left = -stage.x / stage.scaleX;
+  const top = -stage.y / stage.scaleY;
+  const right = (size.width - stage.x) / stage.scaleX;
+  const bottom = (size.height - stage.y) / stage.scaleY;
+  ctx.strokeStyle = colour;
+  ctx.lineWidth = 1 / camera.zoom;
+  ctx.globalAlpha =
+    cellPx >= GRID_FADE_BELOW
+      ? 1
+      : (cellPx - GRID_HIDE_BELOW) / (GRID_FADE_BELOW - GRID_HIDE_BELOW);
+  ctx.beginPath();
+  for (let x = Math.ceil(left / GRID_PITCH) * GRID_PITCH; x <= right; x += GRID_PITCH) {
+    ctx.moveTo(x, top);
+    ctx.lineTo(x, bottom);
+  }
+  for (let y = Math.ceil(top / GRID_PITCH) * GRID_PITCH; y <= bottom; y += GRID_PITCH) {
+    ctx.moveTo(left, y);
+    ctx.lineTo(right, y);
+  }
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+
+function ItemNode({
+  item,
+  lod,
+  bitmap,
+  opacity,
+  selected,
+  draggable,
+  heldBy,
+  zoom,
+  onPointerDown,
+  onDragStart,
+  onDragMove,
+  onDragEnd,
+}: {
+  item: CanvasItem;
+  lod: string;
+  bitmap: ImageBitmap | undefined;
+  /** The item's opacity, or the value under a slider that has not been released. */
+  opacity: number;
+  selected: boolean;
+  draggable: boolean;
+  /** Colour of the actor holding this item, when it is not us. Held means not grabbable. */
+  heldBy: string | undefined;
+  zoom: number;
+  onPointerDown: (item: CanvasItem, e: Konva.KonvaEventObject<PointerEvent>) => void;
+  onDragStart: (item: CanvasItem) => void;
+  onDragMove: (item: CanvasItem, e: Konva.KonvaEventObject<DragEvent>) => void;
+  onDragEnd: (item: CanvasItem) => void;
+}) {
+  const theme = canvasTheme();
+  const { form, outline: outlineAttrs } = itemNodeAttrs(
+    item,
+    opacity,
+    zoom,
+    selected || heldBy !== undefined,
+  );
+  const shared = {
+    id: item.id,
+    ...form,
+    // Someone else is manipulating this. It stays visible and stays moving —
+    // their previews keep arriving — it simply cannot be grabbed.
+    draggable: draggable && heldBy === undefined,
+    onPointerDown: (e: Konva.KonvaEventObject<PointerEvent>) => onPointerDown(item, e),
+    onDragStart: () => onDragStart(item),
+    onDragMove: (e: Konva.KonvaEventObject<DragEvent>) => onDragMove(item, e),
+    onDragEnd: () => onDragEnd(item),
+    perfectDrawEnabled: false,
+    shadowForStrokeEnabled: false,
+  };
+
+  /*
+   * Chrome does not inherit appearance — invariant 8.
+   *
+   * Konva applies a node's opacity once for the whole shape, image and stroke
+   * together, so an interface stroke on the faded node would fade with it and an
+   * item at 0 would be selected with nothing on screen to say so. The outline is
+   * therefore its own node at full strength, and only for the selected and held
+   * items: everything else stays one node, which is the bound the renderer's
+   * performance rests on.
+   */
+  const outline = outlineAttrs ? (
+    <KonvaRect
+      id={`${SELECTION_MARK}${item.id}`}
+      {...outlineAttrs}
+      stroke={heldBy ?? theme.accent}
+      listening={false}
+      perfectDrawEnabled={false}
+      shadowForStrokeEnabled={false}
+    />
+  ) : null;
+
+  // MICRO is a colour blob by definition: decoding an image for a few pixels is
+  // exactly the cost LOD exists to avoid.
+  return (
+    <>
+      {bitmap && IMAGE_LODS.has(lod) ? (
+        <KonvaImage {...shared} image={bitmap} />
+      ) : (
+        <KonvaRect
+          {...shared}
+          fill={theme.item}
+          // The item's OWN edge, which is part of the item and fades with it.
+          // The selection stroke above is not.
+          stroke={theme.itemEdge}
+          strokeWidth={1 / zoom}
+        />
+      )}
+      {outline}
+    </>
+  );
+}
+
+/** `1`-`9` are tenths; `0` is full, the value a person most often returns to. */
+const DIGITS: Record<string, number> = {
+  '0': 1,
+  '1': 0.1,
+  '2': 0.2,
+  '3': 0.3,
+  '4': 0.4,
+  '5': 0.5,
+  '6': 0.6,
+  '7': 0.7,
+  '8': 0.8,
+  '9': 0.9,
+};
+
+/** Shift is deliberate: a flip is an act, never a side effect of a stray key. */
+const FLIP_KEYS: Record<string, FlipAxis> = { h: 'x', v: 'y' };
+
+/**
+ * Whether a keystroke belongs to a text field rather than to the canvas.
+ *
+ * The canvas has had no text input in it until this milestone, so every binding
+ * above was safe by accident. The label field ends that, and the guard belongs
+ * at the one place every binding passes through rather than in each of them.
+ */
+function isTyping(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
+}
+
+/**
+ * What a modified wheel adjusts.
+ *
+ * Ctrl is deliberately absent and cannot be added: every platform that reports a
+ * trackpad pinch at all reports it as ctrl+wheel, so binding it here would cost
+ * pinch-to-zoom on every laptop. Meta is left alone for the same class of reason
+ * — it is the browser's own page zoom.
+ *
+ * Alt is the "act on the selection" modifier and Shift picks which act, which is
+ * why rotate is Alt+Shift rather than a third bare modifier: there is no third
+ * bare modifier left that is safe.
+ */
+type WheelAdjustment = 'opacity' | 'scale' | 'rotate';
+
+function adjustmentFor(event: WheelEvent): WheelAdjustment | null {
+  if (event.ctrlKey || event.metaKey) return null;
+  if (event.altKey) return event.shiftKey ? 'rotate' : 'opacity';
+  if (event.shiftKey) return 'scale';
+  return null;
+}
+
+/**
+ * How far one notch of the wheel goes. Guesses, named rather than buried, and
+ * listed in OPEN_QUESTIONS Q19 with the observation that would settle them.
+ *
+ * A notch is `deltaY` 100 on the platforms that quantise it at all, which makes
+ * these about 10% of a size, a tenth of the opacity range, and 11° of turn.
+ * Scale is multiplicative so that scrolling back returns exactly where it
+ * started; the other two are additive because their ranges are not ratios.
+ */
+const WHEEL_SCALE = 0.001;
+const WHEEL_OPACITY = 0.001;
+const WHEEL_ROTATE = 0.002;
+
+/** The wheel has no release event, so a gesture ends when it goes quiet. */
+const ADJUST_SETTLE_MS = 350;
+
+function wheelBodies(
+  doc: CanvasDocument,
+  ids: readonly ItemId[],
+  kind: WheelAdjustment,
+  deltaY: number,
+): CanvasOperationBody[] {
+  // Scrolling UP is the positive direction of all three, which is what every
+  // wheel-driven value in every other application does.
+  if (kind === 'scale') return scaleSelection(doc, ids, Math.exp(-deltaY * WHEEL_SCALE));
+  if (kind === 'rotate') return rotateSelection(doc, ids, deltaY * WHEEL_ROTATE);
+  const first = doc.item(ids[0] as ItemId);
+  if (!first) return [];
+  const next = Math.min(1, Math.max(0, first.appearance.opacity - deltaY * WHEEL_OPACITY));
+  return opacityBodies(doc, ids, next);
+}
+
+const NUDGES: Record<string, { x: number; y: number }> = {
+  ArrowLeft: { x: -1, y: 0 },
+  ArrowRight: { x: 1, y: 0 },
+  ArrowUp: { x: 0, y: -1 },
+  ArrowDown: { x: 0, y: 1 },
+};
+
+function moveBy(
+  doc: CanvasDocument,
+  ids: Iterable<ItemId>,
+  dx: number,
+  dy: number,
+): CanvasOperationBody[] {
+  const bodies: CanvasOperationBody[] = [];
+  for (const id of ids) {
+    const item = doc.item(id);
+    if (!item) continue;
+    const transform: Transform = {
+      ...item.transform,
+      x: item.transform.x + dx,
+      y: item.transform.y + dy,
+    };
+    bodies.push({ type: 'item.transform', itemId: id, transform });
+  }
+  return bodies;
+}
+
+function selectionMode(event: PointerEvent | MouseEvent): SelectionMode {
+  if (event.shiftKey) return 'add';
+  if (event.ctrlKey || event.metaKey) return 'toggle';
+  return 'replace';
+}
+
+function pointerIn(element: HTMLElement | null, event: PointerEvent) {
+  const rect = element?.getBoundingClientRect();
+  return { x: event.clientX - (rect?.left ?? 0), y: event.clientY - (rect?.top ?? 0) };
+}
+
+function lodOf(visible: readonly { item: CanvasItem; lod: string }[], id: ItemId): string {
+  return visible.find((v) => v.item.id === id)?.lod ?? ItemLod.FULL;
+}

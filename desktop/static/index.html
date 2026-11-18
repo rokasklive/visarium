@@ -1,0 +1,414 @@
+<!doctype html>
+<!--
+  The desktop app's greeting page, and its one page of its own: the local
+  library on the left, a self-hosted server on the right.
+
+  Mirrors the sign-in screen (web/src/components/auth-screens.tsx): 320px
+  columns on the sunken ground, the wordmark, labels, fields, ghost buttons.
+  The colours are that screen's tokens, resolved from web/src/styles/app.css.
+
+  Everything that touches the network, the keychain or the recent list is a
+  Tauri command (desktop/src/main.rs), granted to this page only. Opening a
+  board or a server is then a plain navigation.
+
+  "Sign in with browser" works for every method a server offers, Google
+  included, which refuses to sign in inside an app's own webview (ADR-0027).
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Visarium</title>
+    <style>
+      /* Native controls (select popups, scrollbars) stay dark whatever the OS is set to. */
+      :root {
+        color-scheme: dark;
+        --surface-sunken: oklch(0.14 0.006 265);
+        --surface-raised: oklch(0.22 0.006 265);
+        --line: oklch(0.3 0.008 265);
+        --line-strong: oklch(0.51 0.008 265);
+        --ink: oklch(0.92 0.004 265);
+        --ink-dim: oklch(0.66 0.006 265);
+        --ink-disabled: oklch(0.5 0.006 265);
+        --accent: oklch(0.72 0.15 215);
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px;
+        background: var(--surface-sunken); color: var(--ink);
+        font: 13px ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      .wordmark { display: block; position: relative; margin: 0 0 32px; color: var(--ink); }
+      main { display: grid; grid-template-columns: 320px 1px 320px; gap: 40px; align-items: start; }
+      .rule { align-self: stretch; background: var(--line); }
+      h1, .label { margin: 0 0 16px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.025em; color: var(--ink-dim); font-weight: normal; }
+      label { display: block; margin-top: 12px; }
+      [hidden] { display: none !important; }
+      /* As in the app: chrome text doesn't select, fields do. */
+      body { -webkit-user-select: none; user-select: none; }
+      input { -webkit-user-select: text; user-select: text; }
+      label span { display: block; margin-bottom: 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.025em; color: var(--ink-dim); }
+      input, select {
+        width: 100%; padding: 4px 8px; border: 1px solid var(--line); border-radius: 4px;
+        background: var(--surface-raised); color: var(--ink); font: inherit;
+      }
+      input::placeholder { color: var(--ink-disabled); }
+      button {
+        display: block; width: 100%; margin-top: 16px; padding: 4px 8px; text-align: center;
+        border: 1px solid var(--line-strong); border-radius: 4px; background: none; color: var(--ink); font: inherit; cursor: pointer;
+      }
+      button:hover { background: var(--surface-raised); }
+      button:disabled { color: var(--ink-disabled); cursor: default; }
+      :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+      ul { list-style: none; margin: 0; padding: 0; }
+      /* Rows like the app's boards list: a hairline under each, not a box around it. */
+      li { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
+      li button { margin: 0; text-align: left; border-color: transparent; display: flex; justify-content: space-between; gap: 8px; min-width: 0; }
+      li button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      li button .when { flex: none; color: var(--ink-dim); }
+      li button.forget { flex: none; width: auto; color: var(--ink-dim); }
+      .note { margin: 8px 0 0; color: var(--ink-dim); line-height: 1.5; }
+      .problem { margin: 12px 0 0; line-height: 1.5; }
+      .label.recent { margin: 32px 0 0; }
+      .or { margin: 16px 0 0; text-align: center; color: var(--ink-dim); font-size: 11px; }
+    </style>
+  </head>
+  <body>
+    <!--
+      The wordmark as the face's own dots, a whole number of device pixels each,
+      because set as text it smears. Same drawing and same reasoning as
+      web/src/components/wordmark.tsx, which is where the dot map comes from.
+    -->
+    <svg id="wordmark" class="wordmark" role="img" aria-label="Visarium" shape-rendering="crispEdges" fill="currentColor"><path /></svg>
+    <script>
+      (function draw() {
+        const rows = [
+          '#.#.....#.#..#.#....#.#.#.#.#....#.#.#.#......#.#.#.#....#.#..#.#.....#.#....#.#.#.#.#.#..',
+          '#.#.....#.#..#.#..#.#.#.#.#.#..#.#.#.#.#.#..#.#.#.#.#.#..#.#..#.#.....#.#..#.#.#.#.#.#.#.#',
+          '#.#.....#.#..#.#..#.#..........#.#.....#.#..#.#.....#.#..#.#..#.#.....#.#..#.#...#.#...#.#',
+          '#.#.....#.#..#.#..#.#.#.#.#....#.#.#.#.#.#..#.#.#.#.#.#..#.#..#.#.....#.#..#.#...#.#...#.#',
+          '#.#.....#.#..#.#....#.#.#.#.#..#.#.#.#.#.#..#.#.#.#.#....#.#..#.#.....#.#..#.#...#.#...#.#',
+          '#.#.#.#.#.#..#.#..........#.#..#.#.....#.#..#.#...#.#.#..#.#..#.#.....#.#..#.#...#.#...#.#',
+          '..#.#.#.#....#.#..#.#.#.#.#.#..#.#.....#.#..#.#.....#.#..#.#..#.#.#.#.#.#..#.#...#.#...#.#',
+          '....#.#......#.#..#.#.#.#.#....#.#.....#.#..#.#.....#.#..#.#....#.#.#.#....#.#...#.#...#.#',
+        ];
+        const dpr = window.devicePixelRatio || 1;
+        const pitch = Math.max(2, Math.round(2.88 * dpr));
+        const dot = Math.ceil(pitch / 2);
+        let d = '';
+        rows.forEach((row, r) => {
+          [...row].forEach((cell, k) => {
+            if (cell === '#') d += `M${Math.floor((k * pitch) / 2)} ${r * pitch}h${dot}v${dot}h-${dot}z`;
+          });
+        });
+        // Box and position on whole CSS pixels that are also whole device
+        // pixels: Chrome snaps an SVG's box to CSS pixels and stretches the
+        // drawing to fit, so anything else blends or drops a row.
+        const both = (v, r, up) => {
+          const start = up ? Math.ceil(v - 1e-6) : Math.round(v);
+          for (let step = 0; step <= 10; step++) {
+            for (const c of up ? [start + step] : [start - step, start + step]) {
+              if (Math.abs(c * r - Math.round(c * r)) < 1e-3) return c;
+            }
+          }
+          return start;
+        };
+        const width = both((Math.floor(((rows[0].length - 1) * pitch) / 2) + dot) / dpr, dpr, true);
+        const height = both(((rows.length - 1) * pitch + dot) / dpr, dpr, true);
+        const mark = document.getElementById('wordmark');
+        mark.setAttribute('viewBox', `0 0 ${Math.round(width * dpr)} ${Math.round(height * dpr)}`);
+        mark.setAttribute('width', width);
+        mark.setAttribute('height', height);
+        mark.firstChild.setAttribute('d', d);
+        // Centring rarely lands there, and the column moves as the page below
+        // is built and its lists fill in. A relative offset, not a transform:
+        // a transform has the compositor resample the mark.
+        const snap = () => {
+          const r = window.devicePixelRatio || 1;
+          mark.style.left = '';
+          mark.style.top = '';
+          const at = mark.getBoundingClientRect();
+          mark.style.left = `${both(at.left, r) - at.left}px`;
+          mark.style.top = `${both(at.top, r) - at.top}px`;
+        };
+        new ResizeObserver(snap).observe(document.documentElement);
+        addEventListener('DOMContentLoaded', () => new ResizeObserver(snap).observe(document.querySelector('main')));
+        window.onresize = snap;
+        matchMedia(`(resolution: ${dpr}dppx)`).addEventListener('change', draw, { once: true });
+      })();
+    </script>
+    <main>
+      <section aria-labelledby="local-title">
+        <h1 id="local-title">On this computer</h1>
+        <ul id="boards"></ul>
+        <p id="no-boards" class="note" hidden>No boards yet.</p>
+        <p id="local-problem" class="problem" role="alert" hidden></p>
+        <button id="library" type="button">Open library</button>
+      </section>
+
+      <div class="rule" aria-hidden="true"></div>
+
+      <section aria-labelledby="server-title">
+        <h1 id="server-title">Connect to a server</h1>
+        <form id="connect">
+          <!-- A native <select>: a <datalist> shows no dropdown in WKWebView. -->
+          <label id="known-field" style="margin-top: 0" hidden>
+            <span>Server</span>
+            <select id="known"></select>
+          </label>
+          <label id="address-field" style="margin-top: 0">
+            <span>Server address</span>
+            <input id="address" type="text" placeholder="https://visarium.example.net" autocomplete="url" required />
+          </label>
+          <p id="insecure" class="note" hidden>Not encrypted: the password travels in the clear.</p>
+          <button id="next" type="submit">Continue</button>
+          <!-- Step two: only the ways in this server offers (ADR-0027). -->
+          <div id="methods" hidden>
+            <div id="with-password">
+              <label>
+                <span>Username</span>
+                <input id="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" />
+              </label>
+              <label>
+                <span>Password</span>
+                <input id="password" type="password" autocomplete="current-password" />
+              </label>
+              <button id="submit" type="submit">Connect</button>
+              <p class="or">or</p>
+            </div>
+            <p id="unclaimed" class="note" hidden>Nobody has set this server up yet. Do it in your browser: the first account becomes its admin.</p>
+            <div id="providers"></div>
+          </div>
+          <p id="problem" class="problem" role="alert" hidden></p>
+        </form>
+        <div id="recent" hidden>
+          <p class="label recent">Recent</p>
+          <ul id="connections" style="margin-top: 8px"></ul>
+        </div>
+      </section>
+    </main>
+    <script>
+      const { invoke } = window.__TAURI__.core;
+      // No webview context menu (as in the app); text fields keep theirs.
+      document.addEventListener('contextmenu', (event) => {
+        if (!event.target.closest?.('input, textarea')) event.preventDefault();
+      });
+      const $ = (id) => document.getElementById(id);
+      const say = (el, text) => { el.textContent = text ?? ''; el.hidden = !text; };
+      const why = (problem) => problem?.message ?? String(problem);
+
+      function ago(iso) {
+        const minutes = Math.round((Date.now() - Date.parse(iso)) / 60000);
+        if (minutes < 1) return 'just now';
+        if (minutes < 60) return `${minutes} min ago`;
+        if (minutes < 60 * 24) return `${Math.round(minutes / 60)} h ago`;
+        if (minutes < 60 * 24 * 7) return `${Math.round(minutes / 60 / 24)} d ago`;
+        return new Date(iso).toLocaleDateString();
+      }
+
+      function row(list, label, aside, onClick) {
+        const item = document.createElement('li');
+        const button = document.createElement('button');
+        button.type = 'button';
+        const text = document.createElement('span');
+        text.textContent = label;
+        button.append(text);
+        if (aside) {
+          const when = document.createElement('span');
+          when.className = 'when';
+          when.textContent = aside;
+          button.append(when);
+        }
+        button.addEventListener('click', onClick);
+        item.append(button);
+        list.append(item);
+        return item;
+      }
+
+      // --- on this computer -------------------------------------------------
+
+      let library = null;
+      $('library').addEventListener('click', () => { if (library) location.href = library; });
+      invoke('local_boards')
+        .then((local) => {
+          library = local.library;
+          $('no-boards').hidden = local.boards.length > 0;
+          for (const board of local.boards) {
+            row($('boards'), board.title, ago(board.updatedAt), () => {
+              location.href = new URL(`boards/${board.id}`, library).href;
+            });
+          }
+        })
+        .catch((problem) => say($('local-problem'), why(problem)));
+
+      // --- a server ---------------------------------------------------------
+
+      const address = $('address');
+      const username = $('username');
+      const password = $('password');
+
+      // Plain http is common on a home network, so it is allowed, but said.
+      address.addEventListener('input', () => {
+        let url = null;
+        try { url = new URL(/^[a-z]+:\/\//i.test(address.value.trim()) ? address.value.trim() : 'x'); } catch {}
+        $('insecure').hidden = !(url?.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname));
+      });
+
+      // Step one, the address; step two, whatever the server says it offers:
+      // a password form if it takes passwords, a button per provider (only the
+      // ones it has), or one browser button if it has none. Every provider
+      // sign-in happens in the system browser, never in this window.
+      const methods = $('methods');
+      let offered = null;
+      function showStep(probe) {
+        offered = probe;
+        methods.hidden = !probe;
+        $('next').hidden = !!probe;
+        // Unclaimed: set up in the browser, which then signs this app in.
+        $('unclaimed').hidden = !probe?.setupRequired;
+        const takesPassword = !!probe?.passwordEnabled && !probe.setupRequired;
+        $('with-password').hidden = !takesPassword;
+        username.required = password.required = takesPassword;
+        const choices = probe?.providers.length ? probe.providers : probe ? [{ id: null, name: null }] : [];
+        $('providers').replaceChildren(
+          ...choices.map((p) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.dataset.label = button.textContent = p.name ? `Continue with ${p.name}` : 'Sign in with browser';
+            button.addEventListener('click', () => connectBrowser(p.id, button));
+            return button;
+          }),
+        );
+      }
+      address.addEventListener('input', () => showStep(null));
+
+      async function lookUp() {
+        say($('problem'), null);
+        $('next').disabled = true;
+        try {
+          const found = await invoke('probe', { address: address.value });
+          showStep(found);
+          (offered.passwordEnabled && !offered.setupRequired ? username : $('providers').firstChild)?.focus();
+        } catch (problem) {
+          say($('problem'), why(problem));
+        } finally {
+          $('next').disabled = false;
+        }
+      }
+
+      function busy(on, which) {
+        for (const button of $('connect').querySelectorAll('button')) {
+          button.disabled = on;
+          if (button.dataset.label) button.textContent = on && button === which ? 'Finish signing in in your browser…' : button.dataset.label;
+        }
+        $('submit').textContent = on && which === 'submit' ? 'Connecting…' : 'Connect';
+      }
+
+      async function arrive(connected) {
+        if (connected.warning) {
+          say($('problem'), connected.warning);
+          setTimeout(() => { location.href = connected.open; }, 3000);
+        } else {
+          location.href = connected.open;
+        }
+      }
+
+      async function connect(args) {
+        say($('problem'), null);
+        busy(true, 'submit');
+        try {
+          await arrive(await invoke('connect', args));
+        } catch (problem) {
+          // A saved sign-in that no longer works: back to step two for it.
+          address.value = args.address;
+          address.dispatchEvent(new Event('input'));
+          if ([...$('known').options].some((o) => o.value === args.address)) {
+            $('known').value = args.address;
+            showAddressField(false);
+          }
+          await lookUp();
+          username.value = args.username;
+          password.value = '';
+          if (offered?.passwordEnabled) password.focus();
+          say($('problem'), why(problem));
+          busy(false);
+        }
+      }
+
+      async function connectBrowser(provider, button) {
+        say($('problem'), null);
+        busy(true, button);
+        try {
+          await arrive(await invoke('connect_browser', { address: address.value, provider }));
+        } catch (problem) {
+          say($('problem'), why(problem));
+          busy(false);
+        }
+      }
+
+      $('connect').addEventListener('submit', (event) => {
+        event.preventDefault();
+        if (!offered) return lookUp();
+        if (offered.passwordEnabled && !offered.setupRequired) connect({ address: address.value, username: username.value, password: password.value });
+      });
+
+      // Servers signed in to before, newest first, in a dropdown; the address
+      // field only for "Another server…". The newest is chosen to begin with.
+      const ANOTHER = '';
+      function showKnown(origins) {
+        // What was chosen before this refresh; nothing yet on the first.
+        const keep = $('known').options.length ? $('known').value : null;
+        $('known').replaceChildren(
+          ...origins.map((o) => new Option(o.replace(/^https:\/\//, '').replace(/\/$/, ''), o)),
+          new Option('Another server…', ANOTHER),
+        );
+        $('known-field').hidden = origins.length === 0;
+        if (origins.length === 0) return showAddressField(true);
+        $('known').value = origins.includes(keep) || keep === ANOTHER ? keep : origins[0];
+        if ($('known').value !== ANOTHER && !offered) address.value = $('known').value;
+        showAddressField($('known').value === ANOTHER);
+      }
+      function showAddressField(on) {
+        if (!on && document.activeElement === address) $('known').focus();
+        $('address-field').hidden = !on;
+        $('address-field').style.marginTop = $('known-field').hidden ? '0' : '';
+      }
+      $('known').addEventListener('change', () => {
+        const chosen = $('known').value;
+        showAddressField(chosen === ANOTHER);
+        address.value = chosen;
+        address.dispatchEvent(new Event('input'));
+        if (chosen === ANOTHER) address.focus();
+        else lookUp();
+      });
+
+      function showConnections() {
+        invoke('connections').then((list) => {
+          $('connections').replaceChildren();
+          $('recent').hidden = list.length === 0;
+          showKnown([...new Set(list.map((c) => c.origin))]);
+          for (const c of list) {
+            const host = c.origin.replace(/^https:\/\//, '').replace(/\/$/, '');
+            const item = row($('connections'), `${host} · ${c.username}`, null, () =>
+              connect({ address: c.origin, username: c.username, password: null }),
+            );
+            const forget = document.createElement('button');
+            forget.type = 'button';
+            forget.className = 'forget';
+            forget.textContent = 'Forget';
+            forget.title = `Forget ${host} and sign this computer out of it`;
+            forget.addEventListener('click', () =>
+              invoke('forget', { origin: c.origin, username: c.username })
+                .catch((problem) => say($('problem'), why(problem)))
+                .finally(showConnections),
+            );
+            item.append(forget);
+          }
+        });
+      }
+      showConnections();
+      address.focus();
+    </script>
+  </body>
+</html>

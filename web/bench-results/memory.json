@@ -1,0 +1,74 @@
+{
+  "assetsInLibrary": 8,
+  "machine": {
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.7922.34 Safari/537.36",
+    "devicePixelRatio": 1,
+    "hardwareConcurrency": 12,
+    "viewport": {
+      "width": 1280,
+      "height": 720
+    }
+  },
+  "board": {
+    "items": 2000,
+    "truncatedAtAnyPoint": false
+  },
+  "frameMsByPhase": {
+    "dense": {
+      "count": 89,
+      "p50": 16.7,
+      "p95": 16.7,
+      "max": 16.8
+    },
+    "pan": {
+      "count": 98,
+      "p50": 16.7,
+      "p95": 16.8,
+      "max": 16.8
+    },
+    "zoom-in": {
+      "count": 246,
+      "p50": 16.7,
+      "p95": 16.7,
+      "max": 16.8
+    },
+    "zoom-out": {
+      "count": 154,
+      "p50": 16.7,
+      "p95": 16.8,
+      "max": 16.8
+    }
+  },
+  "activeSetMs": {
+    "count": 122,
+    "p50": 0,
+    "p95": 0.1,
+    "max": 0.2
+  },
+  "nodes": {
+    "count": 122,
+    "p50": 36,
+    "p95": 39,
+    "max": 41
+  },
+  "aggregated": {
+    "count": 122,
+    "p50": 0,
+    "p95": 0,
+    "max": 0
+  },
+  "decodedMb": {
+    "count": 122,
+    "p50": 9.29,
+    "p95": 9.29,
+    "max": 9.29
+  },
+  "bitmaps": {
+    "count": 122,
+    "p50": 16,
+    "p95": 16,
+    "max": 16
+  },
+  "bitmapFailures": 0,
+  "loadMs": 175.5
+}

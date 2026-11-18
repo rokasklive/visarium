@@ -1,0 +1,1028 @@
+//! The API end to end, over a real router and a throwaway SQLite file: the
+//! contract the SPA depends on, checked from the outside.
+
+use std::path::PathBuf;
+
+use axum::body::Body;
+use axum::http::{Request, StatusCode, header};
+use futures_util::{SinkExt, StreamExt};
+use http_body_util::BodyExt;
+use serde_json::{Value, json};
+use tokio_tungstenite::tungstenite::{self, client::IntoClientRequest};
+use tower::ServiceExt;
+
+mod issuer;
+use issuer::{Issuer, Person};
+
+struct Client {
+    router: axum::Router,
+    cookies: Vec<(String, String)>,
+}
+
+struct Reply {
+    status: StatusCode,
+    headers: axum::http::HeaderMap,
+    body: Vec<u8>,
+}
+
+impl Reply {
+    fn json(&self) -> Value {
+        serde_json::from_slice(&self.body).unwrap_or(Value::Null)
+    }
+}
+
+impl Client {
+    fn new(router: axum::Router) -> Self {
+        Self { router, cookies: vec![] }
+    }
+    fn cookie(&self, name: &str) -> Option<String> {
+        self.cookies.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone())
+    }
+    fn cookie_header(&self) -> String {
+        self.cookies.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join("; ")
+    }
+    fn csrf(&self) -> String {
+        self.cookies.iter().find(|(k, _)| k == "XSRF-TOKEN").map(|(_, v)| v.clone()).unwrap_or_default()
+    }
+
+    async fn send(&mut self, method: &str, uri: &str, content_type: Option<&str>, body: Vec<u8>, extra: &[(&str, &str)]) -> Reply {
+        let mut req = Request::builder().method(method).uri(uri).header(header::HOST, "localhost:8080");
+        req = req.header(header::COOKIE, self.cookie_header()).header("X-XSRF-TOKEN", self.csrf());
+        if let Some(ct) = content_type {
+            req = req.header(header::CONTENT_TYPE, ct);
+        }
+        let headers = req.headers_mut().unwrap();
+        for (k, v) in extra {
+            headers.insert(axum::http::HeaderName::from_bytes(k.as_bytes()).unwrap(), v.parse().unwrap());
+        }
+        let res = self.router.clone().oneshot(req.body(Body::from(body)).unwrap()).await.unwrap();
+        for set in res.headers().get_all(header::SET_COOKIE) {
+            let pair = set.to_str().unwrap().split(';').next().unwrap();
+            let (k, v) = pair.split_once('=').unwrap();
+            self.cookies.retain(|(name, _)| name != k);
+            if !v.is_empty() {
+                self.cookies.push((k.into(), v.into()));
+            }
+        }
+        let status = res.status();
+        let headers = res.headers().clone();
+        let body = res.into_body().collect().await.unwrap().to_bytes().to_vec();
+        Reply { status, headers, body }
+    }
+
+    async fn get(&mut self, uri: &str) -> Reply {
+        self.send("GET", uri, None, vec![], &[]).await
+    }
+    async fn json(&mut self, method: &str, uri: &str, body: Value) -> Reply {
+        self.send(method, uri, Some("application/json"), body.to_string().into_bytes(), &[]).await
+    }
+    async fn upload(&mut self, filename: &str, bytes: &[u8]) -> Reply {
+        let boundary = "XBOUNDARYX";
+        let mut body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+        )
+        .into_bytes();
+        body.extend_from_slice(bytes);
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        self.send("POST", "/api/assets", Some(&format!("multipart/form-data; boundary={boundary}")), body, &[]).await
+    }
+}
+
+fn png(width: u32, height: u32, seed: u8) -> Vec<u8> {
+    let img = image::RgbImage::from_fn(width, height, |x, y| image::Rgb([seed, (x % 256) as u8, (y % 256) as u8]));
+    let mut out = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut out, image::ImageFormat::Png).unwrap();
+    out.into_inner()
+}
+
+fn config(single_user: bool) -> (visarium::Config, PathBuf) {
+    let dir = std::env::temp_dir().join(format!("visarium-test-{}", uuid::Uuid::new_v4()));
+    let config = visarium::Config {
+        database: dir.join("visarium.db"),
+        assets: dir.join("assets"),
+        derivatives: dir.join("derivatives"),
+        version: "test".into(),
+        single_user,
+        public_url: Some("http://localhost:8080".into()),
+        ..Default::default()
+    };
+    (config, dir)
+}
+
+async fn instance(single_user: bool) -> (visarium::AppState, PathBuf) {
+    let (config, dir) = config(single_user);
+    (visarium::open(config).await.unwrap(), dir)
+}
+
+/// An instance with the in-process OpenID provider configured as `test`.
+async fn with_provider(issuer: &Issuer, tweak: impl FnOnce(&mut visarium::Config)) -> (visarium::AppState, PathBuf) {
+    let (mut config, dir) = config(false);
+    config.providers = vec![issuer.provider("test")];
+    tweak(&mut config);
+    (visarium::open(config).await.unwrap(), dir)
+}
+
+fn location(r: &Reply) -> String {
+    r.headers.get(header::LOCATION).map(|l| l.to_str().unwrap().to_string()).unwrap_or_default()
+}
+
+/// Leaves for the provider, lets it sign `person` in, and stops short of
+/// coming back: returns the callback path the browser would load next.
+async fn to_callback(c: &mut Client, issuer: &Issuer, start: &str, person: Person) -> String {
+    issuer.next(person);
+    let left = c.get(start).await;
+    assert_eq!(left.status, StatusCode::FOUND, "{start}: {}", String::from_utf8_lossy(&left.body));
+    provider_round_trip(&location(&left)).await
+}
+
+async fn provider_round_trip(url: &str) -> String {
+    assert!(url.starts_with("http://127.0.0.1:"), "left for {url}");
+    let http = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().unwrap();
+    let back = http.get(url).send().await.unwrap();
+    let back = back.headers()[header::LOCATION].to_str().unwrap().to_string();
+    back.strip_prefix("http://localhost:8080").unwrap_or_else(|| panic!("came back to {back}")).to_string()
+}
+
+/// The whole round trip: start, provider, callback. Returns the callback reply.
+async fn sso(c: &mut Client, issuer: &Issuer, start: &str, person: Person) -> Reply {
+    let callback = to_callback(c, issuer, start, person).await;
+    c.get(&callback).await
+}
+
+async fn invite(admin: &mut Client, body: Value) -> String {
+    let made = admin.json("POST", "/api/invitations", body).await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.json());
+    let link = made.json()["link"].as_str().unwrap().to_string();
+    assert!(link.starts_with("/invite#"), "the token rides in the fragment");
+    link["/invite#".len()..].to_string()
+}
+
+async fn count(app: &visarium::AppState, sql: &str) -> i64 {
+    sqlx::query_scalar(sql).fetch_one(&app.db).await.unwrap()
+}
+
+async fn signed_in() -> (Client, visarium::AppState, PathBuf) {
+    let (app, dir) = instance(false).await;
+    let mut c = Client::new(visarium::router(app.clone()));
+    let boot = c.get("/api/session").await;
+    assert_eq!(
+        boot.json(),
+        json!({ "setupRequired": true, "user": null, "singleUser": false, "passwordEnabled": true, "providers": [], "sharingEnabled": true })
+    );
+    let claimed = c
+        .json("POST", "/api/setup", json!({ "username": "ada", "displayName": "Ada", "password": "correct horse battery" }))
+        .await;
+    assert_eq!(claimed.status, StatusCode::CREATED, "{}", claimed.json());
+    (c, app, dir)
+}
+
+#[tokio::test]
+async fn auth_csrf_and_accounts() {
+    let (app, dir) = instance(false).await;
+    let mut c = Client { router: visarium::router(app), cookies: vec![] };
+
+    let r = c.get("/api/boards").await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(r.headers[header::CONTENT_TYPE], "application/problem+json");
+    assert_eq!(c.get("/health").await.json(), json!({ "status": "UP" }));
+
+    let token = c.csrf();
+    assert!(!token.is_empty(), "the first response issues the CSRF cookie");
+    c.cookies.retain(|(k, _)| k != "XSRF-TOKEN");
+    c.cookies.push(("XSRF-TOKEN".into(), token.clone()));
+    let forged = c
+        .send("POST", "/api/setup", Some("application/json"), b"{}".to_vec(), &[("X-XSRF-TOKEN", "wrong")])
+        .await;
+    assert_eq!(forged.status, StatusCode::FORBIDDEN);
+
+    let short = c.json("POST", "/api/setup", json!({ "username": "ada", "displayName": "Ada", "password": "short" })).await;
+    assert_eq!(short.status, StatusCode::BAD_REQUEST);
+    assert!(short.json()["detail"].as_str().unwrap().contains("12 characters"));
+
+    let ok = c.json("POST", "/api/setup", json!({ "username": "ada", "displayName": "Ada", "password": "correct horse battery" })).await;
+    assert_eq!(ok.status, StatusCode::CREATED);
+    assert_eq!(ok.json()["admin"], true);
+    let again = c.json("POST", "/api/setup", json!({ "username": "bob", "displayName": "Bob", "password": "correct horse battery" })).await;
+    assert_eq!(again.status, StatusCode::CONFLICT);
+
+    // Accounts come from invitations; an admin no longer types anyone's password.
+    let typed = c.json("POST", "/api/accounts", json!({ "username": "bob", "displayName": "Bob", "password": "another long password" })).await;
+    assert_eq!(typed.status, StatusCode::METHOD_NOT_ALLOWED);
+    let token = invite(&mut c, json!({ "note": "for Bob" })).await;
+    let mut b = Client::new(c.router.clone());
+    b.get("/api/session").await;
+    let bob = b.json("POST", "/api/invitations/redeem", json!({ "token": token, "username": "bob", "displayName": "Bob", "password": "another long password" })).await;
+    assert_eq!(bob.status, StatusCode::CREATED, "{}", bob.json());
+    assert_eq!(bob.json()["admin"], false);
+    let token = invite(&mut c, json!({})).await;
+    let dup = b.json("POST", "/api/invitations/redeem", json!({ "token": token, "username": "bob", "displayName": "B", "password": "another long password" })).await;
+    assert_eq!(dup.status, StatusCode::CONFLICT);
+    let me = c.json("GET", "/api/session", json!(null)).await.json()["user"]["id"].as_str().unwrap().to_string();
+    let demote = c.json("PUT", &format!("/api/accounts/{me}/admin"), json!({ "granted": false })).await;
+    assert_eq!(demote.status, StatusCode::CONFLICT, "the last admin cannot be demoted");
+
+    assert_eq!(c.send("DELETE", "/api/session", None, vec![], &[]).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(c.get("/api/boards").await.status, StatusCode::UNAUTHORIZED);
+    let wrong = c.json("POST", "/api/session", json!({ "username": "bob", "password": "not the password" })).await;
+    assert_eq!(wrong.status, StatusCode::UNAUTHORIZED);
+    let right = c.json("POST", "/api/session", json!({ "username": "bob", "password": "another long password" })).await;
+    assert_eq!(right.status, StatusCode::OK);
+    assert_eq!(right.json()["username"], "bob");
+    assert_eq!(c.get("/api/accounts").await.status, StatusCode::FORBIDDEN, "bob is not an admin");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn single_user_needs_no_sign_in_and_only_answers_loopback() {
+    let (app, dir) = instance(true).await;
+    let mut c = Client { router: visarium::router(app), cookies: vec![] };
+    let session = c.get("/api/session").await.json();
+    assert_eq!(session["setupRequired"], false);
+    assert_eq!(session["user"]["admin"], true);
+    assert_eq!(session["singleUser"], true, "the SPA hides Sign out on this");
+    assert_eq!(c.get("/api/boards").await.status, StatusCode::OK);
+    let rebound = c.send("GET", "/api/boards", None, vec![], &[("host", "evil.example:8080")]).await;
+    assert_eq!(rebound.status, StatusCode::FORBIDDEN);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn assets_boards_library_and_lifecycle() {
+    let (mut c, _app, dir) = signed_in().await;
+
+    let big = c.upload("Sunset.png", &png(3000, 2000, 1)).await;
+    assert_eq!(big.status, StatusCode::CREATED, "{}", big.json());
+    let asset = big.json();
+    assert_eq!((asset["width"].as_i64(), asset["height"].as_i64()), (Some(3000), Some(2000)));
+    let id = asset["id"].as_str().unwrap().to_string();
+    assert_eq!(c.upload("again.png", &png(3000, 2000, 1)).await.json()["id"], asset["id"], "same bytes, same asset");
+    assert_eq!(c.upload("junk.png", b"definitely not an image").await.status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+
+    let d = c.get(&format!("/api/assets/{id}/derivatives/512")).await;
+    assert_eq!(d.status, StatusCode::OK);
+    assert_eq!(d.headers[header::CONTENT_TYPE], "image/webp");
+    let decoded = image::load_from_memory(&d.body).unwrap();
+    assert_eq!((decoded.width(), decoded.height()), (512, 341));
+    let etag = d.headers[header::ETAG].to_str().unwrap().to_string();
+    let cached = c.send("GET", &format!("/api/assets/{id}/derivatives/512"), None, vec![], &[("if-none-match", &etag)]).await;
+    assert_eq!(cached.status, StatusCode::NOT_MODIFIED);
+    assert_eq!(c.get(&format!("/api/assets/{id}/derivatives/300")).await.status, StatusCode::BAD_REQUEST);
+    let original = c.get(&format!("/api/assets/{id}/content")).await;
+    assert_eq!(original.headers[header::CONTENT_TYPE], "image/png");
+    assert!(original.headers[header::CONTENT_DISPOSITION].to_str().unwrap().contains("Sunset.png"));
+
+    // A board, three operations, and the snapshot that results.
+    let board = c.json("POST", "/api/boards", json!({ "title": "Refs" })).await.json();
+    let b = board["id"].as_str().unwrap().to_string();
+    let item = uuid::Uuid::now_v7().to_string();
+    let group = uuid::Uuid::now_v7().to_string();
+    let t = json!({ "x": 1.0, "y": 2.0, "width": 300.0, "height": 200.0, "rotation": 0.0 });
+    let ops = json!({ "operations": [
+        { "operationId": uuid::Uuid::now_v7(), "baseRevision": 0, "body": { "type": "item.create", "itemId": item, "transform": t, "z": 1.0,
+            "content": { "kind": "image", "asset": { "assetId": id, "intrinsicWidth": 3000, "intrinsicHeight": 2000 } }, "groupId": null, "appearance": null } },
+        { "operationId": uuid::Uuid::now_v7(), "baseRevision": 0, "body": { "type": "group.create", "groupId": group, "memberIds": [item], "label": "Sky", "frame": true } },
+        { "operationId": uuid::Uuid::now_v7(), "baseRevision": 0, "body": { "type": "item.appearance", "itemId": item, "appearance": { "opacity": 0.5, "flipX": true, "flipY": false } } },
+    ]});
+    let applied = c.json("POST", &format!("/api/boards/{b}/operations"), ops).await;
+    assert_eq!(applied.json(), json!({ "revision": 3 }));
+    let snap = c.get(&format!("/api/boards/{b}/snapshot")).await.json();
+    assert_eq!(snap["revision"], 3);
+    assert_eq!(snap["items"][0]["groupId"], group.as_str());
+    assert_eq!(snap["items"][0]["appearance"], json!({ "opacity": 0.5, "flipX": true, "flipY": false }));
+    assert_eq!(snap["items"][0]["content"]["asset"]["intrinsicWidth"], 3000);
+    assert_eq!(snap["groups"][0], json!({ "id": group, "label": "Sky", "frame": true, "memberIds": [item] }));
+
+    let broken = json!({ "operations": [{ "body": { "type": "item.create", "itemId": uuid::Uuid::now_v7(), "transform": t,
+        "content": { "kind": "image", "asset": { "assetId": uuid::Uuid::now_v7() } } } }] });
+    assert_eq!(c.json("POST", &format!("/api/boards/{b}/operations"), broken).await.status, StatusCode::BAD_REQUEST);
+    assert_eq!(c.get(&format!("/api/boards/{b}")).await.json()["revision"], 3, "a refused batch commits nothing");
+
+    let copy = c.json("POST", &format!("/api/boards/{b}/duplicate"), json!(null)).await;
+    assert_eq!(copy.status, StatusCode::CREATED);
+    let copy_snap = c.get(&format!("/api/boards/{}/snapshot", copy.json()["id"].as_str().unwrap())).await.json();
+    assert_eq!(copy_snap["items"].as_array().unwrap().len(), 1);
+    assert_ne!(copy_snap["groups"][0]["id"], group.as_str());
+    assert_eq!(copy_snap["groups"][0]["memberIds"][0], copy_snap["items"][0]["id"]);
+
+    // Library: name order, paged two at a time, nameless last.
+    for (i, name) in ["b.png", "A.png", "c.png"].iter().enumerate() {
+        assert_eq!(c.upload(name, &png(40, 30, 10 + i as u8)).await.status, StatusCode::CREATED);
+    }
+    let mut names = vec![];
+    let mut cursor = String::new();
+    loop {
+        let page = c.get(&format!("/api/assets?sort=name&limit=2&cursor={cursor}")).await.json();
+        names.extend(page["assets"].as_array().unwrap().iter().map(|a| a["originalFilename"].as_str().unwrap().to_string()));
+        match page["nextCursor"].as_str() {
+            Some(next) => cursor = next.into(),
+            None => break,
+        }
+    }
+    assert_eq!(names, ["A.png", "b.png", "c.png", "Sunset.png"]);
+    let recent = c.get("/api/assets?limit=10").await.json();
+    assert_eq!(recent["assets"][0]["originalFilename"], "c.png");
+    assert_eq!(recent["assets"][3]["boards"], 2);
+    assert_eq!(c.get("/api/assets?q=sun").await.json()["assets"].as_array().unwrap().len(), 1);
+    let mismatched = c.get(&format!("/api/assets?sort=recent&cursor={cursor}")).await;
+    assert_eq!(mismatched.status, StatusCode::BAD_REQUEST);
+
+    // Collections.
+    let coll = c.json("POST", "/api/collections", json!({ "name": "Skies" })).await.json();
+    let cid = coll["id"].as_str().unwrap();
+    let ghost = uuid::Uuid::now_v7().to_string();
+    let added = c.json("PUT", &format!("/api/collections/{cid}/assets"), json!({ "assetIds": [id, ghost] })).await.json();
+    assert_eq!(added, json!({ "skipped": [ghost] }));
+    assert_eq!(c.get(&format!("/api/collections/{cid}")).await.json()["assetCount"], 1);
+    assert_eq!(c.get(&format!("/api/assets?collection={cid}")).await.json()["assets"][0]["id"], id.as_str());
+    assert_eq!(c.json("POST", "/api/collections", json!({ "name": "Skies" })).await.status, StatusCode::CONFLICT);
+
+    // Delete: refused while on a board, then cascaded, restored, purged.
+    let refused = c.send("DELETE", &format!("/api/assets/{id}"), None, vec![], &[]).await;
+    assert_eq!(refused.status, StatusCode::CONFLICT);
+    assert_eq!(refused.json()["boardCount"], 2);
+    assert_eq!(refused.json()["boards"][0]["items"], 1);
+    let cascaded = c.send("DELETE", &format!("/api/assets/{id}?withItems=true"), None, vec![], &[]).await;
+    assert_eq!(cascaded.status, StatusCode::NO_CONTENT);
+    assert_eq!(c.get(&format!("/api/boards/{b}/snapshot")).await.json()["items"], json!([]));
+    assert_eq!(c.get("/api/assets?deleted=true").await.json()["assets"][0]["id"], id.as_str());
+    assert_eq!(c.send("POST", &format!("/api/assets/{id}/restore"), None, vec![], &[]).await.status, StatusCode::OK);
+    assert_eq!(c.send("DELETE", &format!("/api/assets/{id}/file"), None, vec![], &[]).await.status, StatusCode::CONFLICT);
+    c.send("DELETE", &format!("/api/assets/{id}"), None, vec![], &[]).await;
+    assert_eq!(c.send("DELETE", &format!("/api/assets/{id}/file"), None, vec![], &[]).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(c.get(&format!("/api/assets/{id}")).await.status, StatusCode::NOT_FOUND);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn realtime_presence_previews_and_announced_ops() {
+    let (mut c, app, dir) = signed_in().await;
+    let board = c.json("POST", "/api/boards", json!({ "title": "Live" })).await.json();
+    let b = board["id"].as_str().unwrap().to_string();
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(visarium::serve(app, listener));
+
+    let connect = |origin: &'static str| {
+        let mut req = format!("ws://{addr}/ws/canvas/{b}").into_client_request().unwrap();
+        req.headers_mut().insert("cookie", c.cookie_header().parse().unwrap());
+        req.headers_mut().insert("origin", origin.replace("ADDR", &addr.to_string()).parse().unwrap());
+        tokio_tungstenite::connect_async(req)
+    };
+    assert!(connect("http://evil.example").await.is_err(), "cross-origin sockets are refused");
+
+    let (mut a, _) = connect("http://ADDR").await.unwrap();
+    let (mut z, _) = connect("http://ADDR").await.unwrap();
+    async fn next(ws: &mut (impl StreamExt<Item = Result<tungstenite::Message, tungstenite::Error>> + Unpin)) -> Value {
+        loop {
+            match ws.next().await.unwrap().unwrap() {
+                tungstenite::Message::Text(t) => return serde_json::from_str(&t).unwrap(),
+                tungstenite::Message::Close(f) => return json!({ "closed": f.map(|f| u16::from(f.code)) }),
+                _ => continue,
+            }
+        }
+    }
+    let hello = json!({ "t": "hello", "protocolVersion": 3, "sinceRevision": 0 }).to_string();
+    a.send(hello.clone().into()).await.unwrap();
+    let welcome_a = next(&mut a).await;
+    assert_eq!(welcome_a["t"], "welcome");
+    let actor_a = welcome_a["actorId"].as_str().unwrap().to_string();
+    z.send(hello.into()).await.unwrap();
+    let welcome_z = next(&mut z).await;
+    assert_eq!(welcome_z["actors"].as_array().unwrap().len(), 2);
+    let joined = next(&mut a).await;
+    assert_eq!(joined["joined"][0]["displayName"], "Ada");
+    assert_ne!(joined["joined"][0]["colourIndex"], welcome_a["actors"][0]["colourIndex"]);
+
+    a.send(json!({ "t": "cursor", "x": 4.5, "y": -1 }).to_string().into()).await.unwrap();
+    assert_eq!(next(&mut z).await, json!({ "t": "cursor", "actorId": actor_a, "x": 4.5, "y": -1.0 }));
+
+    let item = uuid::Uuid::now_v7().to_string();
+    a.send(json!({ "t": "lock.acquire", "itemIds": [item] }).to_string().into()).await.unwrap();
+    assert_eq!(next(&mut a).await["heldBy"], actor_a.as_str());
+    assert_eq!(next(&mut z).await["heldBy"], actor_a.as_str());
+    z.send(json!({ "t": "lock.acquire", "itemIds": [item] }).to_string().into()).await.unwrap();
+    assert_eq!(next(&mut z).await["heldBy"], actor_a.as_str(), "refused: still a's");
+
+    // An op committed over REST by `a` reaches `z`, and not `a`.
+    let group = uuid::Uuid::now_v7();
+    let posted = c
+        .send(
+            "POST",
+            &format!("/api/boards/{b}/operations"),
+            Some("application/json"),
+            json!({ "operations": [{ "body": { "type": "group.create", "groupId": group, "label": "x" } }] }).to_string().into_bytes(),
+            &[("x-visarium-actor", &actor_a)],
+        )
+        .await;
+    assert_eq!(posted.status, StatusCode::OK);
+    let op = next(&mut z).await;
+    assert_eq!((op["t"].as_str(), op["fromRevision"].as_i64(), op["toRevision"].as_i64()), (Some("op"), Some(0), Some(1)));
+    assert_eq!(op["operations"][0], json!({ "type": "group.create", "groupId": group, "memberIds": null, "label": "x", "frame": null }));
+
+    drop(a);
+    let released = next(&mut z).await;
+    assert_eq!(released, json!({ "t": "lock", "itemIds": [item], "heldBy": null, "expiresAt": 0 }));
+    assert_eq!(next(&mut z).await, json!({ "t": "presence", "left": [actor_a] }));
+
+    z.send(json!({ "t": "cursor", "x": "nope", "y": 0 }).to_string().into()).await.unwrap();
+    assert_eq!(next(&mut z).await, json!({ "closed": 1007 }));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// --- sessions (auth/sessions) ------------------------------------------------
+
+#[tokio::test]
+async fn sessions_are_durable_hashed_listed_and_revocable() {
+    let (config, dir) = config(false);
+    let app = visarium::open(config.clone()).await.unwrap();
+    let mut c = Client::new(visarium::router(app.clone()));
+    c.get("/api/session").await;
+    c.json("POST", "/api/setup", json!({ "username": "ada", "displayName": "Ada", "password": "correct horse battery" })).await;
+    let cookie = c.cookie("VISARIUM_SESSION").unwrap();
+
+    // Only the hash is stored.
+    let hashes: Vec<String> = sqlx::query_scalar("SELECT token_hash FROM session").fetch_all(&app.db).await.unwrap();
+    assert!(!hashes.contains(&cookie), "the cookie value is not in the table");
+    assert!(hashes.contains(&visarium::auth::hash_token(&cookie)));
+
+    // A restart signs nobody out: a second App over the same file.
+    let reopened = visarium::open(config).await.unwrap();
+    c.router = visarium::router(reopened);
+    assert_eq!(c.get("/api/boards").await.status, StatusCode::OK);
+
+    // A second browser; the list shows both, one marked current.
+    let mut d = Client::new(c.router.clone());
+    d.get("/api/session").await;
+    let ua = [("user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Version/18.0 Safari/605.1.15")];
+    let signed = d
+        .send("POST", "/api/session", Some("application/json"), json!({ "username": "ada", "password": "correct horse battery" }).to_string().into_bytes(), &ua)
+        .await;
+    assert_eq!(signed.status, StatusCode::OK);
+    let list = c.get("/api/sessions").await.json();
+    assert_eq!(list.as_array().unwrap().len(), 2);
+    assert_eq!(list.as_array().unwrap().iter().filter(|s| s["current"] == true).count(), 1);
+    let other = list.as_array().unwrap().iter().find(|s| s["current"] == false).unwrap().clone();
+    assert_eq!(other["label"], "Safari on macOS");
+
+    // Session fixation: signing in again ends the session it arrived with.
+    let before = d.cookie("VISARIUM_SESSION").unwrap();
+    d.json("POST", "/api/session", json!({ "username": "ada", "password": "correct horse battery" })).await;
+    assert_ne!(d.cookie("VISARIUM_SESSION").unwrap(), before);
+    let mut stale = Client::new(c.router.clone());
+    stale.cookies.push(("VISARIUM_SESSION".into(), before));
+    assert_eq!(stale.get("/api/boards").await.status, StatusCode::UNAUTHORIZED);
+
+    // Sign out one session from another.
+    let other = c.get("/api/sessions").await.json().as_array().unwrap().iter().find(|s| s["current"] == false).unwrap()["id"].clone();
+    assert_eq!(c.send("DELETE", &format!("/api/sessions/{}", other.as_str().unwrap()), None, vec![], &[]).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(d.get("/api/boards").await.status, StatusCode::UNAUTHORIZED);
+
+    // "Sign out other sessions".
+    d.json("POST", "/api/session", json!({ "username": "ada", "password": "correct horse battery" })).await;
+    assert_eq!(c.send("DELETE", "/api/sessions", None, vec![], &[]).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(d.get("/api/boards").await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(c.get("/api/boards").await.status, StatusCode::OK);
+
+    // A password change ends the others and keeps the caller's.
+    d.json("POST", "/api/session", json!({ "username": "ada", "password": "correct horse battery" })).await;
+    let changed = c.json("PUT", "/api/accounts/me/password", json!({ "currentPassword": "correct horse battery", "newPassword": "a different long one" })).await;
+    assert_eq!(changed.status, StatusCode::NO_CONTENT);
+    assert_eq!(d.get("/api/boards").await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(c.get("/api/boards").await.status, StatusCode::OK);
+
+    // Expired is the same as absent: 401 problem+json. The sweep clears it.
+    sqlx::query("UPDATE session SET expires_at = '2000-01-01T00:00:00.000Z'").execute(&app.db).await.unwrap();
+    let expired = c.get("/api/boards").await;
+    assert_eq!(expired.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(expired.headers[header::CONTENT_TYPE], "application/problem+json");
+    visarium::auth::sweep(&app.db).await.unwrap();
+    assert_eq!(count(&app, "SELECT count(*) FROM session").await, 0);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn cookies_are_host_bound_over_https() {
+    let (mut c, _app, dir) = signed_in().await;
+    let r = c
+        .send(
+            "POST",
+            "/api/session",
+            Some("application/json"),
+            json!({ "username": "ada", "password": "correct horse battery" }).to_string().into_bytes(),
+            &[("x-forwarded-proto", "https")],
+        )
+        .await;
+    let set: Vec<&str> = r.headers.get_all(header::SET_COOKIE).iter().map(|v| v.to_str().unwrap()).collect();
+    let session = set.iter().find(|c| c.starts_with("__Host-visarium_session=")).expect("a __Host- session cookie");
+    for attr in ["Path=/", "HttpOnly", "SameSite=Lax", "Secure"] {
+        assert!(session.contains(attr), "{session} lacks {attr}");
+    }
+    assert!(!session.contains("Domain"), "a __Host- cookie names no domain");
+    // And it is honoured.
+    let token = session.split(';').next().unwrap().split_once('=').unwrap().1.to_string();
+    let mut s = Client::new(c.router.clone());
+    s.cookies.push(("__Host-visarium_session".into(), token));
+    assert_eq!(s.get("/api/boards").await.status, StatusCode::OK);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// --- passwords (auth/sign-in) ------------------------------------------------
+
+#[tokio::test]
+async fn passwords_upgrade_from_bcrypt_and_take_long_passphrases() {
+    let (mut c, app, dir) = signed_in().await;
+    let old = visarium::auth::bcrypt_hash_for_tests("correct horse battery");
+    sqlx::query("UPDATE app_user SET password_hash = ?").bind(old).execute(&app.db).await.unwrap();
+    let r = c.json("POST", "/api/session", json!({ "username": "ada", "password": "correct horse battery" })).await;
+    assert_eq!(r.status, StatusCode::OK);
+    let stored: String = sqlx::query_scalar("SELECT password_hash FROM app_user").fetch_one(&app.db).await.unwrap();
+    assert!(stored.starts_with("{argon2id}$argon2id$"), "upgraded: {stored}");
+    assert_eq!(c.json("POST", "/api/session", json!({ "username": "ada", "password": "correct horse battery" })).await.status, StatusCode::OK);
+
+    let long = "x".repeat(99) + "y";
+    let changed = c.json("PUT", "/api/accounts/me/password", json!({ "currentPassword": "correct horse battery", "newPassword": long })).await;
+    assert_eq!(changed.status, StatusCode::NO_CONTENT);
+    assert_eq!(c.json("POST", "/api/session", json!({ "username": "ada", "password": long })).await.status, StatusCode::OK);
+    let last_differs = "x".repeat(99) + "z";
+    assert_eq!(c.json("POST", "/api/session", json!({ "username": "ada", "password": last_differs })).await.status, StatusCode::UNAUTHORIZED);
+    let too_long = c.json("PUT", "/api/accounts/me/password", json!({ "currentPassword": long, "newPassword": "x".repeat(1025) })).await;
+    assert_eq!(too_long.status, StatusCode::BAD_REQUEST);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn a_configuration_nobody_could_sign_in_with_is_refused() {
+    let (mut cfg, dir) = config(false);
+    cfg.password_disabled = true;
+    let err = visarium::open(cfg.clone()).await.err().expect("refused").to_string();
+    assert!(err.contains("VISARIUM_AUTH_PASSWORD") && err.contains("VISARIUM_OIDC_"), "{err}");
+    cfg.password_disabled = false;
+    cfg.public_url = None;
+    cfg.providers = vec![visarium::oidc::ProviderConfig {
+        id: "google".into(),
+        name: "Google".into(),
+        issuer: "https://accounts.google.com".into(),
+        client_id: "x".into(),
+        client_secret: "y".into(),
+    }];
+    let err = visarium::open(cfg).await.err().expect("refused").to_string();
+    assert!(err.contains("VISARIUM_PUBLIC_URL"), "{err}");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// --- OpenID Connect (auth/sign-in) -------------------------------------------
+
+#[tokio::test]
+async fn sign_in_with_a_provider() {
+    let issuer = Issuer::start().await;
+    let (app, dir) = with_provider(&issuer, |_| {}).await;
+    let mut c = Client::new(visarium::router(app.clone()));
+    let session = c.get("/api/session").await.json();
+    assert_eq!(session["providers"], json!([{ "id": "test", "name": "Test SSO" }]));
+    assert_eq!(session["passwordEnabled"], true);
+
+    // First run, claimed through the provider.
+    let ana = Person::new("ana-sub", "ana@example.com");
+    let claimed = sso(&mut c, &issuer, "/auth/oidc/test/start?intent=claim&return=/boards", ana.clone()).await;
+    assert_eq!((claimed.status, location(&claimed)), (StatusCode::FOUND, "/boards".to_string()));
+    assert!(c.cookie("VISARIUM_FLOW").is_none(), "the flow cookie is cleared");
+    let me = c.get("/api/session").await.json()["user"].clone();
+    assert_eq!((me["username"].as_str(), me["admin"].as_bool(), me["displayName"].as_str()), (Some("ana"), Some(true), Some("ANA-SUB")));
+
+    // Out, and back in with the provider.
+    c.send("DELETE", "/api/session", None, vec![], &[]).await;
+    let back = sso(&mut c, &issuer, "/auth/oidc/test/start", ana.clone()).await;
+    assert_eq!(location(&back), "/");
+    assert_eq!(c.get("/api/session").await.json()["user"]["username"], "ana");
+
+    // An open redirect is refused: back to "/".
+    let evil = sso(&mut c, &issuer, "/auth/oidc/test/start?return=https://evil.example/", ana.clone()).await;
+    assert_eq!(location(&evil), "/");
+
+    // A callback opened in a browser that did not start it signs nobody in.
+    let mut c2 = Client::new(c.router.clone());
+    let callback = to_callback(&mut c2, &issuer, "/auth/oidc/test/start", ana.clone()).await;
+    let mut stranger = Client::new(c.router.clone());
+    let refused = stranger.get(&callback).await;
+    assert_eq!(location(&refused), "/sign-in?error=expired");
+    assert!(stranger.cookie("VISARIUM_SESSION").is_none());
+    // ...and once used, it is used up, even in the browser that started it.
+    let mut c3 = Client::new(c.router.clone());
+    let callback = to_callback(&mut c3, &issuer, "/auth/oidc/test/start", ana.clone()).await;
+    let flow = c3.cookie("VISARIUM_FLOW").unwrap();
+    assert_eq!(location(&c3.get(&callback).await), "/");
+    c3.cookies.push(("VISARIUM_FLOW".into(), flow));
+    assert_eq!(location(&c3.get(&callback).await), "/sign-in?error=expired");
+
+    // A stranger with no invitation is turned away and nothing is created —
+    // even with the same email as an existing account.
+    let accounts = count(&app, "SELECT count(*) FROM app_user").await;
+    let mut s = Client::new(c.router.clone());
+    let intruder = sso(&mut s, &issuer, "/auth/oidc/test/start", Person::new("intruder", "ana@example.com")).await;
+    assert_eq!(location(&intruder), "/sign-in?error=no-account");
+    assert_eq!(count(&app, "SELECT count(*) FROM app_user").await, accounts);
+    assert_eq!(count(&app, "SELECT count(*) FROM user_identity").await, 1);
+
+    // A provider that declines is "cancelled", not an error page.
+    let mut d = Client::new(c.router.clone());
+    let left = d.get("/auth/oidc/test/start").await;
+    let declined = d.get(&provider_round_trip(&location(&left)).await).await;
+    assert_eq!(location(&declined), "/sign-in?error=cancelled");
+
+    // An SSO-only account cannot drop its last way in; with a password, it can.
+    let unlink = c.send("DELETE", "/api/accounts/me/identities/test", None, vec![], &[]).await;
+    assert_eq!(unlink.status, StatusCode::CONFLICT);
+    let set = c.json("PUT", "/api/accounts/me/password", json!({ "newPassword": "now with a password" })).await;
+    assert_eq!(set.status, StatusCode::NO_CONTENT, "an SSO-only account sets its first password without a current one");
+    let ids = c.get("/api/accounts/me/identities").await.json();
+    assert_eq!((ids["hasPassword"].as_bool(), ids["identities"][0]["provider"].as_str()), (Some(true), Some("test")));
+    assert_eq!(ids["identities"][0]["email"], "ana@example.com");
+    assert_eq!(c.send("DELETE", "/api/accounts/me/identities/test", None, vec![], &[]).await.status, StatusCode::NO_CONTENT);
+
+    // Link it again, from the signed-in account.
+    let linked = sso(&mut c, &issuer, "/auth/oidc/test/start?intent=link&return=/account", ana.clone()).await;
+    assert_eq!(location(&linked), "/account");
+    // The same identity cannot be linked to a second account.
+    let token = invite(&mut c, json!({})).await;
+    let mut bob = Client::new(c.router.clone());
+    bob.get("/api/session").await;
+    bob.json("POST", "/api/invitations/redeem", json!({ "token": token, "username": "bob", "displayName": "Bob", "password": "bobs long password" })).await;
+    let stolen = sso(&mut bob, &issuer, "/auth/oidc/test/start?intent=link", ana.clone()).await;
+    assert_eq!(location(&stolen), "/sign-in?error=linked-elsewhere");
+    // Linking needs someone signed in.
+    assert_eq!(location(&stranger.get("/auth/oidc/test/start?intent=link").await), "/sign-in?error=signed-out");
+
+    // A deactivated account cannot come back through the provider.
+    let bob_id = bob.get("/api/session").await.json()["user"]["id"].as_str().unwrap().to_string();
+    let bob_sso = Person::new("bob-sub", "bob@example.com");
+    assert_eq!(location(&sso(&mut bob, &issuer, "/auth/oidc/test/start?intent=link", bob_sso.clone()).await), "/");
+    c.send("POST", &format!("/api/accounts/{bob_id}/deactivation"), None, vec![], &[]).await;
+    let mut gone = Client::new(c.router.clone());
+    assert_eq!(location(&sso(&mut gone, &issuer, "/auth/oidc/test/start", bob_sso).await), "/sign-in?error=deactivated");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn an_sso_only_instance_has_no_password_sign_in() {
+    let issuer = Issuer::start().await;
+    let (app, dir) = with_provider(&issuer, |c| c.password_disabled = true).await;
+    let mut c = Client::new(visarium::router(app));
+    assert_eq!(c.get("/api/session").await.json()["passwordEnabled"], false);
+    let r = c.json("POST", "/api/session", json!({ "username": "ada", "password": "correct horse battery" })).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+    let r = c.json("POST", "/api/setup", json!({ "username": "ada", "displayName": "Ada", "password": "correct horse battery" })).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn exactly_one_first_run_claim_wins_whatever_the_method() {
+    let issuer = Issuer::start().await;
+    let (app, dir) = with_provider(&issuer, |_| {}).await;
+    let router = visarium::router(app.clone());
+    // Four browsers part-way through an SSO claim, four about to post a password.
+    let mut sso_claims = vec![];
+    for n in 0..4 {
+        let mut c = Client::new(router.clone());
+        let callback = to_callback(&mut c, &issuer, "/auth/oidc/test/start?intent=claim", Person::new(&format!("p{n}"), &format!("p{n}@example.com"))).await;
+        sso_claims.push((c, callback));
+    }
+    let mut password_claims = vec![];
+    for n in 0..4 {
+        let mut c = Client::new(router.clone());
+        c.get("/api/session").await;
+        password_claims.push((c, n));
+    }
+    let mut runs: Vec<std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send>>> = vec![];
+    for (mut c, callback) in sso_claims {
+        runs.push(Box::pin(async move { location(&c.get(&callback).await) == "/" }));
+    }
+    for (mut c, n) in password_claims {
+        runs.push(Box::pin(async move {
+            let body = json!({ "username": format!("pw{n}"), "displayName": "P", "password": "correct horse battery" });
+            c.json("POST", "/api/setup", body).await.status == StatusCode::CREATED
+        }));
+    }
+    let won = futures_util::future::join_all(runs).await.into_iter().filter(|w| *w).count();
+    assert_eq!(won, 1);
+    assert_eq!(count(&app, "SELECT count(*) FROM app_user").await, 1);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// --- invitations (auth/invitations) -----------------------------------------
+
+#[tokio::test]
+async fn invitations_join_reset_and_die() {
+    let issuer = Issuer::start().await;
+    let (app, dir) = with_provider(&issuer, |_| {}).await;
+    let mut admin = Client::new(visarium::router(app.clone()));
+    admin.get("/api/session").await;
+    admin.json("POST", "/api/setup", json!({ "username": "ada", "displayName": "Ada", "password": "correct horse battery" })).await;
+
+    // Make, list.
+    let token = invite(&mut admin, json!({ "note": "for Ana" })).await;
+    let list = admin.get("/api/invitations").await.json();
+    assert_eq!((list[0]["note"].as_str(), list[0]["admin"].as_bool(), list[0]["purpose"].as_str()), (Some("for Ana"), Some(false), Some("join")));
+    assert!(list[0]["expiresAt"].is_string());
+
+    // Join through the provider: the token goes in a POST body, never a URL.
+    let mut ana = Client::new(admin.router.clone());
+    ana.get("/api/session").await;
+    assert_eq!(ana.json("POST", "/api/invitations/inspect", json!({ "token": token })).await.json()["purpose"], "join");
+    issuer.next(Person::new("ana-sub", "ana@example.com"));
+    let started = ana.json("POST", "/api/invitations/redeem/test", json!({ "token": token })).await;
+    assert_eq!(started.status, StatusCode::OK, "{}", started.json());
+    let callback = provider_round_trip(started.json()["redirect"].as_str().unwrap()).await;
+    assert_eq!(location(&ana.get(&callback).await), "/");
+    let me = ana.get("/api/session").await.json()["user"].clone();
+    assert_eq!((me["username"].as_str(), me["admin"].as_bool()), (Some("ana"), Some(false)));
+    let used = ana.json("POST", "/api/invitations/inspect", json!({ "token": token })).await;
+    assert_eq!((used.status, used.json()["code"].as_str()), (StatusCode::GONE, Some("invite-used")));
+    let again = ana.json("POST", "/api/invitations/redeem/test", json!({ "token": token })).await;
+    assert_eq!(again.status, StatusCode::GONE);
+    assert!(admin.get("/api/invitations").await.json().as_array().unwrap().is_empty(), "used ones leave the list");
+
+    // An admin invitation makes an admin.
+    let token = invite(&mut admin, json!({ "admin": true })).await;
+    let mut ben = Client::new(admin.router.clone());
+    ben.get("/api/session").await;
+    let joined = ben.json("POST", "/api/invitations/redeem", json!({ "token": token, "username": "ben", "displayName": "Ben", "password": "bens long password" })).await;
+    assert_eq!((joined.status, joined.json()["admin"].as_bool()), (StatusCode::CREATED, Some(true)));
+
+    // Revoked and expired links say so.
+    let token = invite(&mut admin, json!({})).await;
+    let id = admin.get("/api/invitations").await.json()[0]["id"].as_str().unwrap().to_string();
+    assert_eq!(admin.send("DELETE", &format!("/api/invitations/{id}"), None, vec![], &[]).await.status, StatusCode::NO_CONTENT);
+    let revoked = ana.json("POST", "/api/invitations/inspect", json!({ "token": token })).await;
+    assert_eq!((revoked.status, revoked.json()["code"].as_str()), (StatusCode::GONE, Some("invite-invalid")));
+    let token = invite(&mut admin, json!({})).await;
+    sqlx::query("UPDATE invitation SET expires_at = '2000-01-01T00:00:00.000Z' WHERE used_at IS NULL").execute(&app.db).await.unwrap();
+    let expired = ana.json("POST", "/api/invitations/redeem", json!({ "token": token, "username": "late", "displayName": "Late", "password": "a long enough one" })).await;
+    assert_eq!((expired.status, expired.json()["code"].as_str()), (StatusCode::GONE, Some("invite-expired")));
+
+    // Members cannot invite.
+    assert_eq!(ana.json("POST", "/api/invitations", json!({})).await.status, StatusCode::FORBIDDEN);
+
+    // Reset: a one-time link that sets a new password and ends every session.
+    let ben_id = ben.get("/api/session").await.json()["user"]["id"].as_str().unwrap().to_string();
+    let token = invite(&mut admin, json!({ "purpose": "reset", "userId": ben_id })).await;
+    let mut anyone = Client::new(admin.router.clone());
+    anyone.get("/api/session").await;
+    assert_eq!(anyone.json("POST", "/api/invitations/inspect", json!({ "token": token })).await.json()["username"], "ben");
+    let reset = anyone.json("POST", "/api/invitations/redeem", json!({ "token": token, "password": "bens brand new one" })).await;
+    assert_eq!(reset.status, StatusCode::NO_CONTENT);
+    assert_eq!(ben.get("/api/boards").await.status, StatusCode::UNAUTHORIZED, "his other session ended");
+    assert_eq!(anyone.json("POST", "/api/session", json!({ "username": "ben", "password": "bens long password" })).await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(anyone.json("POST", "/api/session", json!({ "username": "ben", "password": "bens brand new one" })).await.status, StatusCode::OK);
+    let reused = anyone.json("POST", "/api/invitations/redeem", json!({ "token": token, "password": "yet another password" })).await;
+    assert_eq!((reused.status, reused.json()["code"].as_str()), (StatusCode::GONE, Some("invite-used")));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// --- share links (sharing/read-only-links) -----------------------------------
+
+async fn board_with_one_image(c: &mut Client) -> (String, String, String, String) {
+    let on_board = c.upload("on.png", &png(600, 400, 3)).await.json()["id"].as_str().unwrap().to_string();
+    let elsewhere = c.upload("off.png", &png(600, 400, 4)).await.json()["id"].as_str().unwrap().to_string();
+    let b = c.json("POST", "/api/boards", json!({ "title": "Refs" })).await.json()["id"].as_str().unwrap().to_string();
+    let item = uuid::Uuid::now_v7().to_string();
+    let t = json!({ "x": 0.0, "y": 0.0, "width": 600.0, "height": 400.0, "rotation": 0.0 });
+    let ops = json!({ "operations": [{ "body": { "type": "item.create", "itemId": item, "transform": t, "z": 1.0,
+        "content": { "kind": "image", "asset": { "assetId": on_board, "intrinsicWidth": 600, "intrinsicHeight": 400 } } } }] });
+    assert_eq!(c.json("POST", &format!("/api/boards/{b}/operations"), ops).await.status, StatusCode::OK);
+    (b, item, on_board, elsewhere)
+}
+
+async fn share(c: &mut Client, board: &str, body: Value) -> (String, String) {
+    let made = c.json("POST", &format!("/api/boards/{board}/shares"), body).await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.json());
+    let link = made.json()["link"].as_str().unwrap().to_string();
+    assert!(link.starts_with("/s#"), "the token rides in the fragment");
+    (made.json()["id"].as_str().unwrap().to_string(), link[3..].to_string())
+}
+
+async fn viewer(router: &axum::Router, token: &str) -> (Client, Reply) {
+    let mut v = Client::new(router.clone());
+    v.get("/api/session").await;
+    let r = v.json("POST", "/api/shared/session", json!({ "token": token })).await;
+    (v, r)
+}
+
+#[tokio::test]
+async fn share_links_show_one_board_and_nothing_else() {
+    let (mut c, app, dir) = signed_in().await;
+    let (b, item, on_board, elsewhere) = board_with_one_image(&mut c).await;
+    let (link_id, token) = share(&mut c, &b, json!({ "label": "client review", "expiresInDays": 7 })).await;
+    assert_eq!(c.json("POST", &format!("/api/boards/{b}/shares"), json!({ "expiresInDays": 3 })).await.status, StatusCode::BAD_REQUEST);
+    let listed = c.get(&format!("/api/boards/{b}/shares")).await.json();
+    assert_eq!((listed[0]["label"].as_str(), listed[0]["createdByName"].as_str()), (Some("client review"), Some("Ada")));
+    assert!(listed[0]["expiresAt"].is_string() && listed[0].get("link").is_none(), "the token is shown once, at creation");
+    assert_eq!(c.get("/api/shares").await.json().as_array().unwrap().len(), 1, "admins see every link");
+
+    // Someone outside opens it.
+    let (mut v, opened) = viewer(&c.router, &token).await;
+    assert_eq!(opened.status, StatusCode::OK, "{}", opened.json());
+    assert_eq!(opened.json(), json!({ "member": false, "boardId": b, "title": "Refs", "sharedBy": "Ada" }));
+    assert!(v.cookie("VISARIUM_SHARE").is_some());
+    let board = v.get("/api/shared/board").await;
+    assert_eq!(board.status, StatusCode::OK);
+    assert_eq!((board.json()["title"].as_str(), board.json()["items"].as_array().unwrap().len()), (Some("Refs"), 1));
+    assert_eq!(board.headers["referrer-policy"], "no-referrer");
+    assert_eq!(board.headers["x-robots-tag"], "noindex");
+    assert_eq!(board.headers[header::CACHE_CONTROL], "private, no-store");
+    assert_eq!(v.get(&format!("/api/shared/assets/{on_board}/derivatives/512")).await.status, StatusCode::OK);
+
+    // ...and nothing else.
+    assert_eq!(v.get(&format!("/api/shared/assets/{elsewhere}/derivatives/512")).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(v.get(&format!("/api/assets/{on_board}/content")).await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(v.get(&format!("/api/assets/{on_board}/derivatives/512")).await.status, StatusCode::UNAUTHORIZED);
+    for path in ["/api/boards", "/api/assets", "/api/collections", "/api/accounts", "/api/sessions"] {
+        assert_eq!(v.get(path).await.status, StatusCode::UNAUTHORIZED, "{path}");
+    }
+    let write = json!({ "operations": [{ "body": { "type": "item.delete", "itemId": item } }] });
+    assert_eq!(v.json("POST", &format!("/api/boards/{b}/operations"), write).await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(c.get(&format!("/api/boards/{b}")).await.json()["revision"], 1, "the board is unchanged");
+    assert_eq!(v.get("/api/session").await.json()["user"], Value::Null);
+
+    // A member who opens a link is sent to the board itself.
+    let member = c.json("POST", "/api/shared/session", json!({ "token": token })).await.json();
+    assert_eq!(member, json!({ "member": true, "boardId": b }));
+
+    // An image taken off the board stops being served.
+    c.json("POST", &format!("/api/boards/{b}/operations"), json!({ "operations": [{ "body": { "type": "item.delete", "itemId": item } }] })).await;
+    assert_eq!(v.get(&format!("/api/shared/assets/{on_board}/derivatives/512")).await.status, StatusCode::NOT_FOUND);
+
+    // Revoked: the viewer's next request, and the link itself, are refused.
+    assert_eq!(c.send("DELETE", &format!("/api/shares/{link_id}"), None, vec![], &[]).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(v.get("/api/shared/board").await.status, StatusCode::UNAUTHORIZED);
+    let (_, again) = viewer(&c.router, &token).await;
+    assert_eq!((again.status, again.json()["code"].as_str()), (StatusCode::GONE, Some("revoked")));
+
+    // Expired: refused, and no board data.
+    let (_, day) = share(&mut c, &b, json!({ "expiresInDays": 1 })).await;
+    sqlx::query("UPDATE share_link SET expires_at = '2000-01-01T00:00:00.000Z' WHERE revoked_at IS NULL").execute(&app.db).await.unwrap();
+    let (_, late) = viewer(&c.router, &day).await;
+    assert_eq!((late.status, late.json()["code"].as_str()), (StatusCode::GONE, Some("expired")));
+    assert!(!String::from_utf8_lossy(&late.body).contains("Refs"), "no board data");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn a_passphrase_link_reveals_nothing_until_unlocked() {
+    let (mut c, app, dir) = signed_in().await;
+    let (b, ..) = board_with_one_image(&mut c).await;
+    let (link_id, token) = share(&mut c, &b, json!({ "passphrase": "open sesame" })).await;
+    let (other_id, _) = share(&mut c, &b, json!({})).await;
+
+    let (mut v, locked) = viewer(&c.router, &token).await;
+    assert_eq!(locked.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(locked.json()["passphraseRequired"], true);
+    let said = String::from_utf8_lossy(&locked.body);
+    assert!(!said.contains("Refs") && !said.contains("Ada") && locked.json().get("boardId").is_none(), "nothing about the board: {said}");
+    for _ in 0..6 {
+        let wrong = v.json("POST", "/api/shared/session", json!({ "token": token, "passphrase": "guess" })).await;
+        assert_eq!(wrong.status, StatusCode::UNAUTHORIZED);
+    }
+    assert!(app.throttle.delay(&format!("share:{link_id}")) > std::time::Duration::ZERO, "guesses slow this link down");
+    assert_eq!(app.throttle.delay(&format!("share:{other_id}")), std::time::Duration::ZERO, "and no other");
+    let opened = v.json("POST", "/api/shared/session", json!({ "token": token, "passphrase": "open sesame" })).await;
+    assert_eq!(opened.status, StatusCode::OK);
+    assert_eq!(v.get("/api/shared/board").await.status, StatusCode::OK);
+
+    // A new passphrase ends whoever came in by the old one.
+    let changed = c.json("PATCH", &format!("/api/shares/{link_id}"), json!({ "passphrase": "new words" })).await;
+    assert_eq!((changed.status, changed.json()["hasPassphrase"].as_bool()), (StatusCode::OK, Some(true)));
+    assert_eq!(v.get("/api/shared/board").await.status, StatusCode::UNAUTHORIZED);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn sharing_is_absent_in_single_user_mode() {
+    let (app, dir) = instance(true).await;
+    let mut c = Client::new(visarium::router(app));
+    assert_eq!(c.get("/api/session").await.json()["sharingEnabled"], false);
+    let b = c.json("POST", "/api/boards", json!({ "title": "Mine" })).await.json()["id"].as_str().unwrap().to_string();
+    assert_eq!(c.json("POST", &format!("/api/boards/{b}/shares"), json!({})).await.status, StatusCode::NOT_FOUND);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn viewers_watch_live_and_are_cut_off_on_revoke() {
+    let (mut c, app, dir) = signed_in().await;
+    let (b, ..) = board_with_one_image(&mut c).await;
+    let (link_id, token) = share(&mut c, &b, json!({})).await;
+    let (v, _) = viewer(&c.router, &token).await;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(visarium::serve(app, listener));
+    let socket = |path: String, cookies: String| {
+        let mut req = format!("ws://{addr}{path}").into_client_request().unwrap();
+        req.headers_mut().insert("cookie", cookies.parse().unwrap());
+        req.headers_mut().insert("origin", format!("http://{addr}").parse().unwrap());
+        tokio_tungstenite::connect_async(req)
+    };
+    async fn next(ws: &mut (impl StreamExt<Item = Result<tungstenite::Message, tungstenite::Error>> + Unpin)) -> Value {
+        loop {
+            match tokio::time::timeout(std::time::Duration::from_secs(5), ws.next()).await.expect("a frame in time").unwrap().unwrap() {
+                tungstenite::Message::Text(t) => return serde_json::from_str(&t).unwrap(),
+                tungstenite::Message::Close(f) => return json!({ "closed": f.map(|f| u16::from(f.code)) }),
+                _ => continue,
+            }
+        }
+    }
+    let hello = json!({ "t": "hello", "protocolVersion": 3, "sinceRevision": 0 }).to_string();
+
+    // The member's own socket refuses the viewer's cookie, and vice versa.
+    assert!(socket(format!("/ws/canvas/{b}"), v.cookie_header()).await.is_err());
+    assert!(socket("/ws/shared".into(), c.cookie_header()).await.is_err());
+
+    let (mut vs, _) = socket("/ws/shared".into(), v.cookie_header()).await.unwrap();
+    vs.send(hello.clone().into()).await.unwrap();
+    let welcome = next(&mut vs).await;
+    assert_eq!((welcome["t"].as_str(), welcome["actors"].clone()), (Some("welcome"), json!([])), "no names for viewers");
+
+    let (mut ms, _) = socket(format!("/ws/canvas/{b}"), c.cookie_header()).await.unwrap();
+    ms.send(hello.into()).await.unwrap();
+    assert_eq!(next(&mut ms).await["t"], "welcome");
+    assert_eq!(next(&mut ms).await, json!({ "t": "viewers", "count": 1 }));
+
+    // A viewer's frames change nothing and reach nobody.
+    vs.send(json!({ "t": "cursor", "x": 1, "y": 2 }).to_string().into()).await.unwrap();
+    vs.send(json!({ "t": "lock.acquire", "itemIds": [uuid::Uuid::now_v7()] }).to_string().into()).await.unwrap();
+
+    // A member's committed edit reaches the viewer; the member's next frame is
+    // that op, not anything the viewer sent.
+    let group = uuid::Uuid::now_v7();
+    let posted = c
+        .json("POST", &format!("/api/boards/{b}/operations"), json!({ "operations": [{ "body": { "type": "group.create", "groupId": group, "label": "x" } }] }))
+        .await;
+    assert_eq!(posted.status, StatusCode::OK, "{}", posted.json());
+    let op = next(&mut vs).await;
+    assert_eq!((op["t"].as_str(), op["toRevision"].as_i64()), (Some("op"), Some(2)));
+    assert_eq!(next(&mut ms).await["t"], "op", "the member heard the op, not the viewer's cursor or lock");
+
+    // Revoking closes the viewer's socket.
+    let revoked = c.send("DELETE", &format!("/api/shares/{link_id}"), None, vec![], &[]).await;
+    assert_eq!(revoked.status, StatusCode::NO_CONTENT);
+    assert_eq!(next(&mut vs).await, json!({ "closed": 1008 }));
+    assert_eq!(next(&mut ms).await, json!({ "t": "viewers", "count": 0 }));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// --- the desktop handoff (desktop/server-connections) ------------------------
+
+fn pkce() -> (String, String) {
+    use base64::Engine;
+    use sha2::Digest;
+    let verifier = uuid::Uuid::new_v4().simple().to_string() + &uuid::Uuid::new_v4().simple().to_string();
+    let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sha2::Sha256::digest(verifier.as_bytes()));
+    (verifier, challenge)
+}
+
+#[tokio::test]
+async fn the_desktop_gets_a_device_token_through_the_browser() {
+    let (mut c, _app, dir) = signed_in().await;
+    let (verifier, challenge) = pkce();
+    let authorize = |port: u16, challenge: &str| json!({ "port": port, "challenge": challenge, "state": "s1", "label": "Visarium Desktop on studio-mac" });
+
+    // Signed out, nothing is issued; a low port is refused.
+    let mut desktop = Client::new(c.router.clone());
+    desktop.get("/api/session").await;
+    assert_eq!(desktop.json("POST", "/api/device/authorize", authorize(49152, &challenge)).await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(c.json("POST", "/api/device/authorize", authorize(80, &challenge)).await.status, StatusCode::BAD_REQUEST);
+
+    // The browser, signed in, allows the device; the redirect is loopback only.
+    let ok = c.json("POST", "/api/device/authorize", authorize(49152, &challenge)).await.json();
+    let redirect = ok["redirect"].as_str().unwrap();
+    assert!(redirect.starts_with("http://127.0.0.1:49152/callback?code="), "{redirect}");
+    assert!(redirect.ends_with("&state=s1"));
+    let code = redirect.split("code=").nth(1).unwrap().split('&').next().unwrap().to_string();
+
+    // A wrong verifier is refused, and burns the code.
+    let wrong = desktop.json("POST", "/api/device-tokens", json!({ "code": code, "verifier": "not-the-verifier" })).await;
+    assert_eq!(wrong.status, StatusCode::UNAUTHORIZED);
+    let late = desktop.json("POST", "/api/device-tokens", json!({ "code": code, "verifier": verifier })).await;
+    assert_eq!(late.status, StatusCode::UNAUTHORIZED, "single use");
+
+    // The right one gets a device token: a session that works and is listed.
+    let ok = c.json("POST", "/api/device/authorize", authorize(49152, &challenge)).await.json();
+    let code = ok["redirect"].as_str().unwrap().split("code=").nth(1).unwrap().split('&').next().unwrap().to_string();
+    let token = desktop.json("POST", "/api/device-tokens", json!({ "code": code, "verifier": verifier })).await;
+    assert_eq!(token.status, StatusCode::CREATED);
+    assert_eq!(token.json()["user"]["username"], "ada");
+    desktop.cookies.push(("VISARIUM_SESSION".into(), token.json()["token"].as_str().unwrap().into()));
+    assert_eq!(desktop.get("/api/boards").await.status, StatusCode::OK);
+    let sessions = c.get("/api/sessions").await.json();
+    let device = sessions.as_array().unwrap().iter().find(|s| s["kind"] == "device").unwrap();
+    assert_eq!(device["label"], "Visarium Desktop on studio-mac");
+
+    // The password form's fast path asks for a device session too.
+    let mut fast = Client::new(c.router.clone());
+    fast.get("/api/session").await;
+    fast.json("POST", "/api/session", json!({ "username": "ada", "password": "correct horse battery", "device": { "label": "Visarium Desktop on old-laptop" } })).await;
+    let sessions = c.get("/api/sessions").await.json();
+    assert!(sessions.as_array().unwrap().iter().any(|s| s["kind"] == "device" && s["label"] == "Visarium Desktop on old-laptop"));
+    let _ = std::fs::remove_dir_all(dir);
+}

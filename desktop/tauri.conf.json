@@ -1,0 +1,30 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Visarium",
+  "version": "0.1.0",
+  "identifier": "dev.visarium.desktop",
+  "build": {
+    "frontendDist": "static",
+    "beforeDevCommand": "pnpm --filter @visarium/web build",
+    "beforeBuildCommand": "pnpm --filter @visarium/web build"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null
+    },
+    "withGlobalTauri": true
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Graphics and Design",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

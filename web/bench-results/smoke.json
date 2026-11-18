@@ -1,0 +1,83 @@
+{
+  "name": "smoke",
+  "expectedItems": 10000,
+  "navMs": 396,
+  "stats": "10,000 items · 12 candidates · 12 rendered · 0 aggregated · 1 selected · 670%",
+  "machine": {
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.7922.34 Safari/537.36",
+    "devicePixelRatio": 1,
+    "hardwareConcurrency": 12,
+    "viewport": {
+      "width": 1280,
+      "height": 720
+    }
+  },
+  "board": {
+    "items": 10000,
+    "truncatedAtAnyPoint": true
+  },
+  "frameMsByPhase": {
+    "idle": {
+      "count": 36,
+      "p50": 16.7,
+      "p95": 16.7,
+      "max": 16.8
+    },
+    "pan": {
+      "count": 111,
+      "p50": 16.7,
+      "p95": 16.8,
+      "max": 16.8
+    },
+    "zoom-out": {
+      "count": 86,
+      "p50": 16.7,
+      "p95": 16.8,
+      "max": 33.4
+    },
+    "zoom-in": {
+      "count": 83,
+      "p50": 16.7,
+      "p95": 16.8,
+      "max": 50
+    },
+    "drag": {
+      "count": 41,
+      "p50": 16.7,
+      "p95": 16.8,
+      "max": 16.8
+    }
+  },
+  "activeSetMs": {
+    "count": 268,
+    "p50": 0.1,
+    "p95": 0.9,
+    "max": 1.5
+  },
+  "nodes": {
+    "count": 268,
+    "p50": 81,
+    "p95": 500,
+    "max": 500
+  },
+  "aggregated": {
+    "count": 268,
+    "p50": 0,
+    "p95": 7256,
+    "max": 7256
+  },
+  "decodedMb": {
+    "count": 268,
+    "p50": 11.11,
+    "p95": 11.17,
+    "max": 11.17
+  },
+  "bitmaps": {
+    "count": 268,
+    "p50": 20,
+    "p95": 24,
+    "max": 24
+  },
+  "bitmapFailures": 0,
+  "loadMs": 235.1
+}

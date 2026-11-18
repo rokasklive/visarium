@@ -1,0 +1,26 @@
+{
+  "name": "visarium",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.22.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @visarium/web dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "check": "biome check .",
+    "check:fix": "biome check --write .",
+    "test": "pnpm -r test",
+    "test:e2e": "pnpm --filter @visarium/web test:e2e",
+    "verify": "pnpm typecheck && pnpm check && pnpm test && pnpm build",
+    "desktop": "tauri dev",
+    "desktop:build": "tauri build"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.9",
+    "typescript": "7.0.2",
+    "@tauri-apps/cli": "2.12.4"
+  }
+}

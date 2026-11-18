@@ -1,0 +1,260 @@
+/**
+ * Parsing what the socket says, without believing any of it.
+ *
+ * **This file is Q5's answer.** The choice was hand-written guards or Zod, and
+ * it was deliberately left open until there was a real protocol to validate.
+ * There is now, and it is a dozen flat messages: Zod's real value is schemas
+ * that double as documentation and derive their types, but the types here are
+ * already written and hand-maintained on both sides of a language boundary, and
+ * `protocol.ts` is already the documentation. That left ~14 kB gzipped buying
+ * line count, which invariant 12 does not permit.
+ *
+ * Everything is checked: no field is assumed to exist, no number is assumed to
+ * be finite, no array is assumed to be bounded. A frame that does not parse
+ * returns `null` and is counted — the session is NOT closed, because a malformed
+ * frame from our own server is a bug, and killing the connection would hide it
+ * behind a reconnect that looks like a network blip.
+ */
+
+import {
+  MAX_FRAME_ITEMS,
+  PRESENCE_COLOUR_SLOTS,
+  type PresenceActor,
+  type PreviewItem,
+  type ServerMessage,
+  type Transform,
+} from '@visarium/canvas-core';
+
+type Json = Record<string, unknown>;
+
+const isObject = (value: unknown): value is Json =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/** Finite, not merely `typeof 'number'` — `NaN` and `Infinity` are both numbers. */
+const num = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value);
+
+const str = (value: unknown): value is string => typeof value === 'string';
+
+const int = (value: unknown): value is number => num(value) && Number.isInteger(value);
+
+/** A bounded array of ids. The bound is the point: this is untrusted input. */
+function ids(value: unknown): readonly string[] | null {
+  if (!Array.isArray(value) || value.length > MAX_FRAME_ITEMS) return null;
+  return value.every(str) ? (value as string[]) : null;
+}
+
+/**
+ * Opacity is BOUNDED here, not merely checked for finiteness.
+ *
+ * Every other numeric field on the wire is checked for finiteness because the
+ * thing downstream is the spatial index and a `NaN` corrupts it. Opacity has a
+ * range and the schema has a `CHECK` for it, so the boundary that exists to keep
+ * untrusted input out of domain code enforces the range rather than leaving the
+ * database to be the first thing that notices.
+ */
+function appearance(value: unknown): boolean {
+  if (!isObject(value)) return false;
+  const { opacity, flipX, flipY } = value;
+  if (!num(opacity) || opacity < 0 || opacity > 1) return false;
+  return typeof flipX === 'boolean' && typeof flipY === 'boolean';
+}
+
+function transform(value: unknown): Transform | null {
+  if (!isObject(value)) return null;
+  const { x, y, width, height, rotation } = value;
+  if (!num(x) || !num(y) || !num(width) || !num(height) || !num(rotation)) return null;
+  return { x, y, width, height, rotation };
+}
+
+function previewItems(value: unknown): readonly PreviewItem[] | null {
+  if (!Array.isArray(value) || value.length > MAX_FRAME_ITEMS) return null;
+  const items: PreviewItem[] = [];
+  for (const entry of value) {
+    if (!isObject(entry) || !str(entry.itemId)) return null;
+    const t = transform(entry.transform);
+    if (!t) return null;
+    items.push({ itemId: entry.itemId as PreviewItem['itemId'], transform: t });
+  }
+  return items;
+}
+
+function actor(value: unknown): PresenceActor | null {
+  if (!isObject(value)) return null;
+  const { actorId, displayName, colourIndex } = value;
+  if (!str(actorId) || !str(displayName) || !int(colourIndex)) return null;
+  // Out-of-range would index past the token list and paint nothing.
+  if (colourIndex < 0 || colourIndex >= PRESENCE_COLOUR_SLOTS) return null;
+  return { actorId, displayName, colourIndex } as PresenceActor;
+}
+
+function actors(value: unknown): readonly PresenceActor[] | null {
+  if (!Array.isArray(value) || value.length > MAX_FRAME_ITEMS) return null;
+  const parsed: PresenceActor[] = [];
+  for (const entry of value) {
+    const one = actor(entry);
+    if (!one) return null;
+    parsed.push(one);
+  }
+  return parsed;
+}
+
+/**
+ * Operation bodies are checked for shape, not re-derived.
+ *
+ * Every variant is verified to the depth that matters — a discriminator we know,
+ * an item id, and every numeric field finite — because these go straight into
+ * `CanvasDocument.apply` and from there into the spatial index. A NaN transform
+ * here is a corrupted index, and the index is not something a reload fixes for
+ * everyone else.
+ */
+function operation(value: unknown): unknown | null {
+  if (!isObject(value) || !str(value.type)) return null;
+
+  switch (value.type) {
+    case 'item.create': {
+      if (!str(value.itemId) || !num(value.z) || !transform(value.transform)) return null;
+      if (!content(value.content)) return null;
+      if (value.groupId !== undefined && !str(value.groupId)) return null;
+      // Optional, so an older client's creation is still a frame we accept.
+      if (value.appearance !== undefined && !appearance(value.appearance)) return null;
+      return value;
+    }
+    case 'item.delete':
+      return str(value.itemId) ? value : null;
+    case 'item.transform':
+      return str(value.itemId) && transform(value.transform) ? value : null;
+    case 'item.content':
+      return str(value.itemId) && content(value.content) ? value : null;
+    case 'item.z':
+      return str(value.itemId) && num(value.z) ? value : null;
+    case 'item.appearance':
+      return str(value.itemId) && appearance(value.appearance) ? value : null;
+    case 'group.create':
+      return str(value.groupId) &&
+        ids(value.memberIds) &&
+        (value.label === undefined || str(value.label)) &&
+        (value.frame === undefined || typeof value.frame === 'boolean')
+        ? value
+        : null;
+    case 'group.delete':
+      return str(value.groupId) ? value : null;
+    case 'group.members':
+      return str(value.groupId) && ids(value.memberIds) ? value : null;
+    case 'group.label':
+      return str(value.groupId) && str(value.label) ? value : null;
+    case 'group.frame':
+      return str(value.groupId) && typeof value.frame === 'boolean' ? value : null;
+    default:
+      return null;
+  }
+}
+
+function content(value: unknown): boolean {
+  if (!isObject(value) || !str(value.kind)) return false;
+  if (value.kind === 'placeholder') {
+    return num(value.intrinsicWidth) && num(value.intrinsicHeight);
+  }
+  if (value.kind !== 'image' || !isObject(value.asset)) return false;
+  const { assetId, intrinsicWidth, intrinsicHeight } = value.asset;
+  return str(assetId) && num(intrinsicWidth) && num(intrinsicHeight);
+}
+
+function operations(value: unknown): readonly unknown[] | null {
+  if (!Array.isArray(value) || value.length > MAX_FRAME_ITEMS) return null;
+  const parsed: unknown[] = [];
+  for (const entry of value) {
+    const one = operation(entry);
+    if (!one) return null;
+    parsed.push(one);
+  }
+  return parsed;
+}
+
+/**
+ * The one way in.
+ *
+ * @returns the frame, or `null` if anything about it was wrong. There is no
+ *   partial success: a frame is either entirely trustworthy or it is dropped.
+ */
+export function parseServerMessage(raw: string): ServerMessage | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!isObject(value) || !str(value.t)) return null;
+
+  switch (value.t) {
+    case 'welcome': {
+      const list = actors(value.actors);
+      if (!str(value.actorId) || !int(value.revision) || !list) return null;
+      return {
+        t: 'welcome',
+        actorId: value.actorId,
+        revision: value.revision,
+        actors: list,
+      } as ServerMessage;
+    }
+    case 'presence': {
+      const joined = value.joined === undefined ? undefined : actors(value.joined);
+      const left = value.left === undefined ? undefined : ids(value.left);
+      if (value.joined !== undefined && !joined) return null;
+      if (value.left !== undefined && !left) return null;
+      return {
+        t: 'presence',
+        ...(joined ? { joined } : {}),
+        ...(left ? { left } : {}),
+      } as ServerMessage;
+    }
+    case 'cursor':
+      if (!str(value.actorId) || !num(value.x) || !num(value.y)) return null;
+      return { t: 'cursor', actorId: value.actorId, x: value.x, y: value.y } as ServerMessage;
+    case 'selection': {
+      const itemIds = ids(value.itemIds);
+      if (!str(value.actorId) || !itemIds) return null;
+      return { t: 'selection', actorId: value.actorId, itemIds } as ServerMessage;
+    }
+    case 'transform.preview': {
+      const items = previewItems(value.items);
+      if (!str(value.actorId) || !items) return null;
+      return { t: 'transform.preview', actorId: value.actorId, items } as ServerMessage;
+    }
+    case 'op': {
+      const ops = operations(value.operations);
+      if (!int(value.fromRevision) || !int(value.toRevision) || !ops) return null;
+      // A range that runs backwards is not a frame we produced.
+      if (value.toRevision < value.fromRevision) return null;
+      return {
+        t: 'op',
+        fromRevision: value.fromRevision,
+        toRevision: value.toRevision,
+        operations: ops,
+      } as ServerMessage;
+    }
+    case 'lock': {
+      const itemIds = ids(value.itemIds);
+      if (!itemIds || !num(value.expiresAt)) return null;
+      if (value.heldBy !== null && !str(value.heldBy)) return null;
+      return {
+        t: 'lock',
+        itemIds,
+        heldBy: value.heldBy,
+        expiresAt: value.expiresAt,
+      } as ServerMessage;
+    }
+    case 'resync':
+      return int(value.revision)
+        ? ({ t: 'resync', revision: value.revision } as ServerMessage)
+        : null;
+    case 'viewers':
+      return int(value.count) && value.count >= 0
+        ? ({ t: 'viewers', count: value.count } as ServerMessage)
+        : null;
+    default:
+      // An older client meeting a newer server. Dropping is the compatible half
+      // of the evolution rule, and it is not an error.
+      return null;
+  }
+}

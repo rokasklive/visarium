@@ -1,0 +1,4 @@
+# macOS: sign dev builds of the desktop app with a stable identity so the
+# keychain stops asking after every rebuild (desktop/scripts/dev-sign.sh).
+[target.'cfg(target_os = "macos")']
+runner = "desktop/scripts/dev-sign.sh"

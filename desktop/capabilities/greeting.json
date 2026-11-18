@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "greeting",
+  "description": "The bundled greeting page's own commands. No `remote` URLs: a server's pages, and the local SPA on 127.0.0.1, get none of them.",
+  "windows": ["main"],
+  "permissions": [
+    "allow-local-boards",
+    "allow-probe",
+    "allow-connect",
+    "allow-connect-browser",
+    "allow-connections",
+    "allow-forget"
+  ]
+}

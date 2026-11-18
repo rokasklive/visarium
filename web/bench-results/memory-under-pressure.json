@@ -1,0 +1,56 @@
+{
+  "budgetMb": 6,
+  "machine": {
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.7922.34 Safari/537.36",
+    "devicePixelRatio": 1,
+    "hardwareConcurrency": 12,
+    "viewport": {
+      "width": 1280,
+      "height": 720
+    }
+  },
+  "board": {
+    "items": 2000,
+    "truncatedAtAnyPoint": false
+  },
+  "frameMsByPhase": {
+    "pressure": {
+      "count": 200,
+      "p50": 16.7,
+      "p95": 16.8,
+      "max": 16.8
+    }
+  },
+  "activeSetMs": {
+    "count": 170,
+    "p50": 0,
+    "p95": 0.1,
+    "max": 0.1
+  },
+  "nodes": {
+    "count": 170,
+    "p50": 23,
+    "p95": 39,
+    "max": 39
+  },
+  "aggregated": {
+    "count": 170,
+    "p50": 0,
+    "p95": 0,
+    "max": 0
+  },
+  "decodedMb": {
+    "count": 170,
+    "p50": 7.02,
+    "p95": 8.27,
+    "max": 9.29
+  },
+  "bitmaps": {
+    "count": 170,
+    "p50": 12,
+    "p95": 14,
+    "max": 16
+  },
+  "bitmapFailures": 0,
+  "loadMs": 180.2
+}

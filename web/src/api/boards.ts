@@ -1,0 +1,213 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { api, type components } from '@visarium/api-client';
+import {
+  asAssetId,
+  asCanvasId,
+  asGroupId,
+  asItemId,
+  CanvasDocument,
+  type CanvasGroup,
+  type CanvasItem,
+  DEFAULT_APPEARANCE,
+} from '@visarium/canvas-core';
+
+export interface BoardSummary {
+  readonly id: string;
+  readonly title: string;
+  readonly revision: number;
+  readonly updatedAt: string;
+}
+
+const boardsKey = ['boards'] as const;
+
+export function useBoards() {
+  return useQuery({
+    queryKey: boardsKey,
+    queryFn: async (): Promise<BoardSummary[]> => {
+      const { data, response } = await api.GET('/api/boards');
+      if (!data) throw new Error(`could not list boards: ${response.status}`);
+      // The schema marks every field optional, though the server always sends
+      // them. Asserted once here rather than at each use.
+      return data.flatMap((board) =>
+        board.id && board.title && board.updatedAt
+          ? [
+              {
+                id: board.id,
+                title: board.title,
+                revision: board.revision ?? 0,
+                updatedAt: board.updatedAt,
+              },
+            ]
+          : [],
+      );
+    },
+  });
+}
+
+/** Every board mutation invalidates the same list, because there is only one. */
+function useBoardMutation<T, R>(mutationFn: (input: T) => Promise<R>) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: boardsKey }),
+  });
+}
+
+export function useCreateBoard() {
+  return useBoardMutation(async (title: string) => {
+    const { data, response } = await api.POST('/api/boards', { body: { title } });
+    if (!data?.id) throw new Error(`could not create the board: ${response.status}`);
+    return data.id;
+  });
+}
+
+/**
+ * A board's arrangement, as a new board.
+ *
+ * A reference board is a starting point people copy. The copy is a new board at
+ * revision 0 with its own item and group ids — sharing one would mean a client
+ * holding that id writes to both.
+ */
+export function useDuplicateBoard() {
+  return useBoardMutation(async (id: string) => {
+    const { data, response } = await api.POST('/api/boards/{id}/duplicate', {
+      params: { path: { id } },
+    });
+    if (!data?.id) throw new Error(`could not duplicate the board: ${response.status}`);
+    return data.id;
+  });
+}
+
+export function useRenameBoard() {
+  return useBoardMutation(async ({ id, title }: { id: string; title: string }) => {
+    const { response } = await api.PATCH('/api/boards/{id}', {
+      params: { path: { id } },
+      body: { title },
+    });
+    if (!response.ok) throw new Error(`could not rename the board: ${response.status}`);
+  });
+}
+
+export function useDeleteBoard() {
+  return useBoardMutation(async (id: string) => {
+    const { response } = await api.DELETE('/api/boards/{id}', { params: { path: { id } } });
+    if (!response.ok) throw new Error(`could not delete the board: ${response.status}`);
+  });
+}
+
+/**
+ * A board, loaded.
+ *
+ * The document is built here rather than in the component because
+ * `loadSnapshot` bulk-loads the spatial index in one pass, and doing that once
+ * per board is the entire reason it exists as a single call rather than a loop
+ * of inserts.
+ *
+ * `retry: false` and no refetch on focus: a snapshot is not a poll. Once the
+ * board is in a document, that document is the live state — refetching would
+ * throw away local work that has not been acknowledged yet.
+ */
+export function useBoardDocument(boardId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['board-snapshot', boardId],
+    enabled,
+    retry: false,
+    refetchOnWindowFocus: false,
+    staleTime: Number.POSITIVE_INFINITY,
+    queryFn: async (): Promise<CanvasDocument> => {
+      const doc = new CanvasDocument(asCanvasId(boardId));
+      await loadSnapshotInto(doc, boardId);
+      return doc;
+    },
+  });
+}
+
+/**
+ * Replace a document's contents with a fresh snapshot.
+ *
+ * The load path and the recovery path are the same request on purpose
+ * (ADR-0011): when a client notices it has missed committed operations, it does
+ * not ask for them — there is no operation log to ask — it refetches and starts
+ * agreeing with everyone again.
+ *
+ * Applied to a LIVE document, so `loadSnapshot` rebuilds the spatial index in
+ * one bulk pass rather than by insertion. Anything still queued for persistence
+ * is unaffected: the queue holds operation bodies, not document state, and they
+ * are posted after this and land on top.
+ */
+export async function loadSnapshotInto(doc: CanvasDocument, boardId: string): Promise<void> {
+  const { data, response } = await api.GET('/api/boards/{id}/snapshot', {
+    params: { path: { id: boardId } },
+  });
+  if (!data) throw new Error(`could not load the board: ${response.status}`);
+  snapshotInto(doc, data);
+}
+
+/** A snapshot body into a document: a member's, or a share viewer's (ADR-0026). */
+export function snapshotInto(
+  doc: CanvasDocument,
+  data: components['schemas']['BoardSnapshot'],
+): void {
+  doc.loadSnapshot(
+    (data.items ?? []).flatMap(toItem),
+    (data.groups ?? []).flatMap(toGroup),
+    data.revision ?? 0,
+  );
+}
+
+/**
+ * One snapshot row becoming a `CanvasItem`.
+ *
+ * A row missing an id, a transform or an asset is dropped rather than faked:
+ * the schema makes all three NOT NULL, so one arriving absent means the contract
+ * broke, and drawing an invented item would hide that.
+ */
+function toItem(item: components['schemas']['Item']): CanvasItem[] {
+  const t = item.transform;
+  const asset = item.content?.asset;
+  if (!item.id || !t || !asset?.assetId) return [];
+  return [
+    {
+      id: asItemId(item.id),
+      transform: {
+        x: t.x ?? 0,
+        y: t.y ?? 0,
+        width: t.width ?? 0,
+        height: t.height ?? 0,
+        rotation: t.rotation ?? 0,
+      },
+      z: item.z ?? 0,
+      // The snapshot always carries one — the columns are NOT NULL DEFAULT — so
+      // this fallback is for the schema marking every field optional,
+      // not for a state the server can be in.
+      appearance: {
+        opacity: item.appearance?.opacity ?? DEFAULT_APPEARANCE.opacity,
+        flipX: item.appearance?.flipX ?? DEFAULT_APPEARANCE.flipX,
+        flipY: item.appearance?.flipY ?? DEFAULT_APPEARANCE.flipY,
+      },
+      content: {
+        kind: 'image',
+        asset: {
+          assetId: asAssetId(asset.assetId),
+          intrinsicWidth: asset.intrinsicWidth ?? 0,
+          intrinsicHeight: asset.intrinsicHeight ?? 0,
+        },
+      },
+      ...(item.groupId ? { groupId: asGroupId(item.groupId) } : {}),
+    },
+  ];
+}
+
+function toGroup(group: components['schemas']['Group']): CanvasGroup[] {
+  if (!group.id) return [];
+  return [
+    {
+      id: asGroupId(group.id),
+      memberIds: (group.memberIds ?? []).map(asItemId),
+      ...(group.label ? { label: group.label } : {}),
+      // Absent on a snapshot from before the flag existed, which means
+      // unframed — the backwards-compatible default everywhere.
+      ...(group.frame ? { frame: true } : {}),
+    },
+  ];
+}
