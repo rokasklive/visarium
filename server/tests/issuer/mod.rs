@@ -65,7 +65,7 @@ pub struct Issuer {
 impl Issuer {
     pub async fn start() -> Self {
         use rsa::pkcs1::EncodeRsaPrivateKey;
-        let private = rsa::RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 2048).unwrap();
+        let private = rsa::PrivateKey::new(&mut rand::rng(), 2048).unwrap();
         let pem = private.to_pkcs1_pem(rsa::pkcs1::LineEnding::LF).unwrap();
         let key = CoreRsaPrivateSigningKey::from_pem(&pem, Some(JsonWebKeyId::new("k1".into()))).unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

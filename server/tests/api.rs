@@ -157,7 +157,7 @@ async fn invite(admin: &mut Client, body: Value) -> String {
     link["/invite#".len()..].to_string()
 }
 
-async fn count(app: &visarium::AppState, sql: &str) -> i64 {
+async fn count(app: &visarium::AppState, sql: &'static str) -> i64 {
     sqlx::query_scalar(sql).fetch_one(&app.db).await.unwrap()
 }
 

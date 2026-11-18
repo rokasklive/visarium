@@ -2,8 +2,9 @@
 #
 #   docker compose up -d     (see compose.yml)
 
-FROM node:24-alpine AS web
-RUN corepack enable
+FROM node:26-alpine AS web
+# Node 25+ no longer bundles corepack.
+RUN npm install -g corepack && corepack enable
 WORKDIR /build
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 COPY web/package.json web/

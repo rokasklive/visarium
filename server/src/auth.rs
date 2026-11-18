@@ -34,7 +34,7 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, patch, post, put};
 use axum_extra::extract::CookieJar;
-use rand::RngCore;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -119,7 +119,7 @@ pub struct User {
 const COLUMNS: &str = "id, username, display_name, is_admin AS admin, deactivated_at, created_at";
 
 pub async fn find_user(db: &SqlitePool, id: &str) -> sqlx::Result<Option<User>> {
-    sqlx::query_as(&format!("SELECT {COLUMNS} FROM app_user WHERE id = ?")).bind(id).fetch_optional(db).await
+    sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {COLUMNS} FROM app_user WHERE id = ?"))).bind(id).fetch_optional(db).await
 }
 
 pub async fn any_account(db: &SqlitePool) -> sqlx::Result<bool> {
@@ -149,9 +149,9 @@ pub async fn insert_user<'e>(
     password_hash: Option<&str>,
     admin: bool,
 ) -> ApiResult<User> {
-    sqlx::query_as(&format!(
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO app_user (id, username, display_name, password_hash, is_admin) VALUES (?, ?, ?, ?, ?) RETURNING {COLUMNS}"
-    ))
+    )))
     .bind(new_id())
     .bind(username)
     .bind(display_name.trim())
@@ -242,10 +242,10 @@ pub async fn create_session(
     label: Option<&str>,
 ) -> sqlx::Result<String> {
     let token = random_token();
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "INSERT INTO session (token_hash, id, kind, user_id, share_id, label, expires_at) \
          VALUES (?3, ?4, ?5, ?6, ?7, ?8, {EXPIRY_SQL})"
-    ))
+    )))
     .bind(idle_offset(kind))
     .bind(cap)
     .bind(hash_token(&token))
@@ -273,21 +273,21 @@ struct SessionRow {
 /// `SESSION_TOUCH_SECS` ago. Returns whether it was renewed, so the cookie's
 /// own Max-Age can be renewed with it.
 async fn lookup(db: &SqlitePool, token: &str) -> sqlx::Result<Option<(SessionRow, bool)>> {
-    let row: Option<SessionRow> = sqlx::query_as(&format!(
+    let row: Option<SessionRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT id, token_hash, kind, user_id, share_id, \
                 last_seen_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-{SESSION_TOUCH_SECS} seconds') AS stale \
          FROM session WHERE token_hash = ? AND expires_at > {NOW}"
-    ))
+    )))
     .bind(hash_token(token))
     .fetch_optional(db)
     .await?;
     let Some(row) = row else { return Ok(None) };
     let touched = row.stale;
     if touched {
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE session SET last_seen_at = {NOW}, expires_at = {} WHERE token_hash = ?2",
             EXPIRY_SQL.replace("?2", "(SELECT expires_at FROM share_link WHERE id = session.share_id)")
-        ))
+        )))
         .bind(idle_offset(Kind::parse(&row.kind)))
         .bind(&row.token_hash)
         .execute(db)
@@ -314,7 +314,7 @@ pub async fn end_sessions_of(db: &SqlitePool, user_id: &str, keep: Option<&str>)
 /// Deletes expired sessions, and invitations a month past their expiry (kept
 /// that long so a late click is told "expired" rather than "not valid").
 pub async fn sweep(db: &SqlitePool) -> sqlx::Result<()> {
-    sqlx::query(&format!("DELETE FROM session WHERE expires_at <= {NOW}")).execute(db).await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM session WHERE expires_at <= {NOW}"))).execute(db).await?;
     sqlx::query("DELETE FROM invitation WHERE expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-30 days')")
         .execute(db)
         .await?;
@@ -514,10 +514,9 @@ fn argon2() -> argon2::Argon2<'static> {
 /// argon2id, stored as `{argon2id}$argon2id$v=19$…`. The prefix is what lets
 /// the algorithm change again later without a reset.
 pub async fn hash_password(password: String) -> ApiResult<String> {
-    use argon2::password_hash::{PasswordHasher, SaltString, rand_core::OsRng};
+    use argon2::password_hash::PasswordHasher;
     tokio::task::spawn_blocking(move || {
-        let salt = SaltString::generate(&mut OsRng);
-        argon2().hash_password(password.as_bytes(), &salt).map(|h| format!("{{argon2id}}{h}"))
+        argon2().hash_password(password.as_bytes()).map(|h| format!("{{argon2id}}{h}"))
     })
     .await
     .map_err(|e| ApiError::internal(e.to_string()))?
@@ -536,7 +535,7 @@ pub enum Verified {
 /// none, checks against a dummy so "no such account" costs the same time as
 /// "wrong password".
 pub async fn verify_password(password: String, stored: Option<String>) -> Verified {
-    use argon2::password_hash::{PasswordHash, PasswordVerifier};
+    use argon2::password_hash::{PasswordVerifier, phc::PasswordHash};
     static DUMMY: OnceLock<String> = OnceLock::new();
     tokio::task::spawn_blocking(move || {
         let stored = stored.unwrap_or_default();
@@ -548,8 +547,8 @@ pub async fn verify_password(password: String, stored: Option<String>) -> Verifi
             return if bcrypt::verify(&password, hash).unwrap_or(false) { Verified::YesRehash } else { Verified::No };
         }
         let dummy = DUMMY.get_or_init(|| {
-            use argon2::password_hash::{PasswordHasher, SaltString, rand_core::OsRng};
-            argon2().hash_password(b"not-a-password", &SaltString::generate(&mut OsRng)).unwrap().to_string()
+            use argon2::password_hash::PasswordHasher;
+            argon2().hash_password(b"not-a-password").unwrap().to_string()
         });
         let _ = argon2().verify_password(password.as_bytes(), &PasswordHash::new(dummy).unwrap());
         Verified::No
@@ -782,7 +781,7 @@ fn gone(id: impl std::fmt::Display) -> ApiError {
 
 async fn list_accounts(State(app): State<AppState>, axum::Extension(me): axum::Extension<User>) -> ApiResult<axum::Json<Vec<User>>> {
     require_admin(&me)?;
-    Ok(axum::Json(sqlx::query_as(&format!("SELECT {COLUMNS} FROM app_user ORDER BY created_at")).fetch_all(&app.db).await?))
+    Ok(axum::Json(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {COLUMNS} FROM app_user ORDER BY created_at"))).fetch_all(&app.db).await?))
 }
 
 #[derive(Deserialize)]
@@ -889,7 +888,7 @@ async fn deactivate(
     let id = id.to_string();
     let target = find_user(&app.db, &id).await?.ok_or_else(|| gone(&id))?;
     require_another_admin_besides(&app.db, &target).await?;
-    sqlx::query(&format!("UPDATE app_user SET deactivated_at = coalesce(deactivated_at, {NOW}) WHERE id = ?"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE app_user SET deactivated_at = coalesce(deactivated_at, {NOW}) WHERE id = ?")))
         .bind(&id)
         .execute(&app.db)
         .await?;
@@ -917,10 +916,10 @@ async fn list_sessions(
     axum::Extension(principal): axum::Extension<Principal>,
 ) -> ApiResult<axum::Json<Vec<SessionView>>> {
     Ok(axum::Json(
-        sqlx::query_as(&format!(
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT id, kind, label, created_at, last_seen_at, expires_at, token_hash IS ? AS current \
              FROM session WHERE user_id = ? AND expires_at > {NOW} ORDER BY last_seen_at DESC"
-        ))
+        )))
         .bind(principal.session_hash())
         .bind(&me.id)
         .fetch_all(&app.db)

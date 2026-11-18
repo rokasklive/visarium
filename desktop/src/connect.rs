@@ -167,7 +167,7 @@ pub async fn revoke(http: &reqwest::Client, origin: &Url, token: &str) {
 
 fn random_base64url(bytes: usize) -> String {
     use base64::Engine;
-    use rand::RngCore;
+    use rand::Rng;
     let mut buf = vec![0u8; bytes];
     rand::rng().fill_bytes(&mut buf);
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(buf)

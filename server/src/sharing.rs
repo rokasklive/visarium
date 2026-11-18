@@ -54,7 +54,7 @@ fn active() -> String {
 /// The link, if it may still be used. Checked on every viewer request, not
 /// only when the link is redeemed.
 pub async fn active_link(db: &sqlx::SqlitePool, id: &str) -> sqlx::Result<Option<ShareLink>> {
-    sqlx::query_as(&format!("{LINK_SQL} WHERE l.id = ? AND {}", active())).bind(id).fetch_optional(db).await
+    sqlx::query_as(sqlx::AssertSqlSafe(format!("{LINK_SQL} WHERE l.id = ? AND {}", active()))).bind(id).fetch_optional(db).await
 }
 
 fn require_sharing(app: &AppState) -> ApiResult<()> {
@@ -126,7 +126,7 @@ async fn create(
     .bind(&passphrase)
     .execute(&app.db)
     .await?;
-    let link: ShareLink = sqlx::query_as(&format!("{LINK_SQL} WHERE l.id = ?")).bind(&id).fetch_one(&app.db).await?;
+    let link: ShareLink = sqlx::query_as(sqlx::AssertSqlSafe(format!("{LINK_SQL} WHERE l.id = ?"))).bind(&id).fetch_one(&app.db).await?;
     // The only time the token exists outside the person who shares it.
     let mut out = serde_json::to_value(link).unwrap();
     out["link"] = json!(format!("/s#{token}"));
@@ -137,7 +137,7 @@ async fn create(
 async fn list_for_board(State(app): State<AppState>, Path(board): Path<Uuid>) -> ApiResult<axum::Json<Vec<ShareLink>>> {
     require_sharing(&app)?;
     Ok(axum::Json(
-        sqlx::query_as(&format!("{LINK_SQL} WHERE l.canvas_id = ? AND {} ORDER BY l.created_at DESC", active()))
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{LINK_SQL} WHERE l.canvas_id = ? AND {} ORDER BY l.created_at DESC", active())))
             .bind(board.to_string())
             .fetch_all(&app.db)
             .await?,
@@ -149,7 +149,7 @@ async fn list_all(State(app): State<AppState>, axum::Extension(me): axum::Extens
     require_sharing(&app)?;
     auth::require_admin(&me)?;
     Ok(axum::Json(
-        sqlx::query_as(&format!("{LINK_SQL} WHERE {} ORDER BY l.created_at DESC", active())).fetch_all(&app.db).await?,
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{LINK_SQL} WHERE {} ORDER BY l.created_at DESC", active()))).fetch_all(&app.db).await?,
     ))
 }
 
@@ -163,7 +163,7 @@ async fn end_viewers(app: &AppState, id: &str) -> sqlx::Result<()> {
 async fn revoke(State(app): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<StatusCode> {
     require_sharing(&app)?;
     let id = id.to_string();
-    let done = sqlx::query(&format!("UPDATE share_link SET revoked_at = {NOW} WHERE id = ? AND revoked_at IS NULL"))
+    let done = sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE share_link SET revoked_at = {NOW} WHERE id = ? AND revoked_at IS NULL")))
         .bind(&id)
         .execute(&app.db)
         .await?;
@@ -190,7 +190,7 @@ async fn change_passphrase(
     require_sharing(&app)?;
     let id = id.to_string();
     let hash = hash_passphrase(body.passphrase).await?;
-    sqlx::query(&format!("UPDATE share_link SET passphrase_hash = ? WHERE id = ? AND {}", active().replace("l.", "")))
+    sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE share_link SET passphrase_hash = ? WHERE id = ? AND {}", active().replace("l.", ""))))
         .bind(&hash)
         .bind(&id)
         .execute(&app.db)
@@ -228,11 +228,11 @@ pub async fn redeem(
     Json(body): Json<Redeem>,
 ) -> ApiResult<Response> {
     require_sharing(&app)?;
-    let secret: Option<Secret> = sqlx::query_as(&format!(
+    let secret: Option<Secret> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT id, canvas_id, expires_at, passphrase_hash, revoked_at IS NULL AS live, \
                 expires_at IS NOT NULL AND expires_at <= {NOW} AS expired \
            FROM share_link WHERE token_hash = ?"
-    ))
+    )))
     .bind(auth::hash_token(&body.token))
     .fetch_optional(&app.db)
     .await?;
@@ -264,7 +264,7 @@ pub async fn redeem(
         auth::end_session(&app.db, old).await?;
     }
     let token = auth::create_session(&app.db, Kind::Share, None, Some(&secret.id), secret.expires_at.as_deref(), None).await?;
-    sqlx::query(&format!("UPDATE share_link SET last_used_at = {NOW} WHERE id = ?")).bind(&secret.id).execute(&app.db).await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE share_link SET last_used_at = {NOW} WHERE id = ?"))).bind(&secret.id).execute(&app.db).await?;
     let link = active_link(&app.db, &secret.id).await?.ok_or_else(|| gone("revoked", "this link is no longer active"))?;
     let title: Option<String> = sqlx::query_scalar("SELECT title FROM canvas WHERE id = ?").bind(&link.canvas_id).fetch_optional(&app.db).await?;
     let mut response = axum::Json(json!({ "member": false, "boardId": link.canvas_id, "title": title, "sharedBy": link.created_by_name }))

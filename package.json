@@ -2,9 +2,9 @@
   "name": "visarium",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@11.22.0",
+  "packageManager": "pnpm@11.28.13",
   "engines": {
-    "node": ">=24"
+    "node": ">=26"
   },
   "scripts": {
     "dev": "pnpm --filter @visarium/web dev",
@@ -19,8 +19,8 @@
     "desktop:build": "tauri build"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.9",
-    "typescript": "7.0.2",
-    "@tauri-apps/cli": "2.12.4"
+    "@biomejs/biome": "2.6.8",
+    "@tauri-apps/cli": "2.12.5",
+    "typescript": "7.0.2"
   }
 }

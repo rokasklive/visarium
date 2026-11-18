@@ -12,11 +12,11 @@ name = "visarium"
 path = "src/main.rs"
 
 [dependencies]
-argon2 = "0.5"
+argon2 = "0.6"
 axum = { version = "0.8", features = ["ws", "multipart"] }
-axum-extra = { version = "0.10", features = ["cookie"] }
-base64 = "0.22"
-bcrypt = "0.17"
+axum-extra = { version = "0.12", features = ["cookie"] }
+base64 = "0.23"
+bcrypt = "0.19"
 futures-util = "0.3"
 hex = "0.4"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "tiff", "bmp"] }
@@ -24,16 +24,16 @@ mime_guess = "2"
 # OpenID Connect, with our own reqwest (the one the desktop already ships)
 # rather than the crate's bundled 0.12.
 openidconnect = { version = "4", default-features = false }
-rand = "0.9"
+rand = "0.10"
 reqwest = "0.13"
 rust-embed = { version = "8", features = ["interpolate-folder-path"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
+sha2 = "0.11"
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io"] }
-tower-http = { version = "0.6", features = ["compression-gzip"] }
+tower-http = { version = "0.7", features = ["compression-gzip"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
@@ -43,7 +43,7 @@ webp = "0.3"
 chrono = "0.4"
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }
-tokio-tungstenite = "0.27"
+tokio-tungstenite = "0.30"
 # The in-process OpenID provider the sign-in tests run against makes its own
 # key at start-up, so no private key is ever committed.
-rsa = { version = "0.9", features = ["pem"] }
+rsa = "0.10"

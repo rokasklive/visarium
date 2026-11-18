@@ -172,10 +172,10 @@ fn integrity(e: sqlx::Error) -> ApiError {
 
 async fn join(tx: &mut Transaction<'_, Sqlite>, board: &str, group: &Uuid, members: &Option<Vec<Uuid>>) -> sqlx::Result<()> {
     let Some(members) = members.as_ref().filter(|m| !m.is_empty()) else { return Ok(()) };
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE canvas_item SET group_id = ?, updated_at = {NOW}
           WHERE canvas_id = ? AND id IN (SELECT value FROM json_each(?))"
-    ))
+    )))
     .bind(group.to_string())
     .bind(board)
     .bind(serde_json::to_string(members).unwrap())
@@ -221,10 +221,10 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
                 .await?;
         }
         Op::ItemTransform { item_id, transform: t } => {
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE canvas_item SET x = ?, y = ?, width = ?, height = ?, rotation = ?, {bump}
                   WHERE id = ? AND canvas_id = ?"
-            ))
+            )))
             .bind(t.x)
             .bind(t.y)
             .bind(t.width)
@@ -237,7 +237,7 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
             .map_err(integrity)?;
         }
         Op::ItemContent { item_id, content } => {
-            sqlx::query(&format!("UPDATE canvas_item SET asset_id = ?, {bump} WHERE id = ? AND canvas_id = ?"))
+            sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE canvas_item SET asset_id = ?, {bump} WHERE id = ? AND canvas_id = ?")))
                 .bind(content.asset_id()?)
                 .bind(item_id.to_string())
                 .bind(board)
@@ -246,7 +246,7 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
                 .map_err(integrity)?;
         }
         Op::ItemZ { item_id, z } => {
-            sqlx::query(&format!("UPDATE canvas_item SET z = ?, {bump} WHERE id = ? AND canvas_id = ?"))
+            sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE canvas_item SET z = ?, {bump} WHERE id = ? AND canvas_id = ?")))
                 .bind(z)
                 .bind(item_id.to_string())
                 .bind(board)
@@ -255,9 +255,9 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
         }
         Op::ItemAppearance { item_id, appearance: a } => {
             check_appearance(a)?;
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE canvas_item SET opacity = ?, flip_x = ?, flip_y = ?, {bump} WHERE id = ? AND canvas_id = ?"
-            ))
+            )))
             .bind(a.opacity)
             .bind(a.flip_x)
             .bind(a.flip_y)
@@ -324,9 +324,9 @@ pub async fn apply(app: &AppState, board: &Uuid, ops: &[Op]) -> ApiResult<(i64, 
     let n = ops.len() as i64;
     let id = board.to_string();
     let mut tx = app.db.begin().await?;
-    let to: i64 = sqlx::query_scalar(&format!(
+    let to: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "UPDATE canvas SET revision = revision + ?, updated_at = {NOW} WHERE id = ? RETURNING revision"
-    ))
+    )))
     .bind(n)
     .bind(&id)
     .fetch_optional(&mut *tx)
@@ -355,7 +355,7 @@ fn valid_title(title: &str) -> ApiResult<&str> {
 }
 
 async fn find(app: &AppState, id: &str) -> ApiResult<Board> {
-    sqlx::query_as(&format!("SELECT {COLUMNS} FROM canvas WHERE id = ?"))
+    sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {COLUMNS} FROM canvas WHERE id = ?")))
         .bind(id)
         .fetch_optional(&app.db)
         .await?
@@ -364,7 +364,7 @@ async fn find(app: &AppState, id: &str) -> ApiResult<Board> {
 
 async fn list(State(app): State<AppState>) -> ApiResult<axum::Json<Vec<Board>>> {
     Ok(axum::Json(
-        sqlx::query_as(&format!("SELECT {COLUMNS} FROM canvas ORDER BY updated_at DESC")).fetch_all(&app.db).await?,
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {COLUMNS} FROM canvas ORDER BY updated_at DESC"))).fetch_all(&app.db).await?,
     ))
 }
 
@@ -373,7 +373,7 @@ async fn create(
     axum::Extension(me): axum::Extension<User>,
     Json(body): Json<BoardTitle>,
 ) -> ApiResult<(StatusCode, axum::Json<Board>)> {
-    let board = sqlx::query_as(&format!("INSERT INTO canvas (id, title, owner_id) VALUES (?, ?, ?) RETURNING {COLUMNS}"))
+    let board = sqlx::query_as(sqlx::AssertSqlSafe(format!("INSERT INTO canvas (id, title, owner_id) VALUES (?, ?, ?) RETURNING {COLUMNS}")))
         .bind(new_id())
         .bind(valid_title(&body.title)?)
         .bind(&me.id)
@@ -388,7 +388,7 @@ async fn get_board(State(app): State<AppState>, Path(id): Path<Uuid>) -> ApiResu
 
 async fn rename(State(app): State<AppState>, Path(id): Path<Uuid>, Json(body): Json<BoardTitle>) -> ApiResult<axum::Json<Board>> {
     let board: Option<Board> =
-        sqlx::query_as(&format!("UPDATE canvas SET title = ?, updated_at = {NOW} WHERE id = ? RETURNING {COLUMNS}"))
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("UPDATE canvas SET title = ?, updated_at = {NOW} WHERE id = ? RETURNING {COLUMNS}")))
             .bind(valid_title(&body.title)?)
             .bind(id.to_string())
             .fetch_optional(&app.db)

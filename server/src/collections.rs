@@ -60,7 +60,7 @@ fn valid_name(name: &str) -> ApiResult<&str> {
 }
 
 async fn find(app: &AppState, id: &str) -> ApiResult<Collection> {
-    sqlx::query_as(&format!("{SELECT} WHERE c.id = ?")).bind(id).fetch_optional(&app.db).await?.ok_or_else(|| not_found(id))
+    sqlx::query_as(sqlx::AssertSqlSafe(format!("{SELECT} WHERE c.id = ?"))).bind(id).fetch_optional(&app.db).await?.ok_or_else(|| not_found(id))
 }
 
 async fn require_exists(app: &AppState, id: &Uuid) -> ApiResult<String> {
@@ -71,7 +71,7 @@ async fn require_exists(app: &AppState, id: &Uuid) -> ApiResult<String> {
 }
 
 async fn list(State(app): State<AppState>) -> ApiResult<axum::Json<Vec<Collection>>> {
-    Ok(axum::Json(sqlx::query_as(&format!("{SELECT} ORDER BY c.name")).fetch_all(&app.db).await?))
+    Ok(axum::Json(sqlx::query_as(sqlx::AssertSqlSafe(format!("{SELECT} ORDER BY c.name"))).fetch_all(&app.db).await?))
 }
 
 async fn create(

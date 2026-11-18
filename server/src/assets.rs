@@ -98,7 +98,7 @@ impl AssetView {
 }
 
 async fn find(app: &AppState, id: &Uuid) -> ApiResult<Asset> {
-    sqlx::query_as(&format!("SELECT {COLUMNS} FROM asset WHERE id = ?"))
+    sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {COLUMNS} FROM asset WHERE id = ?")))
         .bind(id.to_string())
         .fetch_optional(&app.db)
         .await?
@@ -293,12 +293,12 @@ async fn ingest(app: &AppState, spooled: &Path, hash: &str, size: i64, filename:
     }
 
     // Same bytes → same asset. Re-uploading a deleted image brings it back.
-    let inserted: Option<Asset> = sqlx::query_as(&format!(
+    let inserted: Option<Asset> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO asset (id, content_hash, storage_key, original_filename, mime_type, byte_size, width, height, uploaded_by)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (content_hash) DO UPDATE SET deleted_at = NULL WHERE deleted_at IS NOT NULL
          RETURNING {COLUMNS}"
-    ))
+    )))
     .bind(new_id())
     .bind(hash)
     .bind(&key)
@@ -312,7 +312,7 @@ async fn ingest(app: &AppState, spooled: &Path, hash: &str, size: i64, filename:
     .await?;
     let asset = match inserted {
         Some(a) => a,
-        None => sqlx::query_as(&format!("SELECT {COLUMNS} FROM asset WHERE content_hash = ?"))
+        None => sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {COLUMNS} FROM asset WHERE content_hash = ?")))
             .bind(hash)
             .fetch_one(&app.db)
             .await?,
@@ -464,7 +464,7 @@ async fn library(State(app): State<AppState>, Query(p): Query<LibraryParams>) ->
     });
     sql.push_str(&format!(" LIMIT {}", limit + 1));
 
-    let mut query = sqlx::query_as::<_, LibraryRow>(&sql);
+    let mut query = sqlx::query_as::<_, LibraryRow>(sqlx::AssertSqlSafe(sql));
     for b in &binds {
         query = query.bind(b);
     }
@@ -588,7 +588,7 @@ async fn rename(
         return Err(ApiError::bad_request("a filename must be 1–200 characters"));
     }
     let renamed: Option<Asset> =
-        sqlx::query_as(&format!("UPDATE asset SET original_filename = ? WHERE id = ? RETURNING {COLUMNS}"))
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("UPDATE asset SET original_filename = ? WHERE id = ? RETURNING {COLUMNS}")))
             .bind(name)
             .bind(id.to_string())
             .fetch_optional(&app.db)
@@ -662,7 +662,7 @@ async fn delete(
             .with("boardCount", json!(boards)));
         }
     }
-    sqlx::query(&format!("UPDATE asset SET deleted_at = {NOW} WHERE id = ? AND deleted_at IS NULL"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE asset SET deleted_at = {NOW} WHERE id = ? AND deleted_at IS NULL")))
         .bind(&asset.id)
         .execute(&app.db)
         .await?;

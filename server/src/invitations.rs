@@ -99,7 +99,7 @@ async fn create(
     .bind(format!("+{secs} seconds"))
     .execute(&app.db)
     .await?;
-    let view: InvitationView = sqlx::query_as(&format!("{VIEW_SQL} WHERE i.id = ?")).bind(&id).fetch_one(&app.db).await?;
+    let view: InvitationView = sqlx::query_as(sqlx::AssertSqlSafe(format!("{VIEW_SQL} WHERE i.id = ?"))).bind(&id).fetch_one(&app.db).await?;
     // The only time the token exists outside the invitee's hands.
     let mut out = serde_json::to_value(view).unwrap();
     out["link"] = json!(format!("/invite#{token}"));
@@ -110,7 +110,7 @@ async fn create(
 async fn list(State(app): State<AppState>, axum::Extension(me): axum::Extension<User>) -> ApiResult<axum::Json<Vec<InvitationView>>> {
     auth::require_admin(&me)?;
     Ok(axum::Json(
-        sqlx::query_as(&format!("{VIEW_SQL} WHERE i.used_at IS NULL AND i.expires_at > {NOW} ORDER BY i.created_at DESC"))
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{VIEW_SQL} WHERE i.used_at IS NULL AND i.expires_at > {NOW} ORDER BY i.created_at DESC")))
             .fetch_all(&app.db)
             .await?,
     ))
@@ -140,10 +140,10 @@ struct Row {
 }
 
 async fn find<'e>(db: impl sqlx::SqliteExecutor<'e>, token_hash: &str) -> sqlx::Result<Option<Row>> {
-    sqlx::query_as(&format!(
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT id, purpose, user_id, admin, note, expires_at, used_at IS NOT NULL AS used, expires_at <= {NOW} AS expired \
            FROM invitation WHERE token_hash = ?"
-    ))
+    )))
     .bind(token_hash)
     .fetch_optional(db)
     .await
@@ -205,7 +205,7 @@ pub async fn join_in(
 ) -> ApiResult<User> {
     let row = usable(find(&mut **tx, token_hash).await?, "join")?;
     let user = auth::insert_user(&mut **tx, username, display_name, password_hash, row.admin).await?;
-    let used = sqlx::query(&format!("UPDATE invitation SET used_at = {NOW}, user_id = ? WHERE id = ? AND used_at IS NULL"))
+    let used = sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE invitation SET used_at = {NOW}, user_id = ? WHERE id = ? AND used_at IS NULL")))
         .bind(&user.id)
         .bind(&row.id)
         .execute(&mut **tx)
@@ -244,7 +244,7 @@ async fn redeem(
         let row = usable(find(&mut *tx, &hash_of_token).await?, "reset")?;
         let user_id = row.user_id.clone().unwrap_or_default();
         sqlx::query("UPDATE app_user SET password_hash = ? WHERE id = ?").bind(password).bind(&user_id).execute(&mut *tx).await?;
-        sqlx::query(&format!("UPDATE invitation SET used_at = {NOW} WHERE id = ?")).bind(&row.id).execute(&mut *tx).await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE invitation SET used_at = {NOW} WHERE id = ?"))).bind(&row.id).execute(&mut *tx).await?;
         tx.commit().await?;
         auth::end_sessions_of(&app.db, &user_id, None).await?;
         return Ok(StatusCode::NO_CONTENT.into_response());
