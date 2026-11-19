@@ -11,6 +11,7 @@ import { useHealth } from '~/api/health';
 import { useSession, useSignOut } from '~/api/session';
 import { useUiStore } from '~/app/ui-store';
 import { LibraryPanel } from '~/features/library/library-panel';
+import { ConfirmButton } from './confirm-button';
 import { Wordmark } from './wordmark';
 
 /**
@@ -277,24 +278,22 @@ function Sidebar() {
               >
                 rename
               </button>
-              <button
-                type="button"
-                aria-label={`Delete ${collection.name}`}
-                onClick={() => {
-                  // Deleting a collection deletes membership, never images. Said
-                  // out loud because the two are easy to confuse and only one of
-                  // them would be unrecoverable.
-                  if (
-                    globalThis.confirm(`Delete "${collection.name}"? Its images are not deleted.`)
-                  ) {
-                    remove.mutate(collection.id);
-                    void navigate({ to: '/library', search: {} });
-                  }
+              {/*
+                Deleting a collection deletes membership, never images. Said
+                out loud because the two are easy to confuse and only one of
+                them would be unrecoverable.
+              */}
+              <ConfirmButton
+                label={`Delete ${collection.name}`}
+                question={`Delete "${collection.name}"? Its images are not deleted.`}
+                onConfirm={() => {
+                  remove.mutate(collection.id);
+                  void navigate({ to: '/library', search: {} });
                 }}
                 className="shrink-0 text-[11px] text-ink-dim opacity-0 hover:text-ink group-hover:opacity-100 group-focus-within:opacity-100"
               >
                 delete
-              </button>
+              </ConfirmButton>
             </li>
           ))}
         </ul>

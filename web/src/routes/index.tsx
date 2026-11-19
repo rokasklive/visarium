@@ -8,6 +8,7 @@ import {
   useRenameBoard,
 } from '~/api/boards';
 import { useUiStore } from '~/app/ui-store';
+import { ConfirmButton } from '~/components/confirm-button';
 
 export const Route = createFileRoute('/')({ component: BoardsIndex });
 
@@ -118,20 +119,18 @@ function BoardsIndex() {
             >
               duplicate
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                // A board holds arrangement, not images: deleting one never
-                // deletes an asset. Said out loud, because the two are easy to
-                // confuse and only one of them is recoverable.
-                if (globalThis.confirm(`Delete "${board.title}"? Its images are not deleted.`)) {
-                  remove.mutate(board.id);
-                }
-              }}
+            {/*
+              A board holds arrangement, not images: deleting one never
+              deletes an asset. Said out loud, because the two are easy to
+              confuse and only one of them is recoverable.
+            */}
+            <ConfirmButton
+              question={`Delete "${board.title}"? Its images are not deleted.`}
+              onConfirm={() => remove.mutate(board.id)}
               className="text-ink-dim opacity-0 hover:text-ink group-hover:opacity-100 group-focus-within:opacity-100"
             >
               delete
-            </button>
+            </ConfirmButton>
           </li>
         ))}
       </ul>

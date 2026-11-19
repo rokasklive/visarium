@@ -13,6 +13,7 @@ import {
 } from '~/api/assets';
 import { useCollections, useSetMembership } from '~/api/collections';
 import { useSession } from '~/api/session';
+import { ConfirmButton } from '~/components/confirm-button';
 import { LibraryGrid } from '~/features/library/library-grid';
 
 /**
@@ -224,23 +225,19 @@ function Library() {
              * words; there is no icon and no red. See DESIGN_SYSTEM.md.
              */}
             {deleted && admin && onlySelected && (
-              <button
-                type="button"
-                onClick={() => {
-                  if (
-                    globalThis.confirm(
-                      `Permanently remove "${onlySelected.filename}"?\n\n` +
-                        'This deletes the image file itself. It cannot be undone, and nothing ' +
-                        'restores it — not this screen, and not a backup you have not taken.',
-                    )
-                  ) {
-                    purge.mutate(onlySelected.assetId, { onSuccess: () => setSelected(new Set()) });
-                  }
-                }}
+              <ConfirmButton
+                question={
+                  `Permanently remove "${onlySelected.filename}"? ` +
+                  'This deletes the image file itself. It cannot be undone, and nothing ' +
+                  'restores it — not this screen, and not a backup you have not taken.'
+                }
+                onConfirm={() =>
+                  purge.mutate(onlySelected.assetId, { onSuccess: () => setSelected(new Set()) })
+                }
                 className="rounded px-2 py-0.5 text-ink hover:bg-surface-raised"
               >
                 remove permanently
-              </button>
+              </ConfirmButton>
             )}
 
             <Quiet className="ml-auto" onClick={() => setSelected(new Set())}>

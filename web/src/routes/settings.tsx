@@ -24,6 +24,7 @@ import {
 } from '~/api/accounts';
 import { copyText, type LocalPort, localPort, setLocalPort } from '~/api/desktop';
 import { type Account, providerStart, useSession } from '~/api/session';
+import { ConfirmButton } from '~/components/confirm-button';
 
 export const Route = createFileRoute('/settings')({ component: Settings });
 
@@ -676,25 +677,20 @@ function AdminSection({ meId }: { meId: string | undefined }) {
               </GhostButton>
             )}
             {!account.deactivatedAt && account.id !== meId && (
-              <GhostButton
+              // Deactivation signs them out at once and is not deletion:
+              // everything they made stays theirs. Said here because the two
+              // are easy to confuse.
+              <ConfirmButton
                 label={`Deactivate ${account.displayName}`}
                 disabled={deactivate.isPending}
-                onClick={() => {
-                  // Deactivation signs them out at once and is not deletion:
-                  // everything they made stays theirs. Said here because the two
-                  // are easy to confuse.
-                  if (
-                    account.id &&
-                    globalThis.confirm(
-                      `Deactivate ${account.displayName}? They are signed out immediately. Everything they made stays theirs.`,
-                    )
-                  ) {
-                    deactivate.mutate(account.id);
-                  }
+                question={`Deactivate ${account.displayName}? They are signed out immediately. Everything they made stays theirs.`}
+                onConfirm={() => {
+                  if (account.id) deactivate.mutate(account.id);
                 }}
+                className="rounded-sm border border-line px-2 py-0.5 text-ink-dim hover:bg-surface-raised hover:text-ink disabled:text-ink-disabled"
               >
                 deactivate
-              </GhostButton>
+              </ConfirmButton>
             )}
           </li>
         ))}

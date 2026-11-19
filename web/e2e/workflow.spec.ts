@@ -561,15 +561,12 @@ test('the whole loop: build a board, live in it, come back, and clean up', async
   //     says so in words rather than in a colour.
   await page.goto('/library?deleted=true');
   await selectAssetNamed(page, world, unusedId as string);
-  const confirmations: string[] = [];
-  page.on('dialog', (dialog) => {
-    confirmations.push(dialog.message());
-    void dialog.accept();
-  });
   await page.getByRole('button', { name: 'remove permanently' }).click();
+  // Asked in place, not by a browser dialog (the desktop webview has none).
+  await expect(page.getByRole('group', { name: /cannot be undone/ })).toBeVisible();
+  await page.getByRole('button', { name: 'yes' }).click();
 
   await expect.poll(() => world.assets.has(unusedId as string)).toBe(false);
-  expect(confirmations.join(' ')).toContain('cannot be undone');
   await expect(page.getByText(/Nothing has been deleted/)).toBeVisible();
 });
 
