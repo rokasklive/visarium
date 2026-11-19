@@ -2106,7 +2106,9 @@ export function CanvasSurface({
   useEffect(() => {
     const transformer = transformerRef.current;
     if (!transformer) return;
+    // Not on an object being edited in place: the editor is its frame then.
     const attached = [...selection]
+      .filter((id) => id !== objectEditing.editingId)
       .map((id) => stageRef.current?.findOne(`#${id}`))
       .filter((n): n is Konva.Node => Boolean(n));
     transformer.nodes(attached);

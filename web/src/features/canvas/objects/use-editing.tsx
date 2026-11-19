@@ -15,6 +15,7 @@ import {
   type CanvasItem,
   type CanvasItemContent,
   type CanvasOperationBody,
+  classifyText,
   hasSource,
   type ItemId,
   newItemId,
@@ -129,10 +130,49 @@ export function useObjectEditing(d: EditingDeps) {
     saveSource(text.slice(0, MAX_TEXT));
     if (s.lastSent !== s.original)
       d.history.record({ type: 'item.source', itemId: s.itemId, source: s.original });
+    // A note whose text now opens a diagram becomes that diagram.
+    convertIfDiagram(s.itemId);
     session.current = null;
     setEditing(null);
     const id = s.itemId;
     void d.settled().then(() => deps.current.realtime()?.release([id]));
+  };
+
+  /**
+   * A note whose source now starts a Mermaid or PlantUML diagram is turned into
+   * that diagram: same id, place, z-order, group and links, one undo step. Its
+   * links are removed and put back around the swap because deleting an item
+   * cascades them; taking them out as their own operations is what lets undo
+   * return them (as `deleteItemsBodies` does).
+   */
+  const convertIfDiagram = (itemId: ItemId) => {
+    const item = d.doc.item(itemId);
+    if (item?.content.kind !== 'note') return;
+    const content = classifyText(item.content.source);
+    if (content.kind !== 'diagram') return;
+    const links = d.doc.linksOf(itemId);
+    d.commit(
+      ...links.map((l): CanvasOperationBody => ({ type: 'link.delete', linkId: l.id })),
+      { type: 'item.delete', itemId },
+      {
+        type: 'item.create',
+        itemId,
+        transform: item.transform,
+        z: item.z,
+        content,
+        appearance: item.appearance,
+        ...(item.groupId !== undefined ? { groupId: item.groupId } : {}),
+      },
+      ...links.map(
+        (l): CanvasOperationBody => ({
+          type: 'link.add',
+          linkId: l.id,
+          from: l.from,
+          to: l.to,
+          linkType: l.linkType,
+        }),
+      ),
+    );
   };
 
   // --- creating ------------------------------------------------------------
@@ -161,8 +201,9 @@ export function useObjectEditing(d: EditingDeps) {
 
   const finishNewNote = (at: Vec2, text: string) => {
     setEditing(null);
-    // Left empty, nothing was made (spec).
-    if (text.trim()) place([{ kind: 'note', source: text }], at);
+    // Left empty, nothing was made (spec). Typed text is classified exactly as
+    // pasted text is: diagram source makes a diagram, task lines a checklist.
+    if (text.trim()) place([classifyText(text)], at);
   };
 
   // --- checklists ------------------------------------------------------------
@@ -446,6 +487,8 @@ export function useObjectEditing(d: EditingDeps) {
 
   return {
     editing: editing !== null,
+    /** The item being edited in place, which the resize frame leaves alone. */
+    editingId: editing && 'itemId' in editing ? editing.itemId : null,
     click,
     isControlAt: (item: CanvasItem, world: Vec2) => controlAt(item, world) !== undefined,
     doubleClick,

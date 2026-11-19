@@ -401,3 +401,95 @@ test('a note someone else is editing does not open for a second person', async (
   await page.waitForTimeout(300);
   await expect(page.getByRole('textbox', { name: 'Note text' })).toHaveCount(0);
 });
+
+test('typing diagram source into a new note makes a diagram', async ({ page }) => {
+  const posted = await stubBoard(page, []);
+  const centre = await open(page);
+  await page.mouse.dblclick(centre.x + 100, centre.y + 50);
+  await page.keyboard.type('flowchart LR\n  API --> Pay[Payment adapter]');
+  await page.keyboard.press('Escape');
+  await expect.poll(() => ofType(posted, 'item.create').length).toBe(1);
+  expect(ofType(posted, 'item.create')[0]?.content).toEqual({
+    kind: 'diagram',
+    lang: 'mermaid',
+    source: 'flowchart LR\n  API --> Pay[Payment adapter]',
+  });
+});
+
+test('a note edited into diagram source becomes that diagram, keeping its id and links', async ({
+  page,
+}) => {
+  const OTHER = '01a01640-6b72-7d60-968b-88be186f6010';
+  const LINK = '01a01640-6b72-7d60-968b-88be186f6011';
+  const posted: Op[] = [];
+  await page.route(`**/api/boards/${BOARD}/snapshot`, (route) =>
+    route.fulfill({
+      json: {
+        revision: 1,
+        items: [
+          note('Draft'),
+          {
+            ...note('Explains it'),
+            id: OTHER,
+            transform: { x: 0, y: 200, width: 320, height: 120, rotation: 0 },
+          },
+        ],
+        groups: [],
+        links: [
+          {
+            id: LINK,
+            from: { itemId: OTHER, element: null },
+            to: { itemId: NOTE, element: null },
+            linkType: 'describes',
+          },
+        ],
+        people: {},
+      },
+    }),
+  );
+  await page.route(`**/api/boards/${BOARD}/operations`, async (route) => {
+    const body = route.request().postDataJSON() as { operations: { body: Op }[] };
+    for (const { body: op } of body.operations) posted.push(op);
+    await route.fulfill({
+      json: { revision: 1 + posted.length, operations: body.operations.map((o) => o.body) },
+    });
+  });
+  const centre = await open(page);
+  await drawn(page, NOTE);
+  await page.mouse.dblclick(centre.x, centre.y - 50);
+  const editor = page.getByRole('textbox', { name: 'Note text' });
+  await expect(editor).toBeVisible();
+  // No resize frame while the editor is the object's frame.
+  const framed = () =>
+    page.evaluate(
+      () =>
+        (
+          window as unknown as {
+            Konva: { stages: { findOne(s: string): { nodes(): unknown[] } | undefined }[] };
+          }
+        ).Konva.stages[0]
+          ?.findOne('Transformer')
+          ?.nodes().length ?? 0,
+    );
+  expect(await framed()).toBe(0);
+  await editor.press('ControlOrMeta+a');
+  await page.keyboard.type('flowchart LR\n  API --> Pay');
+  await page.keyboard.press('Escape');
+
+  await expect.poll(() => ofType(posted, 'item.create').length).toBe(1);
+  expect(ofType(posted, 'item.create')[0]).toMatchObject({
+    itemId: NOTE,
+    content: { kind: 'diagram', lang: 'mermaid' },
+  });
+  expect(ofType(posted, 'link.add')[0]).toMatchObject({ linkId: LINK, to: { itemId: NOTE } });
+  await expect.poll(framed, 'the frame is back once editing ends').toBe(1);
+
+  // One undo takes the conversion back: the note, with its link.
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect.poll(() => ofType(posted, 'item.create').length).toBe(2);
+  expect(ofType(posted, 'item.create')[1]).toMatchObject({
+    itemId: NOTE,
+    content: { kind: 'note' },
+  });
+  expect(ofType(posted, 'link.add')).toHaveLength(2);
+});
