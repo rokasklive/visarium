@@ -98,6 +98,24 @@
           "45"
         ]
       }
+    },
+    {
+      "id": "demo-board",
+      "prompt": "On the board \"Offline sync\", build a small showcase of the reconnect path and frame it under the title \"Showcase\": a Mermaid flowchart Edit --> Queue --> Server, a note explaining the Queue node and linked to that node, a checklist of two steps that implements the flowchart, and two reference images (use this PNG for both, as base64 data: iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGM4UaEBRAwQCgAp7gWhjAnOiAAAAABJRU5ErkJggg==). Keep the board tidy: nothing overlapping, links short and not running through other things.",
+      "check": {
+        "kind": "board",
+        "layout_clean": true,
+        "overview_mentions": [
+          "Showcase"
+        ],
+        "refs_present": [
+          "d4",
+          "n6",
+          "c2",
+          "i2",
+          "i3"
+        ]
+      }
     }
   ]
 }

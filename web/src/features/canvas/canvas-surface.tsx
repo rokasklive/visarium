@@ -63,8 +63,17 @@ import {
   toKonvaCrop,
   toStageAttrs,
 } from '@visarium/canvas-renderer-konva';
-import type Konva from 'konva';
-import { Suspense, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import Konva from 'konva';
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from 'react';
 import {
   Image as KonvaImage,
   Line as KonvaLine,
@@ -76,7 +85,7 @@ import {
   Transformer,
 } from 'react-konva';
 import { assetsById } from '~/api/assets';
-import { loadSnapshotInto } from '~/api/boards';
+import { loadSnapshotInto, reportElements } from '~/api/boards';
 import { type SessionState, sessionKey } from '~/api/session';
 import { loadSharedSnapshotInto } from '~/api/sharing';
 import { useUiStore } from '~/app/ui-store';
@@ -99,6 +108,7 @@ import {
 } from './capture';
 import { useGifs } from './gif';
 import { copySelection, NO_ORIGINALS, NOTICES } from './interchange';
+import type { Layout } from './objects/layout';
 import {
   anchorAt,
   anchorBox,
@@ -112,7 +122,7 @@ import {
   segmentBetween,
 } from './objects/links';
 import { loaded as objectRenderersLoaded } from './objects/loaders';
-import { drawnHeight, isObject, ObjectLayouts, type ObjectView } from './objects/store';
+import { drawnHeight, isObject, layoutKey, ObjectLayouts, type ObjectView } from './objects/store';
 import { useObjectEditing } from './objects/use-editing';
 import {
   AgentFocusLabels,
@@ -270,6 +280,31 @@ export function CanvasSurface({
   // biome-ignore lint/correctness/useExhaustiveDependencies: one log per board, so a new document starts a new log
   const opLog = useMemo(() => (DEVTOOLS ? new OpLog() : null), [doc]);
   const stageRef = useRef<Konva.Stage | null>(null);
+  /**
+   * Where items moved by someone else — another person, an agent, or a
+   * collision push — were drawn, so the next commit eases them to where they
+   * now are instead of jumping (canvas/collision, design risks).
+   */
+  const easeFrom = useRef(new Map<ItemId, { x: number; y: number }>());
+  useLayoutEffect(() => {
+    const stage = stageRef.current;
+    if (!stage || easeFrom.current.size === 0) return;
+    for (const [id, from] of easeFrom.current) {
+      const node = stage.findOne(`#${id}`);
+      if (!node) continue;
+      const to = node.position();
+      if (to.x === from.x && to.y === from.y) continue;
+      node.position(from);
+      new Konva.Tween({
+        node,
+        x: to.x,
+        y: to.y,
+        duration: 0.18,
+        easing: Konva.Easings.EaseOut,
+      }).play();
+    }
+    easeFrom.current.clear();
+  });
   const transformerRef = useRef<Konva.Transformer | null>(null);
   const gesture = useRef<Gesture>({ kind: 'none' });
   const dragOrigins = useRef(new Map<ItemId, { x: number; y: number }>());
@@ -326,7 +361,17 @@ export function CanvasSurface({
   const theme = canvasTheme();
   const history = useMemo(() => new CanvasHistory(doc), [doc]);
   /** Notes, diagrams and checklists, laid out for drawing (design D2). */
-  const objects = useMemo(() => new ObjectLayouts(doc, redraw), [doc]);
+  /** Set while the board persists: reports a laid-out diagram's element boxes. */
+  const reportElementsRef = useRef<((itemId: ItemId, key: string, layout: Layout) => void) | null>(
+    null,
+  );
+  const objects = useMemo(
+    () =>
+      new ObjectLayouts(doc, redraw, (itemId, key, layout) =>
+        reportElementsRef.current?.(itemId, key, layout),
+      ),
+    [doc],
+  );
 
   // --- links (spec: canvas/links) ---------------------------------------------
   /** The selected link. Selecting a link clears the item selection and back. */
@@ -621,16 +666,42 @@ export function CanvasSurface({
       boardId,
       doc,
       onStatus: setSync,
+      onRemoteChange: redraw,
       ...(opLog ? { onPosted: (batch, outcome) => opLog.posted(batch, outcome) } : {}),
     });
     // Persistence hears every change; the object layouts hear which ones were
     // ours, so that exactly one client writes an object's new height.
     doc.onApplied((body, origin) => {
+      if (
+        origin === 'remote' &&
+        body.type === 'item.transform' &&
+        !easeFrom.current.has(body.itemId)
+      ) {
+        // Still drawn where it was: React has not re-rendered yet.
+        const node = stageRef.current?.findOne(`#${body.itemId}`);
+        if (node) easeFrom.current.set(body.itemId, node.position());
+      }
       sync.applied(body, origin);
       objects.noteApplied(body, origin);
       opLog?.record(body, origin);
     });
     syncRef.current = sync;
+
+    // Once per diagram revision, after our own edits to it are durable, so the
+    // revision we name is the server's (agents/placement, design D5).
+    const reported = new Set<string>();
+    reportElementsRef.current = (itemId, key, layout) => {
+      void sync.settled().then(() => {
+        const item = doc.item(itemId);
+        if (!item || item.revision === undefined || layoutKey(item) !== key) return;
+        const once = `${itemId}@${item.revision}`;
+        if (reported.has(once)) return;
+        reported.add(once);
+        void reportElements(boardId, itemId, item.revision, layout.width, layout.elements).catch(
+          () => {},
+        );
+      });
+    };
 
     /*
      * The socket, opened beside persistence and never in front of it.
@@ -675,6 +746,7 @@ export function CanvasSurface({
       globalThis.document.removeEventListener('visibilitychange', onHidden);
       clearInterval(identify);
       doc.onApplied(undefined);
+      reportElementsRef.current = null;
       realtime.close();
       setConnection('idle');
       realtimeRef.current = null;

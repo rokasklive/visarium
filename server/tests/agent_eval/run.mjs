@@ -128,6 +128,14 @@ async function check(task, answer) {
     const read = await mcp('item_read', { board: fixture.title, ref });
     if (!read.includes(`${task_} [${state}]`)) fails.push(`${task_} is not ${state}`);
   }
+  if (c.layout_clean && !overview.includes('Layout: no overlaps or crossings')) {
+    const section = overview.split('## Layout')[1] ?? '';
+    fails.push(`layout problems: ${section.trim().split('\n').slice(0, 4).join('; ')}`);
+  }
+  for (const s of c.overview_mentions ?? []) if (!overview.includes(s)) fails.push(`the overview does not mention ${s}`);
+  for (const ref of c.refs_present ?? []) {
+    if (!new RegExp(`^(- )?${ref}\\s`, 'm').test(overview)) fails.push(`no ${ref} on the board`);
+  }
   if (c.new_checklist_linked) {
     const { type, to } = c.new_checklist_linked;
     const ok = overview.split('\n').some((l, i, all) => /^c([2-9]|\d\d)\s/.test(l) && (all[i + 1] ?? '').includes(`→ ${type} ${to}`));

@@ -9,7 +9,7 @@ import {
   newGroupId,
 } from '@visarium/canvas-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { BoardSync, type OperationPoster, SyncError } from './board-sync';
+import { BoardSync, type OperationPoster, type PostResult, SyncError } from './board-sync';
 
 const FLUSH = 10;
 
@@ -360,5 +360,74 @@ describe('remote operations', () => {
     await settle();
 
     expect(post).not.toHaveBeenCalled();
+  });
+});
+
+describe('operations the server appended', () => {
+  const push = (id: string, x: number): CanvasOperationBody => ({
+    type: 'item.transform',
+    itemId: asItemId(id),
+    transform: transform(x),
+  });
+
+  it('applies a push the server added to a batch, off the undo stack and never posted back', async () => {
+    const doc = new CanvasDocument(asCanvasId('b'));
+    const history = new CanvasHistory(doc);
+    let calls = 0;
+    const batches: CanvasOperationBody[][] = [];
+    const post: OperationPoster = vi.fn(async (_board, operations) => {
+      batches.push([...operations]);
+      calls += 1;
+      return calls === 2 ? { revision: 4, pushed: [push('i2', 500)] } : calls + 1;
+    });
+    const redraws = vi.fn();
+    const board = new BoardSync({
+      boardId: 'b',
+      doc,
+      post,
+      flushMs: FLUSH,
+      onRemoteChange: redraws,
+    });
+    doc.onApplied(board.applied);
+    history.apply(create('i1', image()), create('i2', image(), 200));
+    await settle();
+
+    // The person widens i1 over i2; the server pushes i2 aside.
+    history.apply({
+      type: 'item.transform',
+      itemId: asItemId('i1'),
+      transform: { ...transform(0), width: 400 },
+    });
+    await settle();
+    expect(doc.item(asItemId('i2'))?.transform.x).toBe(500);
+    expect(doc.revision).toBe(4);
+    expect(redraws).toHaveBeenCalledTimes(1);
+
+    // Undo returns i1 to its size and leaves i2 where it was pushed.
+    history.undo();
+    expect(doc.item(asItemId('i1'))?.transform.width).toBe(100);
+    expect(doc.item(asItemId('i2'))?.transform.x).toBe(500);
+    await settle();
+    expect(batches.flat().some((b) => b.type === 'item.transform' && b.itemId === 'i2')).toBe(
+      false,
+    );
+  });
+
+  it('keeps a newer local edit over a push for the same item', async () => {
+    let release: (v: { revision: number; pushed: CanvasOperationBody[] }) => void = () => {};
+    const post: OperationPoster = vi.fn(
+      () =>
+        new Promise<PostResult>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const { doc } = sync(post);
+    doc.apply(create('i1', image()));
+    await settle();
+    // While the batch is out, the person moves i1 again.
+    doc.apply(push('i1', 900));
+    release({ revision: 2, pushed: [push('i1', 300)] });
+    await settle();
+    expect(doc.item(asItemId('i1'))?.transform.x).toBe(900);
   });
 });

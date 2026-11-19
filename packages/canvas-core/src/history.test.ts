@@ -32,6 +32,17 @@ function board() {
 }
 
 describe('undo', () => {
+  it('turns collision back off for a multi-item toggle as one step', () => {
+    const { doc, history } = board();
+    history.apply(
+      { type: 'item.collides', itemId: A, collides: true },
+      { type: 'item.collides', itemId: B, collides: true },
+    );
+    expect([doc.item(A)?.collides, doc.item(B)?.collides]).toEqual([true, true]);
+    expect(history.undo()).toBe(true);
+    expect([doc.item(A)?.collides, doc.item(B)?.collides]).toEqual([false, false]);
+  });
+
   it('restores the previous transform, index included', () => {
     const { doc, history } = board();
     history.apply(move(A, 300, 300));

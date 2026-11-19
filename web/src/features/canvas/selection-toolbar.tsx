@@ -254,6 +254,7 @@ export function SelectionToolbar({
 
   const groupId = soleGroupId(doc, selection);
   const framed = groupId ? (doc.group(groupId)?.frame ?? false) : false;
+  const collision = collisionState(doc, selection);
 
   useEffect(() => {
     if (labelSignal === 0) return;
@@ -518,6 +519,24 @@ export function SelectionToolbar({
           >
             <FrameIcon framed={framed} />
           </Button>
+          {/*
+            Collision (canvas/collision): on, the board moves these aside when
+            something lands on them; off, they never move. Mixed turns all on.
+          */}
+          <Button
+            label="Collision"
+            hint={
+              collision === 'on'
+                ? 'Collision on: moved aside when something lands on it'
+                : collision === 'off'
+                  ? 'Collision off: never moved by the board'
+                  : 'Collision is mixed: turn it on for all'
+            }
+            pressed={collision === 'on' ? true : collision === 'mixed' ? 'mixed' : undefined}
+            onClick={() => commit(...collisionBodies(doc, selection, collision !== 'on'))}
+          >
+            <CollisionIcon on={collision !== 'off'} />
+          </Button>
           <Divider />
 
           {/*
@@ -671,6 +690,49 @@ export function soleGroupId(doc: CanvasDocument, ids: Iterable<ItemId>): GroupId
   }
   if (found === undefined) return undefined;
   return doc.group(found)?.memberIds.length === count ? found : undefined;
+}
+
+/** An item's collision as the board applies it: its group's setting wins. */
+function collides(doc: CanvasDocument, id: ItemId): boolean {
+  const item = doc.item(id);
+  const group = item?.groupId !== undefined ? doc.group(item.groupId) : undefined;
+  return (group ? group.collides : item?.collides) ?? false;
+}
+
+export function collisionState(doc: CanvasDocument, ids: Iterable<ItemId>): 'on' | 'off' | 'mixed' {
+  let on = 0;
+  let off = 0;
+  for (const id of ids) {
+    if (!doc.item(id)) continue;
+    if (collides(doc, id)) on++;
+    else off++;
+  }
+  return on && off ? 'mixed' : on ? 'on' : 'off';
+}
+
+/**
+ * One batch, so one undo step: every selected item, and every group whose
+ * members are all selected — the group's setting is the one that counts for
+ * them.
+ */
+export function collisionBodies(
+  doc: CanvasDocument,
+  ids: ReadonlySet<ItemId>,
+  on: boolean,
+): CanvasOperationBody[] {
+  const bodies: CanvasOperationBody[] = [];
+  const groups = new Set<GroupId>();
+  for (const id of ids) {
+    const item = doc.item(id);
+    if (!item) continue;
+    bodies.push({ type: 'item.collides', itemId: id, collides: on });
+    if (item.groupId !== undefined) groups.add(item.groupId);
+  }
+  for (const groupId of groups) {
+    if (doc.group(groupId)?.memberIds.every((m) => ids.has(m)))
+      bodies.push({ type: 'group.collides', groupId, collides: on });
+  }
+  return bodies;
 }
 
 /** One operation per item, carrying the whole appearance the item ends up with. */
@@ -865,7 +927,7 @@ function Button({
   /** Present and pressable, but with less to offer than usual — see `ready`. */
   dim?: boolean | undefined;
   /** A toggle's state, made permanent the way DESIGN_SYSTEM gives ghost buttons. */
-  pressed?: boolean | undefined;
+  pressed?: boolean | 'mixed' | undefined;
   children: ReactNode;
 } & Pick<
   ComponentProps<'button'>,
@@ -885,7 +947,13 @@ function Button({
       {...(pressed !== undefined ? { 'aria-pressed': pressed } : {})}
       {...drag}
       className={`rounded p-1 hover:bg-surface-raised hover:text-ink ${
-        pressed ? 'bg-surface-raised text-ink' : dim ? 'text-ink-disabled' : 'text-ink-dim'
+        pressed === true
+          ? 'bg-surface-raised text-ink'
+          : pressed === 'mixed'
+            ? 'text-ink'
+            : dim
+              ? 'text-ink-disabled'
+              : 'text-ink-dim'
       }`}
     >
       {children}
@@ -957,6 +1025,20 @@ function FrameIcon({ framed }: { framed: boolean }) {
       <path d="M1.5 3.5h6v2h4v6H5V9.5h-3.5z" strokeDasharray={framed ? undefined : '2 2'} />
       <path d="M4 6.5h2.5v3H4z" />
       <path d="M8.5 8h2.5v2.5H8.5z" />
+    </Glyph>
+  );
+}
+
+/**
+ * Two boxes side by side with a push mark between them: solid when items keep
+ * each other apart, dashed when they do not.
+ */
+function CollisionIcon({ on }: { on: boolean }) {
+  return (
+    <Glyph>
+      <path d="M1.5 4h5v6h-5z" />
+      <path d="M8.5 4h5v6h-5z" strokeDasharray={on ? undefined : '2 2'} />
+      <path d="M6.5 7h2" />
     </Glyph>
   );
 }

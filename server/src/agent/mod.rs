@@ -14,6 +14,7 @@
 pub mod board;
 pub mod boards;
 pub mod diagram;
+pub mod import;
 pub mod place;
 pub mod read;
 pub mod write;
@@ -594,7 +595,7 @@ async fn call(app: &AppState, caller: &Caller, params: &Value) -> Value {
         "search" => read::search(app, &args).await,
         "changes" => read::changes(app, &args).await,
         "item_view" => read::item_view(app, &args).await,
-        "item_create" | "item_edit" | "tasks" | "link" | "unlink" | "arrange" | "item_delete" => {
+        "item_create" | "item_edit" | "tasks" | "link" | "unlink" | "arrange" | "group_create" | "item_delete" => {
             write::run(app, caller, name, &args).await
         }
         _ => Err(format!(
@@ -637,7 +638,7 @@ fn answer(app: &AppState, caller: &Caller, outcome: Result<Out, String>) -> Valu
 
 // --- what the agent is told ----------------------------------------------------------
 
-const TOOL_NAMES: [&str; 14] = [
+const TOOL_NAMES: [&str; 15] = [
     "desk",
     "board_read",
     "item_read",
@@ -651,6 +652,7 @@ const TOOL_NAMES: [&str; 14] = [
     "link",
     "unlink",
     "arrange",
+    "group_create",
     "item_delete",
 ];
 
@@ -694,7 +696,10 @@ fn tools(manage_boards: bool) -> Value {
     let mut create = json!({
         "type": "object",
         "properties": {
-            "board": board, "kind": { "type": "string", "enum": ["note", "diagram", "checklist"] },
+            "board": board, "kind": { "type": "string", "enum": ["note", "diagram", "checklist", "image"] },
+            "url": r("For an image: an http or https URL to fetch it from (public addresses only). PNG, JPEG, GIF (animated too), WebP, TIFF or BMP."),
+            "data": r("For an image, instead of url: the file's bytes as base64, at most 8 MB."),
+            "filename": r("For an image from data: its file name, shown in the library."),
             "source": r("For a note: Markdown. For a diagram: Mermaid or PlantUML source (PlantUML between @startuml and @enduml)."),
             "lang": { "type": "string", "enum": ["mermaid", "plantuml"], "description": "For a diagram." },
             "title": r("For a checklist."),
@@ -702,21 +707,46 @@ fn tools(manage_boards: bool) -> Value {
             "link": { "type": "object", "description": "Optional link from the new item, e.g. { \"type\": \"describes\", \"to\": \"d1#OpQueue\" }.",
                 "properties": { "type": { "type": "string", "enum": ["describes", "comments", "implements", "depends-on"] }, "to": r("A ref or element ref.") },
                 "required": ["type", "to"] },
+            "collides": { "type": "boolean", "description": "Optional, default true: the board moves the item aside when something lands on it. False fixes it in place." },
             "request_id": request_id,
         },
         "required": ["board", "kind"],
     });
     placement(&mut create);
+    let layout = |schema: &mut Value| {
+        schema["properties"]["layout"] = json!({ "type": "string", "enum": ["row", "column", "grid"], "description": "Line the items up in reading order, as one block." });
+        schema["properties"]["columns"] = json!({ "type": "integer", "description": "For a grid: how many across (default: about square)." });
+        schema["properties"]["gap"] = json!({ "type": "number", "description": "Space between items in a layout, default 24." });
+    };
     let mut arrange = json!({
         "type": "object",
         "properties": {
             "board": board, "refs": { "type": "array", "items": { "type": "string" }, "description": "Items to move, e.g. [\"n3\", \"n4\"]." },
             "out_of_group": { "type": "boolean", "description": "Take the items out of their group (they stay where they are)." },
+            "collides": { "type": "boolean", "description": "Turn collision on (the board moves them aside when something lands on them) or off (they never move)." },
             "request_id": request_id,
         },
         "required": ["board", "refs"],
     });
     placement(&mut arrange);
+    layout(&mut arrange);
+    let mut group_create = json!({
+        "type": "object",
+        "properties": {
+            "board": board, "refs": { "type": "array", "items": { "type": "string" }, "description": "Items to group, e.g. [\"i1\", \"i2\", \"n4\"]. Items in another group move to this one." },
+            "title": r("Optional: the group's title."),
+            "frame": { "type": "boolean", "description": "Draw a frame around the group, default true." },
+            "collides": { "type": "boolean", "description": "Optional, default true: the board moves the group aside, as one, when something lands on it." },
+            "request_id": request_id,
+        },
+        "required": ["board", "refs"],
+    });
+    for k in ["near", "below", "right_of"] {
+        let mut one = json!({ "properties": {} });
+        placement(&mut one);
+        group_create["properties"][k] = one["properties"][k].clone();
+    }
+    layout(&mut group_create);
     let mut tools = json!([
         { "name": "desk", "title": "List boards",
           "description": "Every board on the desk, most recently changed first: what it holds, open and blocked tasks, and its last change. Start here when you do not know the board's name.",
@@ -739,7 +769,7 @@ fn tools(manage_boards: bool) -> Value {
         { "name": "item_view", "title": "Look at an image",
           "description": "An image item's pixels, as the board shows it (cropped if cropped), at about the width you ask for. Only images: read everything else with item_read.",
           "inputSchema": { "type": "object", "properties": { "board": board, "ref": r("An image ref, e.g. i1."), "width": { "type": "integer", "description": "Pixels wide, default 1024." } }, "required": ["board", "ref"] }, "annotations": read_only },
-        { "name": "item_create", "title": "Add a note, diagram or checklist",
+        { "name": "item_create", "title": "Add a note, diagram, checklist or image",
           "description": "Adds an item, placed by the server next to (near, below, right_of) or inside (in) something you name, optionally with a link from it, all in one step. Example: a note that explains a node — kind \"note\", source \"…\", near \"d1\", link { type \"describes\", to \"d1#OpQueue\" }. Returns the new ref.",
           "inputSchema": create, "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false } },
         { "name": "item_edit", "title": "Edit a note's or diagram's source",
@@ -772,8 +802,11 @@ fn tools(manage_boards: bool) -> Value {
           "inputSchema": { "type": "object", "properties": { "board": board, "from": r("One end."), "to": r("The other end."), "request_id": request_id }, "required": ["board", "from", "to"] },
           "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false } },
         { "name": "arrange", "title": "Move items",
-          "description": "Moves items next to (near, below, right_of) or into (in) something else, without coordinates; or takes them out of their group.",
+          "description": "Moves items next to (near, below, right_of) or into (in) something else, without coordinates; lines them up as a row, column or grid (layout); turns their collision on or off; or takes them out of their group. Items with links are placed to keep those links short. The result says where each went, how long its links are and what they cross, and what was moved aside.",
           "inputSchema": arrange, "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false } },
+        { "name": "group_create", "title": "Group or frame items",
+          "description": "Puts items into a new group, framed and titled if you like, packed together in reading order (a grid by default, or layout: row or column). The group then moves as one; anything it now covers is moved aside. Returns the group's ref.",
+          "inputSchema": group_create, "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false } },
         { "name": "item_delete", "title": "Delete an item",
           "description": "Deletes an item and every link to or from it. The result includes the deleted content, so it can be recreated if asked. Prefer editing.",
           "inputSchema": { "type": "object", "properties": { "board": board, "ref": r("The item."), "request_id": request_id }, "required": ["board", "ref"] },
@@ -815,12 +848,16 @@ fn guide() -> String {
 - changes {{ \"board\": \"Offline sync\", \"since_rev\": 412 }}\n\
 - item_view {{ \"board\": \"Offline sync\", \"ref\": \"i1\", \"width\": 1024 }}\n\
 - item_create {{ \"board\": \"Offline sync\", \"kind\": \"note\", \"source\": \"OpQueue drains on reconnect.\", \"near\": \"d1\", \"link\": {{ \"type\": \"describes\", \"to\": \"d1#OpQueue\" }}, \"request_id\": \"note-opqueue-1\" }}\n\
+- item_create {{ \"board\": \"Offline sync\", \"kind\": \"image\", \"url\": \"https://example.com/light.jpg\", \"near\": \"n2\", \"link\": {{ \"type\": \"comments\", \"to\": \"n2\" }} }}\n\
 - item_create {{ \"board\": \"Offline sync\", \"kind\": \"checklist\", \"title\": \"Plan\", \"tasks\": [\"Spike\", \"Ship\"], \"below\": \"d2\", \"link\": {{ \"type\": \"implements\", \"to\": \"d2\" }} }}\n\
 - item_edit {{ \"board\": \"Offline sync\", \"ref\": \"d3\", \"base_rev\": 4, \"old\": \"RetryLoop[\", \"new\": \"RetryPolicy[\" }}\n\
 - tasks {{ \"board\": \"Offline sync\", \"ref\": \"c1\", \"set\": [{{ \"task\": \"t6\", \"state\": \"done\" }}], \"add\": [{{ \"text\": \"Write the runbook\" }}] }}\n\
 - link {{ \"board\": \"Offline sync\", \"from\": \"n4\", \"to\": \"d3#RetryPolicy\", \"type\": \"describes\" }}\n\
 - unlink {{ \"board\": \"Offline sync\", \"from\": \"n4\", \"to\": \"d3#Backoff\" }}\n\
 - arrange {{ \"board\": \"Offline sync\", \"refs\": [\"n3\", \"n4\"], \"in\": \"g2\" }}\n\
+- arrange {{ \"board\": \"Offline sync\", \"refs\": [\"i1\", \"i2\", \"i3\", \"i4\"], \"layout\": \"grid\", \"columns\": 2, \"below\": \"n1\" }}\n\
+- arrange {{ \"board\": \"Offline sync\", \"refs\": [\"n3\"], \"collides\": false }}\n\
+- group_create {{ \"board\": \"Offline sync\", \"refs\": [\"i1\", \"i2\", \"n4\"], \"title\": \"Moodboard\" }}\n\
 - item_delete {{ \"board\": \"Offline sync\", \"ref\": \"n5\" }}\n\
 - board_create {{ \"title\": \"Offline sync, v2\", \"request_id\": \"board-v2-1\" }}\n\
 - board_rename {{ \"board\": \"Offline sync\", \"title\": \"Offline sync (archived)\" }}\n\
@@ -833,6 +870,9 @@ Board management tools are listed only with the *Manage boards* grant (Settings 
 - Read the overview first, then only the items you need.\n\
 - Keep the revision board_read shows; changes(since_rev) catches you up later.\n\
 - When an edit breaks a link, the result says which: repair it with link, or tell your person.\n\
-- Put notes beside what they explain and link them; put plans in checklists, not notes.\n"
+- Put notes beside what they explain and link them; put plans in checklists, not notes.\n\
+- Create an item with its link in one call: the server places it to keep the link short.\n\
+- Your items have collision on: when something grows into them or lands on them, the board moves them aside, and the result says so. Items people place have it off and never move. Items made before collision existed have it off too; arrange(collides: true) turns it on.\n\
+- Write results and board_read describe layout in words — link lengths, crossings, overlaps — so you never need to look at the board.\n"
     )
 }

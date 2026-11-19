@@ -11,6 +11,7 @@ pub mod agent;
 pub mod assets;
 pub mod auth;
 pub mod boards;
+pub mod collision;
 pub mod collections;
 pub mod device;
 pub mod error;
@@ -37,7 +38,7 @@ use tower_http::compression::CompressionLayer;
 use crate::error::ApiError;
 
 /// Must match PROTOCOL_VERSION in packages/canvas-core/src/protocol.ts.
-pub const PROTOCOL_VERSION: i64 = 3;
+pub const PROTOCOL_VERSION: i64 = 4;
 
 #[derive(Clone, Debug, Default)]
 pub struct Config {
@@ -81,6 +82,9 @@ pub struct App {
     pub setup_lock: tokio::sync::Mutex<()>,
     /// The single-user account's id, when `single_user`.
     pub local_user: Option<String>,
+    /// Lets agents import images from private addresses. Off, and only ever
+    /// turned on by tests that serve images from loopback.
+    pub allow_private_imports: std::sync::atomic::AtomicBool,
 }
 
 pub type AppState = Arc<App>;
@@ -149,6 +153,7 @@ pub async fn open(config: Config) -> anyhow_lite::Result<AppState> {
         image_permits: tokio::sync::Semaphore::new(cpus.clamp(1, 4)),
         setup_lock: Default::default(),
         local_user,
+        allow_private_imports: Default::default(),
     });
     // An agent stays on a board's participant list while it keeps calling;
     // this drops the ones that went quiet. Weak, so it ends with the app.
@@ -199,7 +204,10 @@ pub fn router(state: AppState) -> Router {
         .layer(DefaultBodyLimit::max(32 * 1024 * 1024));
 
     // Agents: bearer token or the local account, never a cookie (ADR-0031).
-    let agents = agent::routes().route_layer(from_fn(agent::require_agent));
+    // Room for an image passed as data: 8 MB is about 11 MB of base64.
+    let agents = agent::routes()
+        .route_layer(from_fn(agent::require_agent))
+        .layer(DefaultBodyLimit::max(16 * 1024 * 1024));
 
     Router::new()
         .nest("/api", api)

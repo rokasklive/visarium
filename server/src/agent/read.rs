@@ -424,12 +424,100 @@ pub async fn board_read(app: &AppState, caller: &Caller, args: &Value) -> Result
             ));
         }
     }
+    if focus.is_none() && !b.items.is_empty() {
+        text.push_str(&layout_section(&b));
+    }
     if b.items.is_empty() {
-        text.push_str("\nThe board is empty. item_create adds a note, diagram or checklist.\n");
+        text.push_str("\nThe board is empty. item_create adds a note, diagram, checklist or image.\n");
     }
     Ok(Out::text(text)
         .touch(b.id, None, "reading")
         .with(json!({ "board": b.id, "revision": b.revision })))
+}
+
+/// How many layout problems the overview names before counting the rest.
+const LAYOUT_LINES: usize = 8;
+
+/// The board's layout in words (agents/board-reading): overlapping items,
+/// links that run through items or frames, and links far longer than the
+/// board's typical one, worst first. Pairs where nothing can move are a
+/// person's own arrangement and are left out.
+///
+/// ponytail: overlaps are checked pairwise, O(n²); use the spatial index if
+/// boards past a few thousand items read slowly.
+fn layout_section(b: &BoardData) -> String {
+    use crate::agent::place::{self, Rect};
+    let pad = crate::collision::GROUP_PAD;
+    let mut problems: Vec<(f64, String)> = vec![];
+    for (n, a) in b.items.iter().enumerate() {
+        for c in &b.items[n + 1..] {
+            if !(b.collides(a) || b.collides(c)) {
+                continue;
+            }
+            let (ra, rc) = (Rect::of(a), Rect::of(c));
+            if ra.overlaps(&rc, 0.0) {
+                let w = ra.right().min(rc.right()) - ra.left().max(rc.left());
+                let h = ra.bottom().min(rc.bottom()) - ra.top().max(rc.top());
+                problems.push((1e9 + w * h, format!("{} overlaps {}", a.short_ref(), c.short_ref())));
+            }
+        }
+    }
+    let mut lengths = vec![];
+    let mut drawn = vec![];
+    for l in &b.links {
+        let (Some(from), Some(to)) = (b.item(&l.from_item), b.item(&l.to_item)) else { continue };
+        let s = place::segment(&place::anchor_box(from, l.from_element.as_deref()), &place::anchor_box(to, l.to_element.as_deref()));
+        lengths.push(place::length(&s));
+        drawn.push((l, from, to, s));
+    }
+    lengths.sort_by(f64::total_cmp);
+    let typical = lengths.get(lengths.len() / 2).copied().unwrap_or(0.0);
+    for (l, from, to, s) in drawn {
+        if !(b.collides(from) || b.collides(to)) {
+            continue;
+        }
+        let label = format!(
+            "{} → {}",
+            b.anchor_text(&l.from_item, l.from_element.as_deref()),
+            b.anchor_text(&l.to_item, l.to_element.as_deref())
+        );
+        let mut crossed: Vec<String> = b
+            .items
+            .iter()
+            .filter(|i| i.id != from.id && i.id != to.id && place::hits(&s, &Rect::of(i)))
+            .map(|i| i.short_ref())
+            .collect();
+        for g in &b.groups {
+            let members: Vec<&crate::boards::ItemRow> = b.items.iter().filter(|i| i.group_id.as_deref() == Some(g.id.as_str())).collect();
+            if members.iter().any(|m| m.id == from.id || m.id == to.id) {
+                continue;
+            }
+            if let Some(r) = Rect::around(&members.iter().map(|m| Rect::of(m)).collect::<Vec<_>>())
+                && place::hits(&s, &Rect { w: r.w + 2.0 * pad, h: r.h + 2.0 * pad, ..r })
+            {
+                crossed.push(g.short_ref());
+            }
+        }
+        if !crossed.is_empty() {
+            problems.push((1e6 * crossed.len() as f64, format!("{label} crosses {}", crossed.join(", "))));
+        }
+        let len = place::length(&s);
+        if lengths.len() >= 3 && typical > 0.0 && len > 3.0 * typical {
+            problems.push((len, format!("{label} is {}px long (typical {}px)", len.round(), typical.round())));
+        }
+    }
+    if problems.is_empty() {
+        return "\nLayout: no overlaps or crossings.\n".into();
+    }
+    problems.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let mut out = String::from("\n## Layout\n");
+    for (_, p) in problems.iter().take(LAYOUT_LINES) {
+        out.push_str(&format!("- {p}\n"));
+    }
+    if problems.len() > LAYOUT_LINES {
+        out.push_str(&format!("- and {} more\n", problems.len() - LAYOUT_LINES));
+    }
+    out
 }
 
 // --- one item --------------------------------------------------------------------
@@ -973,6 +1061,15 @@ pub fn describe(b: &BoardData, op: &Value) -> String {
         "group.members" => "changed a group's members".into(),
         "group.label" => format!("renamed a group to \"{}\"", s("label")),
         "group.frame" => "framed or unframed a group".into(),
+        "item.collides" => format!(
+            "turned collision {} for {}",
+            if op.get("collides").and_then(Value::as_bool) == Some(true) { "on" } else { "off" },
+            item()
+        ),
+        "group.collides" => format!(
+            "turned collision {} for a group",
+            if op.get("collides").and_then(Value::as_bool) == Some(true) { "on" } else { "off" }
+        ),
         other => format!("did {other}"),
     }
 }
@@ -1041,7 +1138,18 @@ pub async fn changes(app: &AppState, args: &Value) -> Result<Out, Fail> {
                 "item.z" => "restacked",
                 _ => "restyled",
             };
-            format!("{verb} {} items", j - i)
+            // Name them while that stays short: pushes read as what moved.
+            let refs: Vec<String> = rows[i..j]
+                .iter()
+                .filter_map(|r| serde_json::from_str::<Value>(&r.4).ok())
+                .filter_map(|o| o.get("itemId").and_then(Value::as_str).map(str::to_string))
+                .filter_map(|id| b.items.iter().find(|it| it.id == id).map(|it| it.short_ref()))
+                .collect();
+            if refs.len() == j - i && refs.len() <= 6 {
+                format!("{verb} {}", refs.join(", "))
+            } else {
+                format!("{verb} {} items", j - i)
+            }
         } else {
             describe(&b, &op)
         };

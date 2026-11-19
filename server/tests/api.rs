@@ -291,7 +291,7 @@ async fn assets_boards_library_and_lifecycle() {
     assert_eq!(snap["items"][0]["groupId"], group.as_str());
     assert_eq!(snap["items"][0]["appearance"], json!({ "opacity": 0.5, "flipX": true, "flipY": false }));
     assert_eq!(snap["items"][0]["content"]["asset"]["intrinsicWidth"], 3000);
-    assert_eq!(snap["groups"][0], json!({ "id": group, "ref": "g1", "label": "Sky", "frame": true, "memberIds": [item] }));
+    assert_eq!(snap["groups"][0], json!({ "id": group, "ref": "g1", "label": "Sky", "frame": true, "collides": false, "memberIds": [item] }));
     assert_eq!(snap["items"][0]["ref"], "i1", "an item carries its short ref (ADR-0031)");
 
     let broken = json!({ "operations": [{ "body": { "type": "item.create", "itemId": uuid::Uuid::now_v7(), "transform": t,
@@ -416,7 +416,7 @@ async fn realtime_presence_previews_and_announced_ops() {
             }
         }
     }
-    let hello = json!({ "t": "hello", "protocolVersion": 3, "sinceRevision": 0 }).to_string();
+    let hello = json!({ "t": "hello", "protocolVersion": visarium::PROTOCOL_VERSION, "sinceRevision": 0 }).to_string();
     a.send(hello.clone().into()).await.unwrap();
     let welcome_a = next(&mut a).await;
     assert_eq!(welcome_a["t"], "welcome");
@@ -1158,7 +1158,7 @@ async fn viewers_watch_live_and_are_cut_off_on_revoke() {
             }
         }
     }
-    let hello = json!({ "t": "hello", "protocolVersion": 3, "sinceRevision": 0 }).to_string();
+    let hello = json!({ "t": "hello", "protocolVersion": visarium::PROTOCOL_VERSION, "sinceRevision": 0 }).to_string();
 
     // The member's own socket refuses the viewer's cookie, and vice versa.
     assert!(socket(format!("/ws/canvas/{b}"), v.cookie_header()).await.is_err());
@@ -1297,6 +1297,148 @@ async fn migration_0005_keeps_sessions_and_numbers_items_per_kind() {
     let found: Vec<String> =
         sqlx::query_scalar("SELECT item_id FROM item_text WHERE item_text MATCH 'second'").fetch_all(&app.db).await.unwrap();
     assert_eq!(found, vec!["n-b".to_string()], "existing text is searchable after the migration");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn collision_is_stored_toggled_snapshotted_and_duplicated() {
+    let (mut c, _app, dir) = signed_in().await;
+    let b = c.json("POST", "/api/boards", json!({ "title": "Collide" })).await.json()["id"].as_str().unwrap().to_string();
+    let (n1, n2, g) = (uuid::Uuid::now_v7().to_string(), uuid::Uuid::now_v7().to_string(), uuid::Uuid::now_v7().to_string());
+    let mut on = create_note(&n1, "agent's");
+    on["body"]["collides"] = json!(true);
+    let ops = json!({ "operations": [on, create_note(&n2, "person's"),
+        { "body": { "type": "group.create", "groupId": g, "memberIds": [n2], "collides": true } }] });
+    assert_eq!(c.json("POST", &format!("/api/boards/{b}/operations"), ops).await.status, StatusCode::OK);
+    let snap = c.get(&format!("/api/boards/{b}/snapshot")).await.json();
+    let collides = |snap: &Value, id: &str| snap["items"].as_array().unwrap().iter().find(|i| i["id"] == id).unwrap()["collides"].clone();
+    assert_eq!((collides(&snap, &n1), collides(&snap, &n2)), (json!(true), json!(false)), "absent is off");
+    assert_eq!(snap["groups"][0]["collides"], true);
+
+    let toggle = json!({ "operations": [
+        { "body": { "type": "item.collides", "itemId": n1, "collides": false } },
+        { "body": { "type": "group.collides", "groupId": g, "collides": false } },
+        { "body": { "type": "item.collides", "itemId": n2, "collides": true } }] });
+    assert_eq!(c.json("POST", &format!("/api/boards/{b}/operations"), toggle).await.status, StatusCode::OK);
+    let snap = c.get(&format!("/api/boards/{b}/snapshot")).await.json();
+    assert_eq!((collides(&snap, &n1), collides(&snap, &n2)), (json!(false), json!(true)));
+    assert_eq!(snap["groups"][0]["collides"], false);
+
+    let copy = c.json("POST", &format!("/api/boards/{b}/duplicate"), json!(null)).await.json()["id"].as_str().unwrap().to_string();
+    let snap = c.get(&format!("/api/boards/{copy}/snapshot")).await.json();
+    let mut kept: Vec<_> = snap["items"].as_array().unwrap().iter().map(|i| (i["ref"].as_str().unwrap().to_string(), i["collides"].as_bool().unwrap())).collect();
+    kept.sort();
+    assert_eq!(kept, vec![("n1".into(), false), ("n2".into(), true)], "duplicate keeps the setting");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn a_resize_pushes_collision_on_items_aside_in_the_same_batch() {
+    let (mut c, _app, dir) = signed_in().await;
+    let b = c.json("POST", "/api/boards", json!({ "title": "Push" })).await.json()["id"].as_str().unwrap().to_string();
+    let ops_url = format!("/api/boards/{b}/operations");
+    let (big, agent_note, person_note) = (uuid::Uuid::now_v7().to_string(), uuid::Uuid::now_v7().to_string(), uuid::Uuid::now_v7().to_string());
+    let at = |id: &str, x: f64, y: f64, collides: bool| {
+        json!({ "body": { "type": "item.create", "itemId": id, "z": 1.0, "collides": collides,
+            "transform": { "x": x, "y": y, "width": 200.0, "height": 100.0, "rotation": 0.0 },
+            "content": { "kind": "note", "source": "x" } } })
+    };
+    let made = json!({ "operations": [at(&big, 0.0, 0.0, false), at(&agent_note, 0.0, 200.0, true), at(&person_note, 400.0, 200.0, false)] });
+    assert_eq!(c.json("POST", &ops_url, made).await.json()["revision"], 3, "nothing overlaps yet, nothing pushed");
+
+    // The person grows their note to 600 wide and 320 tall: over both notes below.
+    let grow = json!({ "operations": [{ "body": { "type": "item.transform", "itemId": big,
+        "transform": { "x": 100.0, "y": 0.0, "width": 600.0, "height": 320.0, "rotation": 0.0 } } }] });
+    let reply = c.json("POST", &ops_url, grow).await.json();
+    let ops = reply["operations"].as_array().unwrap();
+    assert_eq!(ops.len(), 2, "the resize and one push come back: {ops:?}");
+    assert_eq!(ops[1]["type"], "item.transform");
+    assert_eq!(ops[1]["itemId"], agent_note.as_str());
+    assert_eq!(reply["revision"], 5);
+
+    let snap = c.get(&format!("/api/boards/{b}/snapshot")).await.json();
+    let y = |id: &str| snap["items"].as_array().unwrap().iter().find(|i| i["id"] == id).unwrap()["transform"]["y"].as_f64().unwrap();
+    assert!(y(&agent_note) - 50.0 >= 160.0 + 24.0, "the agent's note clears the grown note with the gap");
+    assert_eq!(y(&person_note), 200.0, "a collision-off note is never moved");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn element_boxes_are_kept_for_the_current_revision_only() {
+    let (mut c, app, dir) = signed_in().await;
+    let b = c.json("POST", "/api/boards", json!({ "title": "Elements" })).await.json()["id"].as_str().unwrap().to_string();
+    let d = uuid::Uuid::now_v7().to_string();
+    let made = json!({ "operations": [{ "body": { "type": "item.create", "itemId": d, "z": 1.0,
+        "transform": { "x": 0.0, "y": 0.0, "width": 480.0, "height": 360.0, "rotation": 0.0 },
+        "content": { "kind": "diagram", "lang": "mermaid", "source": "flowchart LR\n  A --> B" } } }] });
+    c.json("POST", &format!("/api/boards/{b}/operations"), made).await;
+    let url = format!("/api/boards/{b}/items/{d}/elements");
+    let report = |rev: i64, x: f64| json!({ "revision": rev, "width": 240.0, "elements": { "A": [x, 10.0, 40.0, 20.0], "B": [180.0, 10.0, 40.0, 20.0] } });
+    let board_rev = c.get(&format!("/api/boards/{b}")).await.json()["revision"].clone();
+
+    assert_eq!(c.json("PUT", &url, report(0, 10.0)).await.status, StatusCode::NO_CONTENT);
+    let stored = || async {
+        sqlx::query_as::<_, (Option<String>, Option<i64>)>("SELECT element_boxes, element_rev FROM canvas_item WHERE id = ?")
+            .bind(&d)
+            .fetch_one(&app.db)
+            .await
+            .unwrap()
+    };
+    let (boxes, rev) = stored().await;
+    assert_eq!(rev, Some(0));
+    assert_eq!(serde_json::from_str::<Value>(&boxes.unwrap()).unwrap()["elements"]["A"], json!([10.0, 10.0, 40.0, 20.0]));
+    assert_eq!(c.get(&format!("/api/boards/{b}")).await.json()["revision"], board_rev, "a report changes no revision");
+
+    // A second browser reports the same revision: the first report stands.
+    assert_eq!(c.json("PUT", &url, report(0, 99.0)).await.status, StatusCode::NO_CONTENT);
+    assert!(stored().await.0.unwrap().contains("[10.0,10.0,40.0,20.0]"));
+
+    // The diagram is edited; a late report for the old revision is refused.
+    let edit = json!({ "operations": [{ "body": { "type": "item.source", "itemId": d, "source": "flowchart LR\n  A --> C" } }] });
+    c.json("POST", &format!("/api/boards/{b}/operations"), edit).await;
+    assert_eq!(c.json("PUT", &url, report(0, 10.0)).await.status, StatusCode::CONFLICT);
+    assert_eq!(c.json("PUT", &url, report(1, 30.0)).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(stored().await.1, Some(1));
+    assert_eq!(c.json("PUT", &url, json!({ "revision": 1, "width": -1.0, "elements": {} })).await.status, StatusCode::BAD_REQUEST);
+
+    // A share-link viewer cannot report.
+    let (_, token) = share(&mut c, &b, json!({ "label": "look", "expiresInDays": 7 })).await;
+    let (mut v, _) = viewer(&c.router, &token).await;
+    assert!(v.json("PUT", &url, report(1, 10.0)).await.status.is_client_error());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn the_server_speaks_the_clients_protocol_version() {
+    // A mismatch refuses every socket: the board shows "reconnecting" forever.
+    let client = include_str!("../../packages/canvas-core/src/protocol.ts");
+    let expected = format!("export const PROTOCOL_VERSION = {};", visarium::PROTOCOL_VERSION);
+    assert!(client.contains(&expected), "protocol.ts and lib.rs disagree on PROTOCOL_VERSION");
+}
+
+#[tokio::test]
+async fn migration_0007_leaves_every_existing_item_and_group_fixed() {
+    let (config, dir) = config(false);
+    std::fs::create_dir_all(&dir).unwrap();
+    let options = sqlx::sqlite::SqliteConnectOptions::new().filename(&config.database).create_if_missing(true).foreign_keys(true);
+    let db = sqlx::SqlitePool::connect_with(options).await.unwrap();
+    let mut before = sqlx::migrate!("./migrations");
+    before.migrations = std::borrow::Cow::Owned(before.migrations.iter().filter(|m| m.version < 7).cloned().collect());
+    before.run(&db).await.unwrap();
+    for sql in [
+        "INSERT INTO canvas (id, title) VALUES ('b1', 'One')",
+        "INSERT INTO canvas_group (id, canvas_id, label, ref_no) VALUES ('g-a', 'b1', 'A', 1)",
+        "INSERT INTO canvas_item (id, canvas_id, kind, body, group_id, x, y, width, height, ref_no) VALUES ('n-a', 'b1', 'note', 'x', 'g-a', 0, 0, 1, 1, 1)",
+    ] {
+        sqlx::query(sql).execute(&db).await.unwrap();
+    }
+    db.close().await;
+
+    let app = visarium::open(config).await.unwrap();
+    let item: (bool, Option<String>) = sqlx::query_as("SELECT collides, element_boxes FROM canvas_item").fetch_one(&app.db).await.unwrap();
+    assert_eq!(item, (false, None));
+    let group: bool = sqlx::query_scalar("SELECT collides FROM canvas_group").fetch_one(&app.db).await.unwrap();
+    assert!(!group);
     let _ = std::fs::remove_dir_all(dir);
 }
 

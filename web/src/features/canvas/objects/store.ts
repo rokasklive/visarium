@@ -9,6 +9,12 @@
  * the one whose own change made it different. Every other client draws the
  * height it derives itself and writes nothing, so a source change seen by
  * three people is one transform on the wire, not three.
+ *
+ * The exception is an item nobody here authored but that has collision on —
+ * in practice, one an agent made. Its stored height is the server's estimate,
+ * and the board can only push neighbours aside (canvas/collision) once it
+ * learns the drawn height, so a client that draws it differently writes it.
+ * The write is absolute, so two clients doing it at once agree.
  */
 
 import type {
@@ -66,10 +72,20 @@ export class ObjectLayouts {
   readonly #authored = new Set<ItemId>();
   readonly #doc: CanvasDocument;
   readonly #onReady: () => void;
+  readonly #onElements: (itemId: ItemId, key: string, layout: Layout) => void;
 
-  constructor(doc: CanvasDocument, onReady: () => void) {
+  /**
+   * @param onElements a diagram laid out cleanly: where its named elements
+   *   are, so the server can place things next to them (agents/placement).
+   */
+  constructor(
+    doc: CanvasDocument,
+    onReady: () => void,
+    onElements: (itemId: ItemId, key: string, layout: Layout) => void = () => {},
+  ) {
     this.#doc = doc;
     this.#onReady = onReady;
+    this.#onElements = onElements;
   }
 
   /** The drawing to show now: the current one, or the last good one while a newer is coming. */
@@ -115,6 +131,8 @@ export class ObjectLayouts {
     delete entry.inflight;
     entry.view = view;
     this.#writeHeight(item.id, view);
+    if (!view.stale && item.content.kind === 'diagram' && view.layout.elements.size > 0)
+      this.#onElements(item.id, key, view.layout);
     this.#onReady();
   }
 
@@ -146,15 +164,21 @@ export class ObjectLayouts {
   };
 
   #writeHeight(itemId: ItemId, view: ObjectView): void {
-    if (!this.#authored.has(itemId)) return;
     const item = this.#doc.item(itemId);
-    if (!item || layoutKey(item) !== view.key) return; // changed again since; wait for that layout
+    if (!item) return;
+    if (!this.#authored.has(itemId) && !this.#collides(item)) return;
+    if (layoutKey(item) !== view.key) return; // changed again since; wait for that layout
     this.#authored.delete(itemId);
     const next = topAnchored(item.transform, drawnHeight(item, view.layout));
     if (Math.abs(next.height - item.transform.height) <= RESIZED_EPSILON) return;
     // Not through history: the height is a consequence of the change, and the
     // undo of that change re-derives it the same way.
     this.#doc.apply({ type: 'item.transform', itemId, transform: next });
+  }
+
+  #collides(item: CanvasItem): boolean {
+    const group = item.groupId !== undefined ? this.#doc.group(item.groupId) : undefined;
+    return (group ? group.collides : item.collides) ?? false;
   }
 
   /** For the dev hook and its tests. */

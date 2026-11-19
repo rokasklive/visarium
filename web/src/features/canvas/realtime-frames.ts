@@ -179,6 +179,10 @@ function operation(value: unknown): unknown | null {
       return str(value.groupId) && str(value.label) ? value : null;
     case 'group.frame':
       return str(value.groupId) && typeof value.frame === 'boolean' ? value : null;
+    case 'item.collides':
+      return str(value.itemId) && typeof value.collides === 'boolean' ? value : null;
+    case 'group.collides':
+      return str(value.groupId) && typeof value.collides === 'boolean' ? value : null;
     // Board objects and links: as small as what they change, and stamped by the
     // server (`by`, `at`), which is why those two may be absent or null.
     case 'item.source':
@@ -271,7 +275,8 @@ function content(value: unknown): boolean {
   }
 }
 
-function operations(value: unknown): readonly unknown[] | null {
+/** A list of operation bodies, all valid or `null`: the socket's rule, reused for POST responses. */
+export function operations(value: unknown): readonly unknown[] | null {
   if (!Array.isArray(value) || value.length > MAX_FRAME_ITEMS) return null;
   const parsed: unknown[] = [];
   for (const entry of value) {

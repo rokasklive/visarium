@@ -291,6 +291,36 @@ describe('groups', () => {
     ).toBeUndefined();
   });
 
+  it('toggles collision on a group and an item, inverting to the previous state', () => {
+    const d = doc();
+    d.apply(create(A));
+    d.apply({ type: 'group.create', groupId: G, memberIds: [A] });
+    expect(d.apply({ type: 'group.collides', groupId: G, collides: true })).toEqual({
+      type: 'group.collides',
+      groupId: G,
+      collides: false,
+    });
+    expect(d.group(G)?.collides).toBe(true);
+    expect(d.apply({ type: 'item.collides', itemId: A, collides: true })).toEqual({
+      type: 'item.collides',
+      itemId: A,
+      collides: false,
+    });
+    expect(d.item(A)?.collides).toBe(true);
+    expect(d.apply({ type: 'item.collides', itemId: B, collides: true })).toBeUndefined();
+  });
+
+  it('carries collision through create/delete inverses', () => {
+    const d = doc();
+    d.apply({ ...create(A), collides: true } as CanvasOperationBody);
+    expect(d.item(A)?.collides).toBe(true);
+    expect(d.apply({ type: 'item.delete', itemId: A })).toMatchObject({ type: 'item.create', collides: true });
+    d.apply(create(B));
+    expect(d.item(B)?.collides).toBeUndefined();
+    d.apply({ type: 'group.create', groupId: G, memberIds: [B], collides: true });
+    expect(d.apply({ type: 'group.delete', groupId: G })).toMatchObject({ type: 'group.create', collides: true });
+  });
+
   it('reports bounds spanning its members', () => {
     const d = doc();
     d.apply(create(A, 0, 0));

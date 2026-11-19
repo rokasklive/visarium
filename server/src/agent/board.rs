@@ -18,6 +18,7 @@ pub struct Group {
     pub label: Option<String>,
     pub frame: bool,
     pub ref_no: i64,
+    pub collides: bool,
 }
 
 impl Group {
@@ -136,8 +137,8 @@ impl BoardData {
             .fetch_all(&mut *tx)
             .await
             .map_err(db_fail)?;
-        let groups: Vec<(String, Option<String>, bool, i64)> = sqlx::query_as(
-            "SELECT id, label, frame, ref_no FROM canvas_group WHERE canvas_id = ? ORDER BY ref_no",
+        let groups: Vec<(String, Option<String>, bool, i64, bool)> = sqlx::query_as(
+            "SELECT id, label, frame, ref_no, collides FROM canvas_group WHERE canvas_id = ? ORDER BY ref_no",
         )
         .bind(&id)
         .fetch_all(&mut *tx)
@@ -183,11 +184,12 @@ impl BoardData {
             items,
             groups: groups
                 .into_iter()
-                .map(|(id, label, frame, ref_no)| Group {
+                .map(|(id, label, frame, ref_no, collides)| Group {
                     id,
                     label,
                     frame,
                     ref_no,
+                    collides,
                 })
                 .collect(),
             links,
@@ -198,6 +200,15 @@ impl BoardData {
                 .collect(),
             structures,
         })
+    }
+
+    /// Whether the board pushes this item aside: its group's setting, or its
+    /// own when it has none (canvas/collision).
+    pub fn collides(&self, i: &ItemRow) -> bool {
+        match i.group_id.as_deref().and_then(|g| self.groups.iter().find(|x| x.id == g)) {
+            Some(g) => g.collides,
+            None => i.collides,
+        }
     }
 
     pub fn item(&self, id: &str) -> Option<&ItemRow> {

@@ -242,6 +242,44 @@ impl Drop for TempFile {
     }
 }
 
+/// An upload on its way in, from any source: written, hashed and counted as
+/// it arrives, then stored as an asset like every other (same bytes, same
+/// asset). Spooled inside the assets root, so storing it is a rename.
+pub struct Spool {
+    temp: TempFile,
+    file: tokio::fs::File,
+    hasher: Sha256,
+    size: usize,
+}
+
+impl Spool {
+    pub async fn new(app: &AppState) -> ApiResult<Self> {
+        let temp = TempFile(app.config.assets.join(format!(".incoming-{}.tmp", Uuid::new_v4().simple())));
+        let file = tokio::fs::File::create(&temp.0).await?;
+        Ok(Spool { temp, file, hasher: Sha256::new(), size: 0 })
+    }
+
+    pub async fn push(&mut self, chunk: &[u8]) -> ApiResult<()> {
+        self.size += chunk.len();
+        if self.size > MAX_UPLOAD_BYTES {
+            return Err(ApiError::new(StatusCode::PAYLOAD_TOO_LARGE, "an image may be at most 200 MB"));
+        }
+        self.hasher.update(chunk);
+        self.file.write_all(chunk).await?;
+        Ok(())
+    }
+
+    /// Stores what arrived as an asset, or says why it is not an image.
+    pub async fn store(mut self, app: &AppState, filename: Option<String>, uploader: &str) -> ApiResult<Asset> {
+        self.file.flush().await?;
+        if self.size == 0 {
+            return Err(unreadable("the upload was empty"));
+        }
+        let hash = hex::encode(self.hasher.finalize());
+        ingest(app, &self.temp.0, &hash, self.size as i64, filename, uploader).await
+    }
+}
+
 async fn upload(
     State(app): State<AppState>,
     axum::Extension(me): axum::Extension<User>,
@@ -253,26 +291,11 @@ async fn upload(
             continue;
         }
         let filename = field.file_name().map(str::to_string);
-        // Spooled inside the assets root, so storing it is a rename, not a copy.
-        let spooled = TempFile(app.config.assets.join(format!(".incoming-{}.tmp", Uuid::new_v4().simple())));
-        let mut file = tokio::fs::File::create(&spooled.0).await?;
-        let mut hasher = Sha256::new();
-        let mut size = 0usize;
+        let mut spool = Spool::new(&app).await?;
         while let Some(chunk) = field.chunk().await.map_err(bad)? {
-            size += chunk.len();
-            if size > MAX_UPLOAD_BYTES {
-                return Err(ApiError::new(StatusCode::PAYLOAD_TOO_LARGE, "an image may be at most 200 MB"));
-            }
-            hasher.update(&chunk);
-            file.write_all(&chunk).await?;
+            spool.push(&chunk).await?;
         }
-        file.flush().await?;
-        drop(file);
-        if size == 0 {
-            return Err(unreadable("the upload was empty"));
-        }
-        let hash = hex::encode(hasher.finalize());
-        let asset = ingest(&app, &spooled.0, &hash, size as i64, filename, &me.id).await?;
+        let asset = spool.store(&app, filename, &me.id).await?;
         return Ok((StatusCode::CREATED, axum::Json(AssetView::of(asset, None))));
     }
     Err(ApiError::bad_request("a multipart field named 'file' is required"))
@@ -661,10 +684,10 @@ async fn delete(
                 _ => by_board.push((board, vec![op])),
             }
         }
-        for (board, ops) in by_board {
+        for (board, mut ops) in by_board {
             let board = Uuid::parse_str(&board).unwrap();
             let actor = boards::Actor { user_id: me.id.clone(), agent: None };
-            let (from, to) = boards::apply(&app, &board, &ops, &actor).await?;
+            let (from, to) = boards::apply(&app, &board, &mut ops, &actor).await?;
             app.rooms.announce(&board, None, from, to, &ops);
         }
     } else {

@@ -227,6 +227,7 @@ export class CanvasDocument {
           // A created row starts at revision 0 on the server too.
           revision: 0,
           ...(body.groupId !== undefined ? { groupId: body.groupId } : {}),
+          ...(body.collides ? { collides: true } : {}),
         });
         return { type: 'item.delete', itemId: body.itemId };
       }
@@ -251,6 +252,7 @@ export class CanvasDocument {
           appearance: existing.appearance,
           ...(isFullCrop(existing.crop) ? {} : { crop: existing.crop }),
           ...(existing.groupId !== undefined ? { groupId: existing.groupId } : {}),
+          ...(existing.collides ? { collides: true } : {}),
         };
       }
 
@@ -305,6 +307,7 @@ export class CanvasDocument {
           memberIds: [...body.memberIds],
           ...(body.label !== undefined ? { label: body.label } : {}),
           ...(body.frame !== undefined ? { frame: body.frame } : {}),
+          ...(body.collides ? { collides: true } : {}),
         });
         for (const id of body.memberIds) {
           const item = this.#items.get(id);
@@ -330,6 +333,7 @@ export class CanvasDocument {
           memberIds: existing.memberIds,
           ...(existing.label !== undefined ? { label: existing.label } : {}),
           ...(existing.frame !== undefined ? { frame: existing.frame } : {}),
+          ...(existing.collides ? { collides: true } : {}),
         };
       }
 
@@ -369,6 +373,21 @@ export class CanvasDocument {
         // The same absolute-state rule as `group.label`: a group that had no
         // flag inverts to `false`, not to a field nobody set.
         return { type: 'group.frame', groupId: body.groupId, frame: existing.frame ?? false };
+      }
+
+      case 'item.collides': {
+        const existing = this.#items.get(body.itemId);
+        if (!existing) return undefined;
+        // Not `#put`: bounds are unchanged. Absolute state; absent inverts to false.
+        this.#items.set(body.itemId, this.#bumped(existing, { collides: body.collides }));
+        return { type: 'item.collides', itemId: body.itemId, collides: existing.collides ?? false };
+      }
+
+      case 'group.collides': {
+        const existing = this.#groups.get(body.groupId);
+        if (!existing) return undefined;
+        this.#groups.set(body.groupId, { ...existing, collides: body.collides });
+        return { type: 'group.collides', groupId: body.groupId, collides: existing.collides ?? false };
       }
 
       case 'item.source': {

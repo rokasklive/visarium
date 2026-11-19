@@ -9,7 +9,7 @@ use crate::AppState;
 use crate::NOW;
 use crate::agent::board::{Anchored, BoardData, Fail, db_fail, find_board, short_time};
 use crate::agent::diagram::Extracted;
-use crate::agent::place::{self, Rect, Side};
+use crate::agent::place::{self, LinkEnd, Rect, Scene, Segment, Side};
 use crate::agent::read::describe;
 use crate::agent::{Caller, Out, arg_i64, arg_str, opt_str};
 use crate::boards::{self, Anchor, Content, ItemRow, Op, Task, Transform};
@@ -34,6 +34,7 @@ pub async fn run(app: &AppState, caller: &Caller, tool: &str, args: &Value) -> R
         "link" => link(app, caller, args).await?,
         "unlink" => unlink(app, caller, args).await?,
         "arrange" => arrange(app, caller, args).await?,
+        "group_create" => group_create(app, caller, args).await?,
         _ => item_delete(app, caller, args).await?,
     };
     remember(app, caller, args, &out).await?;
@@ -87,12 +88,19 @@ pub async fn remember(app: &AppState, caller: &Caller, args: &Value, out: &Out) 
 
 /// Stamps, applies and announces a batch as the agent: the same path as a
 /// person's batch through `POST /boards/{id}/operations`.
-async fn commit(
+async fn commit(app: &AppState, caller: &Caller, board: Uuid, ops: Vec<Op>) -> Result<i64, Fail> {
+    Ok(commit_pushing(app, caller, board, ops).await?.0)
+}
+
+/// [`commit`], also returning the ids of items the board pushed aside
+/// (canvas/collision): the ops the server appended after the batch.
+async fn commit_pushing(
     app: &AppState,
     caller: &Caller,
     board: Uuid,
     mut ops: Vec<Op>,
-) -> Result<i64, Fail> {
+) -> Result<(i64, Vec<String>), Fail> {
+    let sent = ops.len();
     let at: String = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT {NOW}")))
         .fetch_one(&app.db)
         .await
@@ -101,11 +109,13 @@ async fn commit(
     for op in &mut ops {
         op.stamp(&actor, &at);
     }
-    let (from, to) = boards::apply(app, &board, &ops, &actor)
+    let (from, to) = boards::apply(app, &board, &mut ops, &actor)
         .await
         .map_err(|e| e.detail)?;
     app.rooms.announce(&board, None, from, to, &ops);
-    Ok(to)
+    let mut pushed: Vec<String> = ops[sent..].iter().filter_map(|op| op.item_id()).map(|i| i.to_string()).collect();
+    pushed.dedup();
+    Ok((to, pushed))
 }
 
 // --- placement ------------------------------------------------------------------
@@ -115,6 +125,8 @@ struct Where {
     target: Rect,
     group: Option<String>,
     said: String,
+    /// The target's ref (`d1`, `g2`), or empty when none was named.
+    name: String,
 }
 
 /// `near`/`below`/`right_of`/`in` from the arguments, or beside what changed
@@ -150,6 +162,7 @@ async fn whereabouts(app: &AppState, b: &BoardData, args: &Value) -> Result<Wher
                 target,
                 group,
                 said: format!("{word} {}", g.short_ref()),
+                name: g.short_ref(),
             });
         }
         if side == Side::In {
@@ -163,6 +176,7 @@ async fn whereabouts(app: &AppState, b: &BoardData, args: &Value) -> Result<Wher
             target: Rect::of(item),
             group: None,
             said: format!("{word} {}", item.short_ref()),
+            name: item.short_ref(),
         });
     }
     // Nowhere named: beside the most recently changed item that still exists.
@@ -181,6 +195,7 @@ async fn whereabouts(app: &AppState, b: &BoardData, args: &Value) -> Result<Wher
             target: Rect::of(i),
             group: None,
             said: format!("beside {} (changed last)", i.short_ref()),
+            name: i.short_ref(),
         },
         None => Where {
             side: Side::Near,
@@ -192,16 +207,123 @@ async fn whereabouts(app: &AppState, b: &BoardData, args: &Value) -> Result<Wher
             },
             group: None,
             said: "at the centre of the empty board".into(),
+            name: String::new(),
         },
     })
 }
 
-fn obstacles(b: &BoardData, except: &[&str]) -> Vec<Rect> {
-    b.items
+/// The board as placement sees it (agents/placement, design D2): what nothing
+/// may overlap, what a new line may cross, and the links that count.
+struct Layout {
+    /// Items, and each group's outline as one body, minus `inside`'s.
+    obstacles: Vec<Rect>,
+    /// Every item, with its ref, for crossings.
+    items: Vec<(Rect, String)>,
+    /// Group outlines with their refs, for reporting what a line crosses.
+    outlines: Vec<(Rect, String)>,
+    /// Links with at least one collision-on end.
+    segments: Vec<Segment>,
+}
+
+fn layout(b: &BoardData, except: &[&str], inside: Option<&str>) -> Layout {
+    let pad = crate::collision::GROUP_PAD;
+    let mut outlines = vec![];
+    for g in &b.groups {
+        let members: Vec<Rect> =
+            b.items.iter().filter(|i| i.group_id.as_deref() == Some(g.id.as_str()) && !except.contains(&i.id.as_str())).map(Rect::of).collect();
+        if let Some(r) = Rect::around(&members) {
+            outlines.push((Rect { w: r.w + 2.0 * pad, h: r.h + 2.0 * pad, ..r }, g.short_ref(), g.id.clone()));
+        }
+    }
+    let items: Vec<(Rect, String)> =
+        b.items.iter().filter(|i| !except.contains(&i.id.as_str())).map(|i| (Rect::of(i), i.short_ref())).collect();
+    let mut obstacles: Vec<Rect> = items.iter().map(|(r, _)| *r).collect();
+    obstacles.extend(outlines.iter().filter(|o| Some(o.2.as_str()) != inside).map(|o| o.0));
+    let segments = b
+        .links
         .iter()
-        .filter(|i| !except.contains(&i.id.as_str()))
-        .map(Rect::of)
+        .filter_map(|l| {
+            let (from, to) = (b.item(&l.from_item)?, b.item(&l.to_item)?);
+            if except.contains(&from.id.as_str()) || except.contains(&to.id.as_str()) || !(b.collides(from) || b.collides(to)) {
+                return None;
+            }
+            Some(place::segment(
+                &place::anchor_box(from, l.from_element.as_deref()),
+                &place::anchor_box(to, l.to_element.as_deref()),
+            ))
+        })
+        .collect();
+    Layout { obstacles, items, outlines: outlines.into_iter().map(|(r, n, _)| (r, n)).collect(), segments }
+}
+
+/// The far end of each link an existing item has, with how to name it.
+fn link_ends(b: &BoardData, item: &ItemRow) -> Vec<(LinkEnd, String)> {
+    b.links
+        .iter()
+        .filter_map(|l| {
+            let (other, element) = if l.from_item == item.id {
+                (b.item(&l.to_item)?, l.to_element.as_deref())
+            } else if l.to_item == item.id {
+                (b.item(&l.from_item)?, l.from_element.as_deref())
+            } else {
+                return None;
+            };
+            Some((
+                LinkEnd { anchor: place::anchor_box(other, element), owner: Rect::of(other) },
+                b.anchor_text(&other.id, element),
+            ))
+        })
         .collect()
+}
+
+/// Where a placed item went and how its links lie, in one line
+/// (agents/placement, design D8): "n7 right of d1 · link to d1#Connect 96px,
+/// crosses nothing".
+fn placed_line(who: &str, spot: &Rect, at: &Where, ends: &[(LinkEnd, String)], l: &Layout) -> String {
+    let mut line = if at.name.is_empty() || at.side == Side::In {
+        format!("{who} {}", at.said)
+    } else if !ends.is_empty() && place::gap_between(spot, &at.target) > 4.0 * place::GRID {
+        format!("{who} placed by its links, away from {}", at.name)
+    } else {
+        format!("{who} {} {}", place::side_of(spot, &at.target), at.name)
+    };
+    let mut crossing = false;
+    for (end, label) in ends {
+        let s = place::segment(spot, &end.anchor);
+        let mut crossed: Vec<String> = l
+            .items
+            .iter()
+            .filter(|(r, _)| *r != end.owner && r != spot && place::hits(&s, r))
+            .map(|(_, n)| n.clone())
+            .collect();
+        // A frame counts when the line enters it from outside, not when it
+        // runs between two of its own members.
+        crossed.extend(
+            l.outlines
+                .iter()
+                .filter(|(r, _)| place::hits(&s, r) && !end.owner.overlaps(r, 0.0) && !spot.overlaps(r, 0.0))
+                .map(|(_, n)| n.clone()),
+        );
+        let lines = l.segments.iter().filter(|o| place::crosses(&s, o)).count();
+        if lines > 0 {
+            crossed.push(if lines == 1 { "1 link".into() } else { format!("{lines} links") });
+        }
+        crossing |= !crossed.is_empty();
+        line.push_str(&format!(
+            " · link to {label} {}px, crosses {}",
+            place::length(&s).round(),
+            if crossed.is_empty() { "nothing".into() } else { crossed.join(", ") }
+        ));
+    }
+    if crossing {
+        line.push_str(" (no nearby spot was free of crossings)");
+    }
+    line
+}
+
+fn moved_aside(b: &BoardData, pushed: &[String]) -> String {
+    let refs: Vec<String> = pushed.iter().filter_map(|id| b.item(id)).map(|i| i.short_ref()).collect();
+    if refs.is_empty() { String::new() } else { format!(" Moved aside: {}.", refs.join(", ")) }
 }
 
 fn transform(r: Rect) -> Transform {
@@ -356,6 +478,14 @@ async fn item_create(app: &AppState, caller: &Caller, args: &Value) -> Result<Ou
     let board = find_board(&app.db, arg_str(args, "board")?).await?;
     let b = BoardData::load(&app.db, &board).await?;
     let kind = arg_str(args, "kind")?;
+    // The link is validated before anything is created: nothing or everything.
+    let link = match args.get("link").filter(|l| l.is_object()) {
+        Some(l) => {
+            let (to, element) = b.resolve_anchor(arg_str(l, "to")?, true)?;
+            Some((link_type(l, "type")?, anchor(to, element)))
+        }
+        None => None,
+    };
     let (content, size) = match kind {
         "note" => {
             let source = arg_str(args, "source")?;
@@ -426,22 +556,63 @@ async fn item_create(app: &AppState, caller: &Caller, args: &Value) -> Result<Ou
                 place::estimate("checklist", "", texts.len()),
             )
         }
+        "image" => {
+            let uploader = caller.user.id.clone();
+            let asset = match (opt_str(args, "url"), opt_str(args, "data")) {
+                (Some(url), None) => crate::agent::import::from_url(app, url, &uploader).await?,
+                (None, Some(data)) => {
+                    let name = opt_str(args, "filename").map(str::to_string);
+                    crate::agent::import::from_data(app, data, name, &uploader).await?
+                }
+                _ => return Err("An image takes either url (http or https) or data (base64), not both and not neither.".into()),
+            };
+            // Shown at its own size, up to a width that suits a board.
+            let w = (asset.width as f64).min(640.0);
+            let h = (w * asset.height as f64 / asset.width as f64).max(1.0);
+            (
+                Content {
+                    kind: Some("image".into()),
+                    asset: Some(boards::AssetRef {
+                        asset_id: Uuid::parse_str(&asset.id).ok(),
+                        intrinsic_width: asset.width,
+                        intrinsic_height: asset.height,
+                        mime_type: Some(asset.mime_type.clone()),
+                    }),
+                    lang: None,
+                    source: None,
+                    title: None,
+                    tasks: None,
+                },
+                (w, h),
+            )
+        }
         other => {
             return Err(format!(
-                "kind must be note, diagram or checklist, not '{other}'. Images are added by people."
+                "kind must be note, diagram, checklist or image, not '{other}'."
             ));
         }
     };
-    // The link is validated before anything is created: nothing or everything.
-    let link = match args.get("link").filter(|l| l.is_object()) {
-        Some(l) => {
-            let (to, element) = b.resolve_anchor(arg_str(l, "to")?, true)?;
-            Some((link_type(l, "type")?, anchor(to, element)))
-        }
-        None => None,
-    };
     let at = whereabouts(app, &b, args).await?;
-    let spot = place::place(at.target, at.side, size, &obstacles(&b, &[]));
+    let l = layout(&b, &[], at.group.as_deref());
+    let ends: Vec<(LinkEnd, String)> = match &link {
+        Some((_, to)) => {
+            let other = b.item(&to.item_id.to_string()).ok_or("The link's other end is gone.")?;
+            vec![(
+                LinkEnd { anchor: place::anchor_box(other, to.element.as_deref()), owner: Rect::of(other) },
+                b.anchor_text(&other.id, to.element.as_deref()),
+            )]
+        }
+        None => vec![],
+    };
+    let rects: Vec<Rect> = l.items.iter().map(|(r, _)| *r).collect();
+    let scene = Scene { obstacles: &l.obstacles, items: &rects, segments: &l.segments, group: None };
+    let spot = place::place_linked(
+        at.target,
+        at.side,
+        size,
+        &scene,
+        &ends.iter().map(|(e, _)| *e).collect::<Vec<_>>(),
+    );
     let item_id = Uuid::now_v7();
     let z = b.items.iter().map(|i| i.z).fold(0.0, f64::max) + 1.0;
     let mut ops = vec![Op::ItemCreate {
@@ -452,6 +623,8 @@ async fn item_create(app: &AppState, caller: &Caller, args: &Value) -> Result<Ou
         group_id: None,
         appearance: None,
         crop: None,
+        // An agent's items are pushed aside by default (canvas/collision).
+        collides: Some(args.get("collides").and_then(Value::as_bool).unwrap_or(true)),
     }];
     if let Some(g) = &at.group {
         ops.push(Op::GroupMembers {
@@ -473,16 +646,14 @@ async fn item_create(app: &AppState, caller: &Caller, args: &Value) -> Result<Ou
             at: None,
         });
     }
-    let revision = commit(app, caller, b.id, ops).await?;
+    let (revision, pushed) = commit_pushing(app, caller, b.id, ops).await?;
     let after = reload(app, &b).await?;
     let made = after
         .item(&item_id.to_string())
         .ok_or("The item was created but could not be read back.")?;
     let mut text = format!(
-        "Created {} ({}) {}.",
-        made.short_ref(),
-        after.kind_of(made),
-        at.said
+        "Created {}.",
+        placed_line(&format!("{} ({})", made.short_ref(), after.kind_of(made)), &spot, &at, &ends, &l)
     );
     if let Some((ty, to)) = &link {
         text.push_str(&format!(
@@ -524,6 +695,7 @@ async fn item_create(app: &AppState, caller: &Caller, args: &Value) -> Result<Ou
                 .join(", ")
         ));
     }
+    text.push_str(&moved_aside(&after, &pushed));
     text.push_str(&format!(" Board is at rev {revision}."));
     let made_ref = made.short_ref();
     Ok(Out::text(text)
@@ -979,6 +1151,155 @@ async fn unlink(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, Fa
     .touch(b.id, Some(a.id.clone()), "editing"))
 }
 
+/// What a block must keep clear of because it never moves: collision-off
+/// items, and the outlines of collision-off groups, other than `except`.
+fn fixed_bodies(b: &BoardData, except: &[&str]) -> Vec<Rect> {
+    let pad = crate::collision::GROUP_PAD;
+    let mut out: Vec<Rect> = b.items.iter().filter(|i| !except.contains(&i.id.as_str()) && !b.collides(i)).map(Rect::of).collect();
+    for g in b.groups.iter().filter(|g| !g.collides) {
+        let members: Vec<Rect> =
+            b.items.iter().filter(|i| i.group_id.as_deref() == Some(g.id.as_str()) && !except.contains(&i.id.as_str())).map(Rect::of).collect();
+        if let Some(r) = Rect::around(&members) {
+            out.push(Rect { w: r.w + 2.0 * pad, h: r.h + 2.0 * pad, ..r });
+        }
+    }
+    out
+}
+
+/// Items in reading order: top to bottom, then left to right.
+fn reading_order<'a>(items: &[&'a ItemRow]) -> Vec<&'a ItemRow> {
+    let mut v = items.to_vec();
+    v.sort_by(|a, b| {
+        let (ra, rb) = (Rect::of(a), Rect::of(b));
+        place::snap(ra.top()).total_cmp(&place::snap(rb.top())).then(ra.left().total_cmp(&rb.left()))
+    });
+    v
+}
+
+/// Transforms that pack `items` into one block (design D6), placed by
+/// `near`/`below`/`right_of`/`in` when one is named, else where the items
+/// already start. Returns the operations, a description, and the group named
+/// by `in`, if any.
+async fn packed(app: &AppState, b: &BoardData, items: &[&ItemRow], args: &Value, how: place::Pack) -> Result<(Vec<Op>, String, Option<String>), Fail> {
+    let gap = args.get("gap").and_then(Value::as_f64).unwrap_or(place::GAP).clamp(0.0, 480.0);
+    let ordered = reading_order(items);
+    let sizes: Vec<(f64, f64)> = ordered.iter().map(|i| (i.width, i.height)).collect();
+    let (offsets, (w, h)) = place::pack(&sizes, how, gap);
+    let ids: Vec<&str> = items.iter().map(|i| i.id.as_str()).collect();
+    let named = ["near", "below", "right_of", "in"].iter().any(|k| opt_str(args, k).is_some());
+    let (block, said, group) = if named {
+        let at = whereabouts(app, b, args).await?;
+        let l = layout(b, &ids, at.group.as_deref());
+        (place::place(at.target, at.side, (w, h), &l.obstacles), at.said, at.group)
+    } else {
+        let around = Rect::around(&items.iter().map(|i| Rect::of(i)).collect::<Vec<_>>()).unwrap();
+        let (left, top) = (place::snap(around.left()), place::snap(around.top()));
+        let natural = Rect { x: left + w / 2.0, y: top + h / 2.0, w, h };
+        // Collision-on neighbours are pushed aside by the board; what never
+        // moves has to be kept clear of here, or the block would sit on it.
+        let fixed = fixed_bodies(b, &ids);
+        if fixed.iter().any(|o| natural.overlaps(o, place::GAP / 2.0)) {
+            (place::place(natural, Side::Near, (w, h), &fixed), "beside where they were".into(), None)
+        } else {
+            (natural, "where they were".into(), None)
+        }
+    };
+    let shape = match how {
+        place::Pack::Row => "in a row".to_string(),
+        place::Pack::Column => "in a column".to_string(),
+        place::Pack::Grid(c) => format!("in a grid of {c} columns"),
+    };
+    let ops = ordered
+        .iter()
+        .zip(offsets)
+        .map(|(i, (dx, dy))| Op::ItemTransform {
+            item_id: Uuid::parse_str(&i.id).unwrap(),
+            transform: Transform { rotation: i.rotation, ..transform(Rect { x: block.left() + dx, y: block.top() + dy, w: i.width, h: i.height }) },
+            crop: None,
+        })
+        .collect();
+    Ok((ops, format!("laid out {shape} {said}"), group))
+}
+
+fn pack_of(args: &Value, n: usize) -> Result<Option<place::Pack>, Fail> {
+    let columns = args.get("columns").and_then(Value::as_u64).map(|c| c.max(1) as usize);
+    Ok(match opt_str(args, "layout") {
+        None => None,
+        Some("row") => Some(place::Pack::Row),
+        Some("column") => Some(place::Pack::Column),
+        Some("grid") => Some(place::Pack::Grid(columns.unwrap_or_else(|| (n as f64).sqrt().ceil() as usize))),
+        Some(other) => return Err(format!("layout is row, column or grid, not '{other}'.")),
+    })
+}
+
+/// Turns collision on or off for items, when `collides` is given.
+fn collision_ops(args: &Value, items: &[&ItemRow], said: &mut Vec<String>) -> Vec<Op> {
+    let Some(on) = args.get("collides").and_then(Value::as_bool) else { return vec![] };
+    said.push(format!("collision {}", if on { "on" } else { "off" }));
+    items.iter().map(|i| Op::ItemCollides { item_id: Uuid::parse_str(&i.id).unwrap(), collides: on }).collect()
+}
+
+/// Groups or frames items under a title and packs them together
+/// (agents/board-editing), then lets the board push aside what the block
+/// now covers.
+async fn group_create(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, Fail> {
+    let board = find_board(&app.db, arg_str(args, "board")?).await?;
+    let b = BoardData::load(&app.db, &board).await?;
+    let refs: Vec<&str> = args.get("refs").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+    if refs.is_empty() {
+        return Err("refs is required: the items to group, e.g. [\"i1\", \"i2\", \"n4\"].".into());
+    }
+    let items: Vec<&ItemRow> = refs.iter().map(|r| b.resolve_item(r)).collect::<Result<_, _>>()?;
+    let ids: Vec<&str> = items.iter().map(|i| i.id.as_str()).collect();
+    let mut ops = vec![];
+    // Out of any group they were in first, so every client's groups agree.
+    let mut left: Vec<String> = vec![];
+    let mut old: Vec<&str> = items.iter().filter_map(|i| i.group_id.as_deref()).collect();
+    old.sort();
+    old.dedup();
+    for g in old {
+        let gone: Vec<String> = items.iter().filter(|i| i.group_id.as_deref() == Some(g)).map(|i| i.short_ref()).collect();
+        if let Some(group) = b.groups.iter().find(|x| x.id == g) {
+            left.push(format!("{} left {}", gone.join(", "), group.short_ref()));
+        }
+        ops.push(Op::GroupMembers { group_id: Uuid::parse_str(g).unwrap(), member_ids: Some(group_members(&b, g, &[], &ids)) });
+    }
+    let how = pack_of(args, items.len())?.unwrap_or(place::Pack::Grid((items.len() as f64).sqrt().ceil() as usize));
+    let mut args = args.clone();
+    args.as_object_mut().map(|o| o.remove("in"));
+    let (moves, said, _) = packed(app, &b, &items, &args, how).await?;
+    ops.extend(moves);
+    let group_id = Uuid::now_v7();
+    let title = opt_str(&args, "title").map(str::to_string);
+    let frame = args.get("frame").and_then(Value::as_bool).unwrap_or(true);
+    ops.push(Op::GroupCreate {
+        group_id,
+        member_ids: Some(ids.iter().filter_map(|i| Uuid::parse_str(i).ok()).collect()),
+        label: title.clone(),
+        frame: Some(frame),
+        collides: Some(args.get("collides").and_then(Value::as_bool).unwrap_or(true)),
+    });
+    let (revision, pushed) = commit_pushing(app, caller, b.id, ops).await?;
+    let after = reload(app, &b).await?;
+    let g = after.groups.iter().find(|g| g.id == group_id.to_string()).ok_or("The group was made but could not be read back.")?;
+    let names: Vec<String> = items.iter().map(|i| i.short_ref()).collect();
+    let mut text = format!(
+        "Grouped {} as {}{}{}, {said}.",
+        names.join(", "),
+        g.short_ref(),
+        title.map(|t| format!(" \"{t}\"")).unwrap_or_default(),
+        if frame { " (framed)" } else { "" }
+    );
+    for l in left {
+        text.push_str(&format!(" {l}."));
+    }
+    text.push_str(&moved_aside(&after, &pushed));
+    let g_ref = g.short_ref();
+    Ok(Out::text(format!("{text} Board at rev {revision}."))
+        .with(json!({ "ref": g_ref, "boardRevision": revision }))
+        .touch(b.id, items.first().map(|i| i.id.clone()), "editing"))
+}
+
 async fn arrange(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, Fail> {
     let board = find_board(&app.db, arg_str(args, "board")?).await?;
     let b = BoardData::load(&app.db, &board).await?;
@@ -997,6 +1318,8 @@ async fn arrange(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, F
     let ids: Vec<&str> = items.iter().map(|i| i.id.as_str()).collect();
     let mut ops = vec![];
     let mut said = vec![];
+    let mut placed: Vec<String> = vec![];
+    ops.extend(collision_ops(args, &items, &mut said));
     if args.get("out_of_group").and_then(Value::as_bool) == Some(true) {
         let mut groups: Vec<&str> = items.iter().filter_map(|i| i.group_id.as_deref()).collect();
         groups.dedup();
@@ -1011,12 +1334,27 @@ async fn arrange(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, F
     let named = ["near", "below", "right_of", "in"]
         .iter()
         .any(|k| opt_str(args, k).is_some());
-    if named {
+    if let Some(how) = pack_of(args, items.len())? {
+        let (moves, what, group) = packed(app, &b, &items, args, how).await?;
+        ops.extend(moves);
+        if let Some(g) = &group {
+            let add: Vec<String> = ids.iter().map(|s| s.to_string()).collect();
+            ops.push(Op::GroupMembers {
+                group_id: Uuid::parse_str(g).unwrap(),
+                member_ids: Some(group_members(&b, g, &add, &ids)),
+            });
+        }
+        said.push(what);
+    } else if named {
         let at = whereabouts(app, &b, args).await?;
-        let mut taken = obstacles(&b, &ids);
+        let l = layout(&b, &ids, at.group.as_deref());
+        let mut taken = l.obstacles.clone();
+        let rects: Vec<Rect> = l.items.iter().map(|(r, _)| *r).collect();
         let mut target = at.target;
         for i in &items {
-            let spot = place::place(
+            let ends = link_ends(&b, i);
+            let scene = Scene { obstacles: &taken, items: &rects, segments: &l.segments, group: None };
+            let spot = place::place_linked(
                 target,
                 if at.side == Side::Near && target != at.target {
                     Side::Below
@@ -1024,8 +1362,10 @@ async fn arrange(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, F
                     at.side
                 },
                 (i.width, i.height),
-                &taken,
+                &scene,
+                &ends.iter().map(|(e, _)| *e).collect::<Vec<_>>(),
             );
+            placed.push(placed_line(&i.short_ref(), &spot, &at, &ends, &l));
             taken.push(spot);
             // The next item goes after this one, so a set stays together.
             if at.side != Side::In {
@@ -1051,15 +1391,16 @@ async fn arrange(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, F
         said.push(format!("moved {}", at.said));
     }
     if ops.is_empty() {
-        return Err("Say where: near, below, right_of or in — or out_of_group: true.".into());
+        return Err("Say where: near, below, right_of or in, a layout, collides — or out_of_group: true.".into());
     }
-    let revision = commit(app, caller, b.id, ops).await?;
+    let (revision, pushed) = commit_pushing(app, caller, b.id, ops).await?;
     let names: Vec<String> = items.iter().map(|i| i.short_ref()).collect();
-    Ok(Out::text(format!(
-        "{}: {}. Board at rev {revision}.",
-        names.join(", "),
-        said.join(", ")
-    ))
+    let mut text = format!("{}: {}.", names.join(", "), said.join(", "));
+    for p in &placed {
+        text.push_str(&format!(" {p}."));
+    }
+    text.push_str(&moved_aside(&b, &pushed));
+    Ok(Out::text(format!("{text} Board at rev {revision}."))
     .with(json!({ "boardRevision": revision }))
     .touch(b.id, items.first().map(|i| i.id.clone()), "editing"))
 }

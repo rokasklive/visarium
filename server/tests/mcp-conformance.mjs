@@ -29,7 +29,7 @@ assert.match(client.getInstructions() ?? '', /describes/);
 const { tools } = await client.listTools();
 const names = tools.map((t) => t.name).sort();
 assert.deepEqual(names, [
-  'arrange', 'board_read', 'changes', 'desk', 'item_create', 'item_delete', 'item_edit',
+  'arrange', 'board_read', 'changes', 'desk', 'group_create', 'item_create', 'item_delete', 'item_edit',
   'item_read', 'item_view', 'link', 'search', 'tasks', 'trace', 'unlink',
 ]);
 

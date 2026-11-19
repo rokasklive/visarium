@@ -146,6 +146,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/boards/{id}/items/{item}/elements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Report where a diagram's named elements are drawn, for its current revision */
+        put: operations["elementBoxes"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/boards/{id}/operations": {
         parameters: {
             query?: never;
@@ -570,6 +587,7 @@ export interface components {
             memberIds?: string[];
             label?: string;
             frame?: boolean;
+            collides?: boolean;
         } & {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -653,12 +671,35 @@ export interface components {
             groupId?: string;
             appearance?: components["schemas"]["Appearance"];
             crop?: components["schemas"]["Crop"];
+            collides?: boolean;
         } & {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             type: "item.create";
+        };
+        ItemCollides: Omit<components["schemas"]["CanvasOperationBody"], "type"> & {
+            /** Format: uuid */
+            itemId?: string;
+            collides?: boolean;
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "item.collides";
+        };
+        GroupCollides: Omit<components["schemas"]["CanvasOperationBody"], "type"> & {
+            /** Format: uuid */
+            groupId?: string;
+            collides?: boolean;
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "group.collides";
         };
         ItemDelete: Omit<components["schemas"]["CanvasOperationBody"], "type"> & {
             /** Format: uuid */
@@ -810,7 +851,7 @@ export interface components {
             operationId?: string;
             /** Format: int64 */
             baseRevision?: number;
-            body?: components["schemas"]["GroupCreate"] | components["schemas"]["GroupDelete"] | components["schemas"]["GroupFrame"] | components["schemas"]["GroupLabel"] | components["schemas"]["GroupMembers"] | components["schemas"]["ItemAppearance"] | components["schemas"]["ItemContent"] | components["schemas"]["ItemCreate"] | components["schemas"]["ItemDelete"] | components["schemas"]["ItemTransform"] | components["schemas"]["ItemZ"] | components["schemas"]["ItemSource"] | components["schemas"]["ChecklistTitle"] | components["schemas"]["TaskAdd"] | components["schemas"]["TaskSet"] | components["schemas"]["TaskRemove"] | components["schemas"]["LinkAdd"] | components["schemas"]["LinkSet"] | components["schemas"]["LinkDelete"];
+            body?: components["schemas"]["GroupCreate"] | components["schemas"]["GroupDelete"] | components["schemas"]["GroupFrame"] | components["schemas"]["GroupCollides"] | components["schemas"]["ItemCollides"] | components["schemas"]["GroupLabel"] | components["schemas"]["GroupMembers"] | components["schemas"]["ItemAppearance"] | components["schemas"]["ItemContent"] | components["schemas"]["ItemCreate"] | components["schemas"]["ItemDelete"] | components["schemas"]["ItemTransform"] | components["schemas"]["ItemZ"] | components["schemas"]["ItemSource"] | components["schemas"]["ChecklistTitle"] | components["schemas"]["TaskAdd"] | components["schemas"]["TaskSet"] | components["schemas"]["TaskRemove"] | components["schemas"]["LinkAdd"] | components["schemas"]["LinkSet"] | components["schemas"]["LinkDelete"];
         };
         Transform: {
             /** Format: double */
@@ -895,6 +936,8 @@ export interface components {
             ref?: string;
             label?: string;
             frame?: boolean;
+            /** @description Collision on: the board pushes the group aside when something overlaps it. */
+            collides?: boolean;
             memberIds?: string[];
         };
         Item: {
@@ -915,6 +958,8 @@ export interface components {
             content?: components["schemas"]["Content"];
             appearance?: components["schemas"]["Appearance"];
             crop?: components["schemas"]["Crop"];
+            /** @description Collision on: the board pushes the item aside when something overlaps it. */
+            collides?: boolean;
         };
         LibraryPage: {
             assets?: components["schemas"]["AssetView"][];
@@ -1270,6 +1315,37 @@ export interface operations {
                 content: {
                     "*/*": components["schemas"]["Applied"];
                 };
+            };
+        };
+    };
+    elementBoxes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                item: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    revision: number;
+                    width: number;
+                    elements: {
+                        [name: string]: [number, number, number, number];
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Stored, or already stored for this revision */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

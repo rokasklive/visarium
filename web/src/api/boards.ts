@@ -139,6 +139,27 @@ export function useBoardDocument(boardId: string, enabled: boolean) {
  * is unaffected: the queue holds operation bodies, not document state, and they
  * are posted after this and land on top.
  */
+/**
+ * Tell the server where a diagram's named elements are drawn, for the item's
+ * current revision (agents/placement). Best effort: a stale or repeated report
+ * is the server's to ignore, and a lost one only means placement aims at the
+ * whole diagram.
+ */
+export async function reportElements(
+  boardId: string,
+  itemId: string,
+  revision: number,
+  width: number,
+  elements: ReadonlyMap<string, { x: number; y: number; width: number; height: number }>,
+): Promise<void> {
+  const boxes: Record<string, [number, number, number, number]> = {};
+  for (const [name, r] of elements) boxes[name] = [r.x, r.y, r.width, r.height];
+  await api.PUT('/api/boards/{id}/items/{item}/elements', {
+    params: { path: { id: boardId, item: itemId } },
+    body: { revision, width, elements: boxes },
+  });
+}
+
 export async function loadSnapshotInto(doc: CanvasDocument, boardId: string): Promise<void> {
   const { data, response } = await api.GET('/api/boards/{id}/snapshot', {
     params: { path: { id: boardId } },
@@ -224,6 +245,7 @@ function toItem(item: components['schemas']['Item']): CanvasItem[] {
       content,
       ...(item.revision !== undefined ? { revision: item.revision } : {}),
       ...(item.groupId ? { groupId: asGroupId(item.groupId) } : {}),
+      ...(item.collides ? { collides: true } : {}),
     },
   ];
 }
@@ -238,6 +260,7 @@ function toGroup(group: components['schemas']['Group']): CanvasGroup[] {
       // Absent on a snapshot from before the flag existed, which means
       // unframed — the backwards-compatible default everywhere.
       ...(group.frame ? { frame: true } : {}),
+      ...(group.collides ? { collides: true } : {}),
     },
   ];
 }

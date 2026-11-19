@@ -208,6 +208,12 @@ export interface CanvasItem {
    * Absent until a snapshot says otherwise; an edit without one is unchecked.
    */
   readonly revision?: number;
+  /**
+   * Collision on: the board pushes this item aside when something overlaps it.
+   * Off or absent: it never moves, though others keep clear of it
+   * (canvas/collision). A group's setting wins for its members.
+   */
+  readonly collides?: boolean;
 }
 
 /**
@@ -255,6 +261,8 @@ export interface CanvasGroup {
    * contour itself is never stored — it is recomputed from member bounds.
    */
   readonly frame?: boolean;
+  /** Collision for the group as one body; see {@link CanvasItem.collides}. */
+  readonly collides?: boolean;
   /** Groups do not nest in v1. See OPEN_QUESTIONS. */
   readonly memberIds: readonly ItemId[];
 }

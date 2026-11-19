@@ -19,6 +19,7 @@ import type {
   ItemId,
   OperationOrigin,
 } from '@visarium/canvas-core';
+import { operations as parseOperations } from './realtime-frames';
 
 /**
  * How long operations accumulate before being sent.
@@ -46,11 +47,21 @@ export interface SyncStatus {
 
 export const SYNCED: SyncStatus = { pending: 0, failing: false };
 
+/**
+ * What a post reached: the revision, and any operations the server appended to
+ * the batch — collision pushes (canvas/collision) the author must apply too,
+ * because the socket only tells everybody else. A bare number is no appended
+ * operations.
+ */
+export type PostResult =
+  | number
+  | { readonly revision: number; readonly pushed: readonly CanvasOperationBody[] };
+
 export type OperationPoster = (
   boardId: string,
   operations: readonly CanvasOperationBody[],
   init?: { keepalive?: boolean; actorId?: string },
-) => Promise<number>;
+) => Promise<PostResult>;
 
 /**
  * The one conversion between canvas-core's operations and the wire.
@@ -119,7 +130,12 @@ export const postOperations: OperationPoster = async (boardId, operations, init)
       response.status,
     );
   }
-  return data.revision;
+  // The server returns the batch it applied, then what it appended. Anything
+  // that fails the socket's validation is dropped whole; the next snapshot
+  // repairs the difference.
+  const extra = (data as { operations?: unknown[] }).operations?.slice(operations.length) ?? [];
+  const pushed = (extra.length ? parseOperations(extra) : []) ?? [];
+  return { revision: data.revision, pushed: pushed as CanvasOperationBody[] };
 };
 
 /** What became of a posted batch. */
@@ -179,6 +195,7 @@ export class BoardSync {
   readonly #onPosted:
     | ((batch: readonly CanvasOperationBody[], outcome: PostOutcome) => void)
     | undefined;
+  readonly #onRemoteChange: () => void;
 
   constructor(options: {
     boardId: string;
@@ -188,7 +205,10 @@ export class BoardSync {
     onStatus?: (status: SyncStatus) => void;
     /** Each batch's fate, for a dev build's operation log. */
     onPosted?: (batch: readonly CanvasOperationBody[], outcome: PostOutcome) => void;
+    /** The document changed under us: the server appended operations to a batch. */
+    onRemoteChange?: () => void;
   }) {
+    this.#onRemoteChange = options.onRemoteChange ?? (() => {});
     this.#onPosted = options.onPosted;
     this.#boardId = options.boardId;
     this.#doc = options.doc;
@@ -315,11 +335,22 @@ export class BoardSync {
     this.#report();
 
     try {
-      const revision = await this.#post(this.#boardId, batch, {
+      const result = await this.#post(this.#boardId, batch, {
         keepalive,
         ...(this.#actorId ? { actorId: this.#actorId } : {}),
       });
+      const { revision, pushed } =
+        typeof result === 'number' ? { revision: result, pushed: [] } : result;
+      // Remote: off the undo stack (undoing a resize leaves what it pushed
+      // where it went) and never posted back. An item edited again since the
+      // batch left keeps the newer, local edit, which is still to be posted.
+      const pending = new Set(this.#queue.map(itemOf));
+      let changed = false;
+      for (const body of pushed) {
+        if (!pending.has(itemOf(body)) && this.#doc.apply(body, 'remote')) changed = true;
+      }
       this.#doc.setRevision(revision);
+      if (changed) this.#onRemoteChange();
       this.#failures = 0;
       this.#onPosted?.(batch, { ok: true, revision });
     } catch (cause) {

@@ -14,6 +14,8 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  collisionBodies,
+  collisionState,
   duplicateSelection,
   labelBodies,
   opacityBodies,
@@ -285,6 +287,7 @@ describe('the order of the tools', () => {
       'Take out',
       'Label',
       'Frame',
+      'Collision',
       'Flip H',
       'Flip V',
       'Crop',
@@ -395,5 +398,43 @@ describe('the frame toggle', () => {
       expect(html).toContain('text-ink-disabled');
       expect(html).toContain('Select exactly one whole group');
     }
+  });
+});
+
+describe('the collision toggle', () => {
+  it('is one batch, so one undo, turning collision on for every selected item', () => {
+    const { doc, ids } = board(2);
+    const history = new CanvasHistory(doc);
+    expect(collisionState(doc, ids)).toBe('off');
+    history.apply(...collisionBodies(doc, new Set(ids), true));
+    expect(collisionState(doc, ids)).toBe('on');
+    history.undo();
+    expect(collisionState(doc, ids)).toBe('off');
+  });
+
+  it('reads mixed when the selection disagrees, and a group setting wins for its members', () => {
+    const { doc, ids } = board(3);
+    doc.apply({ type: 'item.collides', itemId: ids[0] as ItemId, collides: true });
+    expect(collisionState(doc, ids)).toBe('mixed');
+    const groupId = newGroupId();
+    doc.apply({ type: 'group.create', groupId, memberIds: [ids[1] as ItemId, ids[2] as ItemId] });
+    doc.apply({ type: 'group.collides', groupId, collides: true });
+    expect(collisionState(doc, ids)).toBe('on');
+  });
+
+  it('turns the group too when a whole group is selected, and not when part of one is', () => {
+    const { doc, ids } = board(2);
+    const groupId = newGroupId();
+    doc.apply({ type: 'group.create', groupId, memberIds: ids });
+    expect(collisionBodies(doc, new Set(ids), true)).toContainEqual({
+      type: 'group.collides',
+      groupId,
+      collides: true,
+    });
+    expect(
+      collisionBodies(doc, new Set([ids[0] as ItemId]), true).some(
+        (b) => b.type === 'group.collides',
+      ),
+    ).toBe(false);
   });
 });

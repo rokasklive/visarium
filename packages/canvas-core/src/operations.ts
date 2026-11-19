@@ -46,6 +46,8 @@ export type CanvasOperationBody =
       readonly appearance?: Appearance;
       /** Optional for the same reasons as `appearance`; absent is uncropped. */
       readonly crop?: Crop;
+      /** Absent is off: a person's creation, or one from an older client. */
+      readonly collides?: boolean;
     }
   | { readonly type: 'item.delete'; readonly itemId: ItemId }
   | {
@@ -80,6 +82,8 @@ export type CanvasOperationBody =
       readonly label?: string;
       /** Optional so older creations stay valid; carried so duplicate keeps a copy's framing in one batch. */
       readonly frame?: boolean;
+      /** Absent is off, as for `item.create`. */
+      readonly collides?: boolean;
     }
   | { readonly type: 'group.delete'; readonly groupId: GroupId }
   | {
@@ -101,6 +105,9 @@ export type CanvasOperationBody =
    * "frame it" is "unframe it", never an omission.
    */
   | { readonly type: 'group.frame'; readonly groupId: GroupId; readonly frame: boolean }
+  /** Turn collision on or off (canvas/collision). Absolute state, like `group.frame`. */
+  | { readonly type: 'item.collides'; readonly itemId: ItemId; readonly collides: boolean }
+  | { readonly type: 'group.collides'; readonly groupId: GroupId; readonly collides: boolean }
   /**
    * Replace a note's or diagram's source. `baseRevision` is the item revision
    * the edit started from; the server refuses a mismatch (409) rather than let

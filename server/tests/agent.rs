@@ -180,7 +180,7 @@ async fn apply_as(app: &visarium::AppState, board: &str, user: &str, mut ops: Ve
     for op in &mut ops {
         op.stamp(&actor, "2026-11-19T10:00:00.000Z");
     }
-    boards::apply(app, &uuid::Uuid::parse_str(board).unwrap(), &ops, &actor)
+    boards::apply(app, &uuid::Uuid::parse_str(board).unwrap(), &mut ops, &actor)
         .await
         .unwrap();
 }
@@ -454,7 +454,7 @@ async fn the_protocol_is_stateless_json_rpc() {
     assert!(text.starts_with("# Offline sync"), "{text}");
 
     let tools = w.rpc("tools/list", json!({})).await;
-    assert_eq!(tools["tools"].as_array().unwrap().len(), 14);
+    assert_eq!(tools["tools"].as_array().unwrap().len(), 15);
     assert!(tools["ttlMs"].as_u64().unwrap() > 0);
     for t in tools["tools"].as_array().unwrap() {
         assert!(
@@ -934,6 +934,30 @@ async fn changes_read_as_sentences() {
 }
 
 #[tokio::test]
+async fn changes_narrate_collision_and_the_pushes_it_causes() {
+    let w = world().await;
+    let since = w.revision().await;
+    let b = w.data().await;
+    let (n1, d1) = (b.resolve_item("n1").unwrap(), b.resolve_item("d1").unwrap());
+    let (n1_id, d1_id, x, y) = (n1.id.clone(), d1.id.clone(), n1.x, n1.y);
+    let mut on = vec![json!({ "type": "item.collides", "itemId": n1_id, "collides": true })];
+    // n1 sits in a frame; a group's setting wins for its members.
+    if let Some(g) = &n1.group_id {
+        on.push(json!({ "type": "group.collides", "groupId": g, "collides": true }));
+    }
+    apply_as(&w.app, &w.board, &w.user, serde_json::from_value(json!(on)).unwrap()).await;
+    // d1 is dropped right on top of n1.
+    apply_as(&w.app, &w.board, &w.user, serde_json::from_value(json!([{ "type": "item.transform", "itemId": d1_id,
+        "transform": { "x": x, "y": y, "width": 480.0, "height": 360.0, "rotation": 0.0 } }])).unwrap()).await;
+    let c = w.ok("changes", json!({ "board": "Offline sync", "since_rev": since })).await;
+    assert!(c.contains("turned collision on for n1"), "{c}");
+    assert!(c.contains("moved or resized d1") && c.contains("n1"), "{c}");
+    let after = w.data().await;
+    let n1 = after.resolve_item("n1").unwrap();
+    assert!((n1.x, n1.y) != (x, y), "n1 was pushed aside");
+}
+
+#[tokio::test]
 async fn images_are_viewed_and_everything_else_is_read() {
     let w = world().await;
     let r = w.rpc("tools/call", json!({ "name": "item_view", "arguments": { "board": "Offline sync", "ref": "i1", "width": 256 } })).await;
@@ -988,7 +1012,8 @@ async fn a_note_is_created_beside_its_subject_and_linked_in_one_call() {
         .ok("item_create", json!({ "board": "Offline sync", "kind": "note", "source": "OpQueue drains on reconnect.", "near": "d1",
             "link": { "type": "describes", "to": "d1#OpQueue" } }))
         .await;
-    assert!(text.starts_with("Created n6 (note) beside d1."), "{text}");
+    assert!(text.starts_with("Created n6 (note) ") && text.contains(" d1 · link to d1#OpQueue "), "{text}");
+    assert!(text.contains("crosses nothing"), "{text}");
     assert!(text.contains("Linked n6 describes d1#OpQueue."), "{text}");
     let b = w.data().await;
     let n6 = b.resolve_item("n6").unwrap();
@@ -1020,6 +1045,135 @@ async fn a_note_is_created_beside_its_subject_and_linked_in_one_call() {
         before,
         "nothing is created when the link is refused"
     );
+}
+
+fn person_note(id: &str, x: f64, y: f64, w: f64, h: f64) -> Value {
+    json!({ "type": "item.create", "itemId": id, "z": 1.0,
+        "transform": { "x": x, "y": y, "width": w, "height": h, "rotation": 0.0 },
+        "content": { "kind": "note", "source": "wall" } })
+}
+
+#[tokio::test]
+async fn a_note_linked_to_an_element_is_placed_beside_where_it_is_drawn() {
+    let w = world().await;
+    let b = w.data().await;
+    let d1 = b.resolve_item("d1").unwrap();
+    // A browser drew BoardSync at d1's bottom left (layout 480 wide, as drawn).
+    sqlx::query("UPDATE canvas_item SET element_boxes = ?, element_rev = revision WHERE id = ?")
+        .bind(r#"{"width": 480, "elements": {"BoardSync": [0, 300, 80, 40]}}"#)
+        .bind(&d1.id)
+        .execute(&w.app.db)
+        .await
+        .unwrap();
+    let text = w
+        .ok("item_create", json!({ "board": "Offline sync", "kind": "note", "source": "Drains on reconnect.", "near": "d1",
+            "link": { "type": "describes", "to": "d1#BoardSync" } }))
+        .await;
+    assert!(text.contains("link to d1#BoardSync") && text.contains("crosses nothing"), "{text}");
+    let n = w.data().await.resolve_item("n6").unwrap().x;
+    assert!(n < 0.0, "on BoardSync's side of d1, not the right: x = {n}\n{text}");
+}
+
+#[tokio::test]
+async fn a_note_near_a_frame_is_outside_its_outline() {
+    let w = world().await;
+    w.ok("item_create", json!({ "board": "Offline sync", "kind": "note", "source": "About the flow.", "near": "g2" })).await;
+    let b = w.data().await;
+    let g2 = b.resolve_group("g2").unwrap().id.clone();
+    let members: Vec<_> = b.items.iter().filter(|i| i.group_id.as_deref() == Some(g2.as_str())).map(visarium::agent::place::Rect::of).collect();
+    let outline = visarium::agent::place::Rect::around(&members).unwrap();
+    let pad = visarium::collision::GROUP_PAD;
+    let n = visarium::agent::place::Rect::of(b.resolve_item("n6").unwrap());
+    let outside = n.right() <= outline.left() - pad || n.left() >= outline.right() + pad
+        || n.bottom() <= outline.top() - pad || n.top() >= outline.bottom() + pad;
+    assert!(outside, "{n:?} is inside g2's outline {outline:?}");
+}
+
+#[tokio::test]
+async fn an_unavoidable_crossing_is_reported() {
+    let w = world().await;
+    // A note walled in on all four sides, far from everything else.
+    let ids: Vec<String> = (0..5).map(|_| uuid::Uuid::now_v7().to_string()).collect();
+    let ops = json!([
+        person_note(&ids[0], 10000.0, 0.0, 200.0, 100.0),
+        person_note(&ids[1], 10000.0, -174.0, 1000.0, 200.0),
+        person_note(&ids[2], 10000.0, 174.0, 1000.0, 200.0),
+        person_note(&ids[3], 9776.0, 0.0, 200.0, 548.0),
+        person_note(&ids[4], 10224.0, 0.0, 200.0, 548.0),
+    ]);
+    apply_as(&w.app, &w.board, &w.user, serde_json::from_value(ops).unwrap()).await;
+    let text = w
+        .ok("item_create", json!({ "board": "Offline sync", "kind": "note", "source": "Walled.", "near": "n6",
+            "link": { "type": "comments", "to": "n6" } }))
+        .await;
+    assert!(text.contains("link to n6") && text.contains("crosses n"), "{text}");
+    assert!(text.contains("no nearby spot was free of crossings"), "{text}");
+}
+
+#[tokio::test]
+async fn an_agents_items_collide_until_fixed_in_place() {
+    let w = world().await;
+    w.ok("item_create", json!({ "board": "Offline sync", "kind": "note", "source": "Mine.", "near": "c1" })).await;
+    let b = w.data().await;
+    let n6 = b.resolve_item("n6").unwrap();
+    assert!(n6.collides, "an agent's note has collision on");
+    let (x, y) = (n6.x, n6.y);
+    let text = w.ok("arrange", json!({ "board": "Offline sync", "refs": ["n6"], "collides": false })).await;
+    assert!(text.contains("collision off"), "{text}");
+    let after = w.data().await;
+    let n6 = after.resolve_item("n6").unwrap();
+    assert!(!n6.collides && (n6.x, n6.y) == (x, y), "fixed, and not moved");
+}
+
+#[tokio::test]
+async fn six_notes_are_laid_out_as_a_grid_of_three() {
+    let w = world().await;
+    for i in 0..6 {
+        w.ok("item_create", json!({ "board": "Offline sync", "kind": "note", "source": format!("Card {i}"), "near": "c1" })).await;
+    }
+    let refs: Vec<String> = (6..12).map(|n| format!("n{n}")).collect();
+    let text = w.ok("arrange", json!({ "board": "Offline sync", "refs": refs, "layout": "grid", "columns": 3, "below": "c1" })).await;
+    assert!(text.contains("laid out in a grid of 3 columns below c1"), "{text}");
+    let b = w.data().await;
+    let rects: Vec<_> = refs.iter().map(|r| visarium::agent::place::Rect::of(b.resolve_item(r).unwrap())).collect();
+    let tops: std::collections::BTreeSet<i64> = rects.iter().map(|r| r.top().round() as i64).collect();
+    assert_eq!(tops.len(), 2, "two rows, top-aligned: {rects:?}");
+    let mut row: Vec<_> = rects.iter().filter(|r| r.top().round() as i64 == *tops.first().unwrap()).collect();
+    row.sort_by(|a, b| a.x.total_cmp(&b.x));
+    assert_eq!(row.len(), 3);
+    assert_eq!((row[1].left() - row[0].right()).round(), (row[2].left() - row[1].right()).round(), "an even gap");
+    let c1 = visarium::agent::place::Rect::of(b.resolve_item("c1").unwrap());
+    assert!(rects.iter().all(|r| r.top() >= c1.bottom()), "below c1");
+}
+
+#[tokio::test]
+async fn group_create_frames_packs_and_pushes_aside() {
+    let w = world().await;
+    w.ok("item_create", json!({ "board": "Offline sync", "kind": "note", "source": "Under the list.", "below": "c1" })).await;
+    // A column of c1 then i1 grows down over the agent's note below c1.
+    let text = w
+        .ok("group_create", json!({ "board": "Offline sync", "refs": ["c1", "i1"], "title": "Moodboard", "layout": "column" }))
+        .await;
+    assert!(text.starts_with("Grouped c1, i1 as g3 \"Moodboard\" (framed), laid out in a column"), "{text}");
+    assert!(text.contains("Moved aside: n6"), "{text}");
+    let b = w.data().await;
+    let g3 = b.resolve_group("g3").unwrap();
+    assert!(g3.frame && g3.collides && g3.label.as_deref() == Some("Moodboard"));
+    let members: Vec<_> = b.items.iter().filter(|i| i.group_id.as_deref() == Some(g3.id.as_str())).collect();
+    assert_eq!(members.len(), 2);
+    let n6 = visarium::agent::place::Rect::of(b.resolve_item("n6").unwrap());
+    for m in &members {
+        assert!(!n6.overlaps(&visarium::agent::place::Rect::of(m), 0.0), "n6 still overlaps {}", m.short_ref());
+    }
+
+    // Taken from another group, and kept off what never moves.
+    let text = w.ok("group_create", json!({ "board": "Offline sync", "refs": ["n1"], "title": "Solo" })).await;
+    assert!(text.contains("n1 left g1"), "{text}");
+    let b = w.data().await;
+    let n1 = visarium::agent::place::Rect::of(b.resolve_item("n1").unwrap());
+    for fixed in b.items.iter().filter(|i| !i.collides && i.short_ref() != "n1") {
+        assert!(!n1.overlaps(&visarium::agent::place::Rect::of(fixed), 0.0), "n1 lands on {}", fixed.short_ref());
+    }
 }
 
 #[tokio::test]
@@ -1701,4 +1855,172 @@ async fn people_on_a_board_see_it_renamed_and_deleted_and_by_whom() {
         next_frame(&mut member).await,
         json!({ "t": "board-deleted", "by": "Claude Code on laptop for Ada" })
     );
+}
+
+// --- images ---------------------------------------------------------------------------
+
+fn png(w: u32, h: u32, shade: u8) -> Vec<u8> {
+    let mut out = std::io::Cursor::new(vec![]);
+    image::RgbImage::from_pixel(w, h, image::Rgb([shade, 40, 90]))
+        .write_to(&mut out, image::ImageFormat::Png)
+        .unwrap();
+    out.into_inner()
+}
+
+fn animated_gif() -> Vec<u8> {
+    let mut out = vec![];
+    {
+        let mut encoder = image::codecs::gif::GifEncoder::new(&mut out);
+        let frames = [0u8, 200].map(|shade| {
+            image::Frame::new(image::RgbaImage::from_pixel(64, 32, image::Rgba([shade, 0, 0, 255])))
+        });
+        encoder.encode_frames(frames).unwrap();
+    }
+    out
+}
+
+fn b64(bytes: &[u8]) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+/// A tiny HTTP server on loopback: /x.png, /page (HTML), /redir (to /x.png).
+async fn image_server() -> u16 {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let picture = png(300, 150, 7);
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else { return };
+            let picture = picture.clone();
+            tokio::spawn(async move {
+                let mut buf = [0u8; 2048];
+                let n = socket.read(&mut buf).await.unwrap_or(0);
+                let request = String::from_utf8_lossy(&buf[..n]);
+                let path = request.split_whitespace().nth(1).unwrap_or("/");
+                let (head, body): (String, Vec<u8>) = match path {
+                    "/x.png" => (format!("HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\n", picture.len()), picture),
+                    "/redir" => ("HTTP/1.1 302 Found\r\nLocation: /x.png\r\nContent-Length: 0\r\n".into(), vec![]),
+                    _ => ("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 13\r\n".into(), b"<html></html>".to_vec()),
+                };
+                let _ = socket.write_all(format!("{head}Connection: close\r\n\r\n").as_bytes()).await;
+                let _ = socket.write_all(&body).await;
+            });
+        }
+    });
+    port
+}
+
+async fn assets(w: &World) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM asset").fetch_one(&w.app.db).await.unwrap()
+}
+
+#[tokio::test]
+async fn an_image_from_data_is_stored_like_an_upload_and_placed() {
+    let w = world().await;
+    let before = assets(&w).await;
+    let picture = png(200, 100, 1);
+    let text = w
+        .ok("item_create", json!({ "board": "Offline sync", "kind": "image", "data": b64(&picture), "filename": "swatch.png", "near": "n1" }))
+        .await;
+    assert!(text.starts_with("Created i2 (image)"), "{text}");
+    let b = w.data().await;
+    let i2 = b.resolve_item("i2").unwrap();
+    assert_eq!((i2.width, i2.height), (200.0, 100.0), "shown at its own size");
+    assert!(i2.collides);
+    assert_eq!(assets(&w).await, before + 1);
+    // The same bytes again: a second item, still one file.
+    w.ok("item_create", json!({ "board": "Offline sync", "kind": "image", "data": b64(&picture), "near": "i2" })).await;
+    assert_eq!(assets(&w).await, before + 1, "same bytes, same asset");
+    assert!(w.data().await.resolve_item("i3").is_ok());
+}
+
+#[tokio::test]
+async fn an_animated_gif_stays_a_gif() {
+    let w = world().await;
+    w.ok("item_create", json!({ "board": "Offline sync", "kind": "image", "data": b64(&animated_gif()), "near": "n1" })).await;
+    let b = w.data().await;
+    assert_eq!(b.resolve_item("i2").unwrap().mime_type.as_deref(), Some("image/gif"));
+}
+
+#[tokio::test]
+async fn too_much_data_points_to_a_url() {
+    let w = world().await;
+    // Over the 8 MB image limit, inside what one call may carry.
+    let big = "A".repeat(12 * 1024 * 1024);
+    let err = w.fails("item_create", json!({ "board": "Offline sync", "kind": "image", "data": big })).await;
+    assert!(err.contains("at most 8 MB") && err.contains("url"), "{err}");
+    let err = w.fails("item_create", json!({ "board": "Offline sync", "kind": "image", "data": b64(b"not a picture") })).await;
+    assert!(err.contains("not an image"), "{err}");
+    // A 6 MB image passes as data.
+    let mut big_png = png(1200, 1200, 3);
+    big_png.resize(6 * 1024 * 1024, 0);
+    let text = w.ok("item_create", json!({ "board": "Offline sync", "kind": "image", "data": b64(&big_png) })).await;
+    assert!(text.starts_with("Created i2 (image)"), "{text}");
+}
+
+#[tokio::test]
+async fn an_image_from_a_url_follows_redirects_and_refuses_what_is_not_an_image() {
+    let w = world().await;
+    let port = image_server().await;
+    w.app.allow_private_imports.store(true, std::sync::atomic::Ordering::Relaxed);
+    let text = w
+        .ok("item_create", json!({ "board": "Offline sync", "kind": "image", "url": format!("http://127.0.0.1:{port}/redir"), "near": "n2",
+            "link": { "type": "comments", "to": "n2" } }))
+        .await;
+    assert!(text.contains("Created i2 (image)") && text.contains("Linked i2 comments n2"), "{text}");
+    let b = w.data().await;
+    assert_eq!(b.resolve_item("i2").unwrap().width, 300.0);
+    let err = w
+        .fails("item_create", json!({ "board": "Offline sync", "kind": "image", "url": format!("http://127.0.0.1:{port}/page") }))
+        .await;
+    assert!(err.contains("not an image"), "{err}");
+}
+
+#[tokio::test]
+async fn a_url_on_a_private_address_is_never_fetched() {
+    let w = world().await;
+    let port = image_server().await;
+    let before = w.revision().await;
+    for url in [
+        format!("http://127.0.0.1:{port}/x.png"),
+        format!("http://localhost:{port}/x.png"),
+        "http://192.168.1.10/image.png".to_string(),
+        "http://[::ffff:10.0.0.5]/image.png".to_string(),
+    ] {
+        let err = w.fails("item_create", json!({ "board": "Offline sync", "kind": "image", "url": url })).await;
+        assert!(err.contains("private address"), "{url}: {err}");
+    }
+    let err = w.fails("item_create", json!({ "board": "Offline sync", "kind": "image", "url": "ftp://example.com/x.png" })).await;
+    assert!(err.contains("Only http and https"), "{err}");
+    assert_eq!(w.revision().await, before, "nothing was created");
+}
+
+// --- layout in the overview --------------------------------------------------------------
+
+#[tokio::test]
+async fn the_overview_names_layout_problems_but_not_a_persons_own_overlaps() {
+    let w = world().await;
+    let read = || w.ok("board_read", json!({ "board": "Offline sync" }));
+    assert!(read().await.contains("Layout: no overlaps or crossings"), "the fixture is tidy");
+
+    // A person stacks two of their own notes on purpose: not a problem.
+    let b = w.data().await;
+    let n1 = b.resolve_item("n1").unwrap().id.clone();
+    apply_as(&w.app, &w.board, &w.user, serde_json::from_value(json!([{ "type": "item.transform", "itemId": n1,
+        "transform": { "x": 0.0, "y": 0.0, "width": 280.0, "height": 200.0, "rotation": 0.0 } }])).unwrap()).await;
+    assert!(read().await.contains("Layout: no overlaps or crossings"));
+
+    // The agent's linked note is dragged onto d1 by a person.
+    w.ok("item_create", json!({ "board": "Offline sync", "kind": "note", "source": "Mine.", "near": "c1",
+        "link": { "type": "comments", "to": "c1" } })).await;
+    let n6 = w.data().await.resolve_item("n6").unwrap().id.clone();
+    apply_as(&w.app, &w.board, &w.user, serde_json::from_value(json!([{ "type": "item.transform", "itemId": n6,
+        "transform": { "x": -100.0, "y": 100.0, "width": 200.0, "height": 100.0, "rotation": 0.0 } }])).unwrap()).await;
+    let text = read().await;
+    assert!(text.contains("## Layout"), "{text}");
+    assert!(text.contains("d1 overlaps n6") || text.contains("n6 overlaps d1"), "{text}");
+    assert!(text.contains("n6 → c1 crosses"), "{text}");
+    assert!(!text.contains("n1 overlaps d1") && !text.contains("d1 overlaps n1"), "{text}");
 }

@@ -361,8 +361,12 @@ test('the same slots in the same order, whatever is selected', async ({ page }) 
   expect(forOne).toEqual([
     'Take out',
     'Label',
+    'Frame',
+    'Collision',
     'Flip H',
     'Flip V',
+    'Crop',
+    'Reset crop',
     'Front',
     'Back',
     'Group',

@@ -42,6 +42,9 @@
  * TO 3 for the same reason M08's two did: a new operation type is the
  * incompatible case, whatever else rides along with it.
  *
+ * Collision ADDED `item.collides` and `group.collides` and PROTOCOL_VERSION
+ * MOVED TO 4, by the same rule.
+ *
  * `item.create` gaining an optional `appearance` is, separately, exactly the
  * compatible case: a client that sends none is still understood, and the server
  * defaults it.
@@ -51,7 +54,7 @@ import type { Transform } from './geometry';
 import type { ActorId, CanvasId, ItemId } from './ids';
 import type { CanvasOperationBody } from './operations';
 
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 /**
  * How many actors can be told apart by colour.
