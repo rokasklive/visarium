@@ -1,0 +1,19 @@
+{
+  "comment": "Display name -> the letter on a presence tile. The server (realtime.rs) and the web client (letter-tile.tsx) both run this set: the first character of the trimmed name, folded to its base letter (NFD, first code point), uppercased (first character of the result); A-Z and 0-9 are drawn, anything else is '?'.",
+  "cases": [
+    ["Ada", "A"],
+    ["ada lovelace", "A"],
+    ["  rokas", "R"],
+    ["Šarūnas", "S"],
+    ["Žygimantas", "Z"],
+    ["Ąžuolas", "A"],
+    ["Élodie", "E"],
+    ["ßeta", "S"],
+    ["Claude Code on laptop", "C"],
+    ["3D printer", "3"],
+    ["🤖 Bot", "?"],
+    ["Ωmega", "?"],
+    ["", "?"],
+    ["   ", "?"]
+  ]
+}

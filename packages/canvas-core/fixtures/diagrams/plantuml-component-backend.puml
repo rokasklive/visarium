@@ -1,0 +1,9 @@
+@startuml
+package "Backend" {
+  [Checkout API] as API
+  [Payment adapter] as Pay
+}
+database Orders
+API --> Pay
+Pay --> Orders : write
+@enduml

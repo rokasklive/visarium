@@ -385,6 +385,52 @@ test('a share link opens the board read-only, with no application around it', as
   expect(asked.every((p) => p.startsWith('/api/shared/assets/'))).toBe(true);
 });
 
+test('a share-link viewer shows no participant tiles, whatever its socket says', async ({
+  page,
+}) => {
+  await page.route('**/api/shared/session', (route) =>
+    route.fulfill({
+      json: { member: false, boardId: BOARD, title: 'Refs', sharedBy: 'Ada Lovelace' },
+    }),
+  );
+  await page.route('**/api/shared/board', (route) =>
+    route.fulfill({
+      json: { ...snapshot(), id: BOARD, title: 'Refs', sharedBy: 'Ada Lovelace', expiresAt: null },
+    }),
+  );
+  await page.route('**/api/shared/assets/*/**', (route) =>
+    route.fulfill({ status: 200, contentType: 'image/png', body: readFileSync(FIXTURE) }),
+  );
+  // The server never sends a viewer presence (ADR-0026; server/tests/agent.rs).
+  // Even if it did, the viewer would draw no tile, cursor label or focus label.
+  let heard = 0;
+  await page.routeWebSocket('**/ws/shared', (ws) => {
+    ws.onMessage(() => {
+      heard += 1;
+      const agent = '01a01640-6b72-7d60-968b-88be186f3500';
+      ws.send(JSON.stringify({ t: 'welcome', actorId: 'v', revision: 1, actors: [] }));
+      ws.send(
+        JSON.stringify({
+          t: 'presence',
+          joined: [
+            { actorId: 'ada', displayName: 'Ada', colourIndex: 1 },
+            { actorId: agent, displayName: 'Claude', colourIndex: 2, kind: 'agent', person: 'Ada' },
+          ],
+        }),
+      );
+      ws.send(JSON.stringify({ t: 'cursor', actorId: 'ada', x: 10, y: 10 }));
+    });
+  });
+
+  await page.goto('/s#share-token');
+  await expect(page.getByTestId('canvas-stats')).toContainText('1 items');
+  await expect.poll(() => heard).toBeGreaterThan(0);
+  await page.waitForTimeout(300);
+  await expect(page.getByTestId('presence-roster')).toHaveCount(0);
+  await expect(page.getByTestId('remote-cursor-tile')).toHaveCount(0);
+  await expect(page.getByTestId('agent-focus-label')).toHaveCount(0);
+});
+
 test('a locked share link asks for its passphrase and shows nothing until then', async ({
   page,
 }) => {

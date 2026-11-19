@@ -1,0 +1,13 @@
+{
+  "elements": ["Shape", "Circle", "Square"],
+  "edges": [
+    {
+      "from": "Shape",
+      "to": "Circle"
+    },
+    {
+      "from": "Shape",
+      "to": "Square"
+    }
+  ]
+}

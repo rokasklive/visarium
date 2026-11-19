@@ -72,6 +72,8 @@ interface UiState {
    * strip, replaced by the next gesture and cleared by a dismiss.
    */
   interchangeNotice: string | null;
+  /** Why the person was returned to the boards list, e.g. "Deleted by Claude for Rokas". */
+  boardNotice: string | null;
   /**
    * The selection bar, folded down to its handle.
    *
@@ -122,6 +124,7 @@ interface UiState {
   dismissUploadFailures: () => void;
   /** `null` is the dismiss, and also what a gesture that went as promised writes. */
   setInterchangeNotice: (notice: string | null) => void;
+  setBoardNotice: (notice: string | null) => void;
   toggleToolbar: () => void;
 }
 
@@ -138,6 +141,7 @@ export const useUiStore = create<UiState>((set) => ({
   connection: 'idle',
   linkViewers: 0,
   interchangeNotice: null,
+  boardNotice: null,
   toolbarCollapsed: false,
   setTool: (tool) => set({ tool }),
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
@@ -160,5 +164,6 @@ export const useUiStore = create<UiState>((set) => ({
   addUploadFailure: (failure) => set((s) => ({ uploadFailures: [...s.uploadFailures, failure] })),
   dismissUploadFailures: () => set({ uploadFailures: [] }),
   setInterchangeNotice: (interchangeNotice) => set({ interchangeNotice }),
+  setBoardNotice: (boardNotice) => set({ boardNotice }),
   toggleToolbar: () => set((s) => ({ toolbarCollapsed: !s.toolbarCollapsed })),
 }));

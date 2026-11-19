@@ -1,0 +1,5 @@
+@startuml
+[Web] --> [API] : REST
+component Worker
+[API] ..> Worker
+@enduml

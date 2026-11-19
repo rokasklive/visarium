@@ -1,0 +1,14 @@
+@startuml
+abstract class Shape
+interface Drawable
+class Circle {
+  radius: double
+}
+enum Colour {
+  RED
+  GREEN
+}
+Shape <|-- Circle
+Drawable <|.. Circle
+Circle --> Colour : fill
+@enduml

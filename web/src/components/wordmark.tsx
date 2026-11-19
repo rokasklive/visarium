@@ -27,7 +27,7 @@ import { useLayoutEffect, useMemo, useRef, useSyncExternalStore } from 'react';
  * every other unit, so only the inked rows are listed. The face still sets
  * people's names in presence labels: those are live text and stay text.
  */
-const ROWS: readonly [string, ...string[]] = [
+export const ROWS: readonly [string, ...string[]] = [
   '#.#.....#.#..#.#....#.#.#.#.#....#.#.#.#......#.#.#.#....#.#..#.#.....#.#....#.#.#.#.#.#..',
   '#.#.....#.#..#.#..#.#.#.#.#.#..#.#.#.#.#.#..#.#.#.#.#.#..#.#..#.#.....#.#..#.#.#.#.#.#.#.#',
   '#.#.....#.#..#.#..#.#..........#.#.....#.#..#.#.....#.#..#.#..#.#.....#.#..#.#...#.#...#.#',
@@ -146,7 +146,7 @@ function subscribe(onChange: () => void): () => void {
   return () => media?.removeEventListener('change', fire);
 }
 
-function useDevicePixelRatio(): number {
+export function useDevicePixelRatio(): number {
   return useSyncExternalStore(
     subscribe,
     () => globalThis.devicePixelRatio || 1,

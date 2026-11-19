@@ -1,0 +1,18 @@
+{
+  "elements": ["Shape", "Drawable", "Circle", "Colour"],
+  "edges": [
+    {
+      "from": "Shape",
+      "to": "Circle"
+    },
+    {
+      "from": "Drawable",
+      "to": "Circle"
+    },
+    {
+      "from": "Circle",
+      "to": "Colour",
+      "label": "fill"
+    }
+  ]
+}

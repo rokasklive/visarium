@@ -291,7 +291,8 @@ async fn assets_boards_library_and_lifecycle() {
     assert_eq!(snap["items"][0]["groupId"], group.as_str());
     assert_eq!(snap["items"][0]["appearance"], json!({ "opacity": 0.5, "flipX": true, "flipY": false }));
     assert_eq!(snap["items"][0]["content"]["asset"]["intrinsicWidth"], 3000);
-    assert_eq!(snap["groups"][0], json!({ "id": group, "label": "Sky", "frame": true, "memberIds": [item] }));
+    assert_eq!(snap["groups"][0], json!({ "id": group, "ref": "g1", "label": "Sky", "frame": true, "memberIds": [item] }));
+    assert_eq!(snap["items"][0]["ref"], "i1", "an item carries its short ref (ADR-0031)");
 
     let broken = json!({ "operations": [{ "body": { "type": "item.create", "itemId": uuid::Uuid::now_v7(), "transform": t,
         "content": { "kind": "image", "asset": { "assetId": uuid::Uuid::now_v7() } } } }] });
@@ -1249,5 +1250,225 @@ async fn the_desktop_gets_a_device_token_through_the_browser() {
     fast.json("POST", "/api/session", json!({ "username": "ada", "password": "correct horse battery", "device": { "label": "Visarium Desktop on old-laptop" } })).await;
     let sessions = c.get("/api/sessions").await.json();
     assert!(sessions.as_array().unwrap().iter().any(|s| s["kind"] == "device" && s["label"] == "Visarium Desktop on old-laptop"));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// --- agent access: the data model (ADR-0031) ---------------------------------
+
+fn create_note(id: &str, source: &str) -> Value {
+    json!({ "body": { "type": "item.create", "itemId": id, "z": 1.0,
+        "transform": { "x": 0.0, "y": 0.0, "width": 200.0, "height": 100.0, "rotation": 0.0 },
+        "content": { "kind": "note", "source": source } } })
+}
+
+#[tokio::test]
+async fn migration_0005_keeps_sessions_and_numbers_items_per_kind() {
+    let (config, dir) = config(false);
+    std::fs::create_dir_all(&dir).unwrap();
+    let options = sqlx::sqlite::SqliteConnectOptions::new().filename(&config.database).create_if_missing(true).foreign_keys(true);
+    let db = sqlx::SqlitePool::connect_with(options).await.unwrap();
+    let mut before = sqlx::migrate!("./migrations");
+    before.migrations = std::borrow::Cow::Owned(before.migrations.iter().filter(|m| m.version < 5).cloned().collect());
+    before.run(&db).await.unwrap();
+    for sql in [
+        "INSERT INTO app_user (id, username, display_name, is_admin) VALUES ('u1', 'ada', 'Ada', 1)",
+        "INSERT INTO session (token_hash, id, kind, user_id, label, expires_at) VALUES ('h1', 's1', 'browser', 'u1', 'Safari', '2999-01-01T00:00:00.000Z')",
+        "INSERT INTO session (token_hash, id, kind, user_id, label, expires_at) VALUES ('h2', 's2', 'device', 'u1', 'Mac', '2999-01-01T00:00:00.000Z')",
+        "INSERT INTO canvas (id, title) VALUES ('b1', 'One')",
+        "INSERT INTO canvas (id, title) VALUES ('b2', 'Two')",
+        "INSERT INTO canvas_group (id, canvas_id, label) VALUES ('g-a', 'b1', 'A')",
+        "INSERT INTO canvas_item (id, canvas_id, kind, body, x, y, width, height, created_at) VALUES ('n-a', 'b1', 'note', 'first', 0, 0, 1, 1, '2026-01-01')",
+        "INSERT INTO canvas_item (id, canvas_id, kind, body, x, y, width, height, created_at) VALUES ('n-b', 'b1', 'note', 'second', 0, 0, 1, 1, '2026-01-02')",
+        "INSERT INTO canvas_item (id, canvas_id, kind, lang, body, x, y, width, height, created_at) VALUES ('d-a', 'b1', 'diagram', 'mermaid', 'flowchart LR; A-->B', 0, 0, 1, 1, '2026-01-03')",
+        "INSERT INTO canvas_item (id, canvas_id, kind, body, x, y, width, height, created_at) VALUES ('n-c', 'b2', 'note', 'other board', 0, 0, 1, 1, '2026-01-01')",
+    ] {
+        sqlx::query(sql).execute(&db).await.unwrap();
+    }
+    db.close().await;
+
+    let app = visarium::open(config).await.unwrap();
+    let sessions: Vec<(String, String)> = sqlx::query_as("SELECT id, kind FROM session ORDER BY id").fetch_all(&app.db).await.unwrap();
+    assert_eq!(sessions, vec![("s1".into(), "browser".into()), ("s2".into(), "device".into())]);
+    let refs: Vec<(String, i64)> = sqlx::query_as("SELECT id, ref_no FROM canvas_item ORDER BY id").fetch_all(&app.db).await.unwrap();
+    assert_eq!(refs, vec![("d-a".into(), 1), ("n-a".into(), 1), ("n-b".into(), 2), ("n-c".into(), 1)]);
+    let next: String = sqlx::query_scalar("SELECT next_refs FROM canvas WHERE id = 'b1'").fetch_one(&app.db).await.unwrap();
+    let next: Value = serde_json::from_str(&next).unwrap();
+    assert_eq!((next["n"].as_i64(), next["d"].as_i64(), next["g"].as_i64()), (Some(2), Some(1), Some(1)));
+    let found: Vec<String> =
+        sqlx::query_scalar("SELECT item_id FROM item_text WHERE item_text MATCH 'second'").fetch_all(&app.db).await.unwrap();
+    assert_eq!(found, vec!["n-b".to_string()], "existing text is searchable after the migration");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn refs_are_stable_never_reused_and_copied() {
+    let (mut c, app, dir) = signed_in().await;
+    let b = c.json("POST", "/api/boards", json!({ "title": "Refs" })).await.json()["id"].as_str().unwrap().to_string();
+    let ids: Vec<String> = (0..3).map(|_| uuid::Uuid::now_v7().to_string()).collect();
+    let ops = json!({ "operations": [
+        create_note(&ids[0], "one"),
+        create_note(&ids[1], "two"),
+        { "body": { "type": "item.create", "itemId": ids[2], "z": 1.0,
+            "transform": { "x": 0.0, "y": 0.0, "width": 200.0, "height": 100.0, "rotation": 0.0 },
+            "content": { "kind": "diagram", "lang": "mermaid", "source": "flowchart LR; A-->B" } } },
+        create_note(&ids[0], "replayed create takes no number"),
+    ]});
+    assert_eq!(c.json("POST", &format!("/api/boards/{b}/operations"), ops).await.status, StatusCode::OK);
+    let refs = |snap: &Value| -> Vec<String> {
+        let mut r: Vec<String> = snap["items"].as_array().unwrap().iter().map(|i| i["ref"].as_str().unwrap().to_string()).collect();
+        r.sort();
+        r
+    };
+    let snap = c.get(&format!("/api/boards/{b}/snapshot")).await.json();
+    assert_eq!(refs(&snap), vec!["d1", "n1", "n2"]);
+
+    let edit = json!({ "operations": [
+        { "body": { "type": "item.source", "itemId": ids[1], "source": "edited" } },
+        { "body": { "type": "item.transform", "itemId": ids[1], "transform": { "x": 50.0, "y": 50.0, "width": 10.0, "height": 10.0, "rotation": 0.0 } } },
+    ]});
+    c.json("POST", &format!("/api/boards/{b}/operations"), edit).await;
+    let snap = c.get(&format!("/api/boards/{b}/snapshot")).await.json();
+    assert_eq!(refs(&snap), vec!["d1", "n1", "n2"], "edits and moves keep refs");
+
+    let fresh = uuid::Uuid::now_v7().to_string();
+    let ops = json!({ "operations": [{ "body": { "type": "item.delete", "itemId": ids[1] } }, create_note(&fresh, "after delete")] });
+    c.json("POST", &format!("/api/boards/{b}/operations"), ops).await;
+    let snap = c.get(&format!("/api/boards/{b}/snapshot")).await.json();
+    assert_eq!(refs(&snap), vec!["d1", "n1", "n3"], "n2 is gone and is never handed out again");
+
+    let copy = c.json("POST", &format!("/api/boards/{b}/duplicate"), json!(null)).await.json()["id"].as_str().unwrap().to_string();
+    let copied = c.get(&format!("/api/boards/{copy}/snapshot")).await.json();
+    assert_eq!(refs(&copied), vec!["d1", "n1", "n3"], "a copy keeps every ref");
+    let another = uuid::Uuid::now_v7().to_string();
+    c.json("POST", &format!("/api/boards/{copy}/operations"), json!({ "operations": [create_note(&another, "x")] })).await;
+    let copied = c.get(&format!("/api/boards/{copy}/snapshot")).await.json();
+    assert!(refs(&copied).contains(&"n4".to_string()), "a copy's counters continue where the original's were");
+    drop(app);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn every_operation_is_logged_and_the_log_is_trimmed() {
+    let (mut c, app, dir) = signed_in().await;
+    let b = c.json("POST", "/api/boards", json!({ "title": "Log" })).await.json()["id"].as_str().unwrap().to_string();
+    let n = uuid::Uuid::now_v7().to_string();
+    let ops = json!({ "operations": [
+        create_note(&n, "hello"),
+        { "body": { "type": "item.source", "itemId": n, "source": "hello again" } },
+        { "body": { "type": "item.z", "itemId": n, "z": 5.0 } },
+    ]});
+    c.json("POST", &format!("/api/boards/{b}/operations"), ops).await;
+    let rows: Vec<(i64, String, Option<String>)> =
+        sqlx::query_as("SELECT revision, json_extract(body, '$.type'), actor_agent FROM canvas_operation WHERE canvas_id = ? ORDER BY revision")
+            .bind(&b)
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(
+        rows,
+        vec![(1, "item.create".into(), None), (2, "item.source".into(), None), (3, "item.z".into(), None)],
+        "one row per operation, at its own revision"
+    );
+    let actor: String = sqlx::query_scalar("SELECT actor_id FROM canvas_operation WHERE canvas_id = ? LIMIT 1").bind(&b).fetch_one(&app.db).await.unwrap();
+    let me: String = sqlx::query_scalar("SELECT id FROM app_user WHERE username = 'ada'").fetch_one(&app.db).await.unwrap();
+    assert_eq!(actor, me);
+
+    let keep = visarium::boards::OPERATION_LOG_KEEP;
+    let many: Vec<Value> = (0..keep + 10).map(|i| json!({ "body": { "type": "item.z", "itemId": n, "z": i as f64 } })).collect();
+    c.json("POST", &format!("/api/boards/{b}/operations"), json!({ "operations": many })).await;
+    let kept: i64 = sqlx::query_scalar("SELECT count(*) FROM canvas_operation WHERE canvas_id = ?").bind(&b).fetch_one(&app.db).await.unwrap();
+    assert_eq!(kept, keep);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn item_text_follows_edits_and_deletes() {
+    let (mut c, app, dir) = signed_in().await;
+    let b = c.json("POST", "/api/boards", json!({ "title": "Search" })).await.json()["id"].as_str().unwrap().to_string();
+    let n = uuid::Uuid::now_v7().to_string();
+    let list = uuid::Uuid::now_v7().to_string();
+    let ops = json!({ "operations": [
+        create_note(&n, "the quick brown fox"),
+        { "body": { "type": "item.create", "itemId": list, "z": 1.0,
+            "transform": { "x": 0.0, "y": 0.0, "width": 200.0, "height": 100.0, "rotation": 0.0 },
+            "content": { "kind": "checklist", "title": "Plan", "tasks": [{ "id": "t1", "text": "wire the retry_policy", "state": "todo" }] } } },
+    ]});
+    c.json("POST", &format!("/api/boards/{b}/operations"), ops).await;
+    let find = |q: &'static str| {
+        let db = app.db.clone();
+        async move {
+            sqlx::query_scalar::<_, String>("SELECT item_id FROM item_text WHERE item_text MATCH ?").bind(q).fetch_all(&db).await.unwrap()
+        }
+    };
+    assert_eq!(find("brown").await, vec![n.clone()]);
+    assert_eq!(find("retry_policy").await, vec![list.clone()], "underscores stay inside a word");
+    c.json("POST", &format!("/api/boards/{b}/operations"), json!({ "operations": [
+        { "body": { "type": "item.source", "itemId": n, "source": "a lazy dog" } },
+        { "body": { "type": "task.add", "itemId": list, "task": { "id": "t2", "text": "ship backoff", "state": "todo" } } },
+    ]})).await;
+    assert!(find("brown").await.is_empty(), "removed words are no longer found");
+    assert_eq!(find("lazy").await, vec![n.clone()]);
+    assert_eq!(find("backoff").await, vec![list.clone()]);
+    c.json("POST", &format!("/api/boards/{b}/operations"), json!({ "operations": [{ "body": { "type": "item.delete", "itemId": n } }] })).await;
+    assert!(find("lazy").await.is_empty(), "a deleted item is not found");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn agent_tokens_are_minted_shown_once_listed_and_revoked() {
+    let (mut c, app, dir) = signed_in().await;
+    let made = c.json("POST", "/api/agent-tokens", json!({ "label": "Claude Code on laptop" })).await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.json());
+    let token = made.json()["token"].as_str().unwrap().to_string();
+    let id = made.json()["id"].as_str().unwrap().to_string();
+    assert_eq!(token.len(), 64);
+    assert_eq!(c.json("POST", "/api/agent-tokens", json!({ "label": " " })).await.status, StatusCode::BAD_REQUEST);
+
+    let listed = c.get("/api/agent-tokens").await.json();
+    assert_eq!(listed.as_array().unwrap().len(), 1);
+    assert_eq!(listed[0]["label"], "Claude Code on laptop");
+    assert_eq!(listed[0]["lastUsedAt"], Value::Null, "never used yet");
+    assert!(listed[0].get("token").is_none() && !listed.to_string().contains(&token), "the secret is never shown again");
+    let sessions = c.get("/api/sessions").await.json();
+    assert!(sessions.as_array().unwrap().iter().all(|s| s["kind"] != "agent"), "agent tokens are not browser sessions");
+
+    // Using it records a last use.
+    let router = visarium::router(app.clone());
+    let use_it = Request::builder()
+        .method("POST")
+        .uri("/mcp")
+        .header(header::HOST, "localhost:8080")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Body::from(json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" }).to_string()))
+        .unwrap();
+    assert_eq!(router.clone().oneshot(use_it).await.unwrap().status(), StatusCode::OK);
+    assert!(c.get("/api/agent-tokens").await.json()[0]["lastUsedAt"].is_string());
+
+    // "Sign out other sessions" leaves agent tokens alone; revoking ends one.
+    assert_eq!(c.send("DELETE", "/api/sessions", None, vec![], &[]).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(c.get("/api/agent-tokens").await.json().as_array().unwrap().len(), 1);
+    assert_eq!(c.send("DELETE", &format!("/api/agent-tokens/{id}"), None, vec![], &[]).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(c.get("/api/agent-tokens").await.json(), json!([]));
+    assert_eq!(c.send("DELETE", &format!("/api/agent-tokens/{id}"), None, vec![], &[]).await.status, StatusCode::NOT_FOUND);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn the_manage_boards_grant_starts_off_and_persists() {
+    let (mut c, _app, dir) = signed_in().await;
+    let made = c.json("POST", "/api/agent-tokens", json!({ "label": "Claude" })).await.json();
+    let id = made["id"].as_str().unwrap().to_string();
+    assert_eq!(c.get("/api/agent-tokens").await.json()[0]["manageBoards"], false, "off for a new token");
+    let on = c.json("PATCH", &format!("/api/agent-tokens/{id}"), json!({ "manageBoards": true })).await;
+    assert_eq!(on.status, StatusCode::NO_CONTENT);
+    assert_eq!(c.get("/api/agent-tokens").await.json()[0]["manageBoards"], true, "the toggle persists");
+    let nobody = c.json("PATCH", &format!("/api/agent-tokens/{}", uuid::Uuid::now_v7()), json!({ "manageBoards": true })).await;
+    assert_eq!(nobody.status, StatusCode::NOT_FOUND);
+
+    assert_eq!(c.get("/api/agent-settings").await.json(), json!({ "localAgentsManageBoards": false }));
+    let set = c.json("PATCH", "/api/agent-settings", json!({ "localAgentsManageBoards": true })).await;
+    assert_eq!(set.json(), json!({ "localAgentsManageBoards": true }));
+    assert_eq!(c.get("/api/agent-settings").await.json()["localAgentsManageBoards"], true);
     let _ = std::fs::remove_dir_all(dir);
 }

@@ -3,7 +3,13 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { CanvasTheme } from './canvas-theme';
-import { previewFor, RemoteCursors, remoteSelectionMarks } from './presence-layer';
+import {
+  agentFocusMarks,
+  PresenceRoster,
+  previewFor,
+  RemoteCursors,
+  remoteSelectionMarks,
+} from './presence-layer';
 import { EMPTY_PRESENCE, type RemotePresence } from './realtime';
 
 /**
@@ -163,26 +169,66 @@ describe('the cursor label', () => {
     expect(labelAt(0.5)).not.toContain('scale(');
   });
 
-  it('sets the name in the identity face at a fixed 11px', () => {
+  it('labels the cursor with the letter tile, never the pixel face set as text', () => {
+    // The old label set the name in the dot face at 11px, where a 0.045em dot is
+    // half a pixel and, with smoothing off, is not painted: the pill came out
+    // blank (design.md, task 4.1). The tile draws its letter as dots instead.
     const markup = labelAt(1);
 
-    expect(markup).toContain('Ada');
-    // The pixel face names the product and a person, and nothing else.
-    expect(markup).toContain('wordmark');
-    expect(markup).toContain('text-[11px]');
+    expect(markup).toContain('data-testid="remote-cursor-tile"');
+    expect(markup).toContain('data-letter="A"');
+    expect(markup).toContain('aria-label="Ada"');
+    expect(markup).not.toContain('wordmark');
   });
 
-  it('inverts the name into a filled pill rather than colouring text on the ground', () => {
-    // Presence tokens are validated at 3:1 as indicators; a name is text and
-    // owes 4.5:1. Dark ink on the bright fill clears that — tokens.test.ts
-    // asserts the ratio itself.
-    const markup = labelAt(1);
-
-    expect(markup).toContain('text-surface');
-    expect(markup).toContain('green-token');
+  it("draws the letter in the person's colour", () => {
+    expect(labelAt(1)).toContain('fill="green-token"');
   });
 
   it('draws no circle, because the system permits one radius and no circles', () => {
     expect(labelAt(1)).not.toContain('rounded-full');
+  });
+});
+
+describe('an agent on the board', () => {
+  const agent = crypto.randomUUID();
+  const item = asItemId(crypto.randomUUID());
+  const presence = presenceWith({
+    actors: new Map([
+      [
+        agent,
+        {
+          actorId: agent,
+          displayName: 'Claude Code',
+          colourIndex: 2,
+          kind: 'agent',
+          person: 'Ada',
+        },
+      ],
+    ]) as unknown as RemotePresence['actors'],
+    focus: new Map([[agent, { itemId: item, verb: 'editing' }]]),
+  });
+
+  it('outlines what it is working on in its own colour', () => {
+    expect(agentFocusMarks(presence, (id) => (id === item ? rect(0) : undefined), theme)).toEqual([
+      {
+        key: `focus:${agent}`,
+        actorId: agent,
+        verb: 'editing',
+        rect: rect(0),
+        colour: 'violet-token',
+      },
+    ]);
+  });
+
+  it('is named in the roster as an agent, for its person, with what it is doing', () => {
+    const html = renderToStaticMarkup(
+      createElement(PresenceRoster, { presence, selfActorId: undefined, theme }),
+    );
+    expect(html).toContain('data-testid="presence-agent"');
+    expect(html).toContain('data-letter="C"');
+    expect(html).toContain('aria-label="Claude Code, an AI agent working for Ada · editing"');
+    expect(html).toContain('stroke="violet-token"');
+    expect(html).not.toContain('wordmark');
   });
 });

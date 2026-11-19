@@ -1,0 +1,4 @@
+flowchart LR
+  Client([Web client]) --> API[Checkout API]
+  API --> Pay[Payment adapter]
+  Pay --> Provider{{Payment provider}}

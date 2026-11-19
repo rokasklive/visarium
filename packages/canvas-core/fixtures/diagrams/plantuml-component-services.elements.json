@@ -1,0 +1,14 @@
+{
+  "elements": ["Web", "API", "Worker"],
+  "edges": [
+    {
+      "from": "Web",
+      "to": "API",
+      "label": "REST"
+    },
+    {
+      "from": "API",
+      "to": "Worker"
+    }
+  ]
+}

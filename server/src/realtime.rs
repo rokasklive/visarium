@@ -36,6 +36,9 @@ const MAX_FRAME_ITEMS: usize = 1024;
 const LOCK_TTL_MS: u64 = 10_000;
 /// Frames queued for one connection before it is cut off as too slow.
 const SEND_QUEUE: usize = 512;
+/// An agent leaves a board's participants after this long without a call
+/// (ADR-0031). A hypothesis; see OPEN_QUESTIONS.md.
+pub const AGENT_QUIET_SECS: u64 = 60;
 
 const BAD_DATA: u16 = 1007;
 const POLICY_VIOLATION: u16 = 1008;
@@ -80,11 +83,28 @@ struct Lock {
     expires_at: u64,
 }
 
+/// An agent working on a board: a participant with no socket, present while
+/// its tool calls keep coming (agents/presence).
+struct AgentPresence {
+    id: Uuid,
+    name: String,
+    person: String,
+    colour: usize,
+    last_ms: u64,
+}
+
+impl AgentPresence {
+    fn presence(&self) -> Value {
+        json!({ "actorId": self.id, "displayName": self.name, "colourIndex": self.colour, "kind": "agent", "person": self.person })
+    }
+}
+
 #[derive(Default)]
 struct Room {
     actors: Vec<Actor>,
     viewers: Vec<Viewer>,
     locks: HashMap<Uuid, Lock>,
+    agents: Vec<AgentPresence>,
 }
 
 impl Room {
@@ -96,6 +116,25 @@ impl Room {
     }
     fn viewer_count(&self) -> Value {
         json!({ "t": "viewers", "count": self.viewers.len() })
+    }
+    /// A colour for someone shown by `letter` (canvas/presence-indicators): the
+    /// first no participant with the same letter holds, so no two tiles on the
+    /// board match. Different letters may share a colour. When every colour is
+    /// taken for that letter, the least used one.
+    fn free_colour(&self, letter: char) -> usize {
+        let held: Vec<(char, usize)> = self
+            .actors
+            .iter()
+            .map(|a| (letter_of(&a.display_name), a.colour))
+            .chain(self.agents.iter().map(|a| (letter_of(&a.name), a.colour)))
+            .collect();
+        (0..COLOUR_SLOTS)
+            .find(|s| !held.iter().any(|(l, c)| *l == letter && c == s))
+            .unwrap_or_else(|| {
+                (0..COLOUR_SLOTS)
+                    .min_by_key(|s| held.iter().filter(|(_, c)| c == s).count())
+                    .unwrap_or(0)
+            })
     }
     fn send_to(&self, actor: Uuid, frame: &Value) {
         if let Some(a) = self.actors.iter().find(|a| a.id == actor) {
@@ -122,6 +161,67 @@ impl Rooms {
                 if let Err(mpsc::error::TrySendError::Full(_)) = v.tx.try_send(Message::Text(text.clone())) {
                     v.too_slow.notify_one();
                 }
+            }
+        }
+    }
+
+    /// An agent called a tool on this board. Joins it to the participants if
+    /// it was not there, and shows what it touched. Only members hear either:
+    /// `broadcast` reaches actors, never share-link viewers (ADR-0026). A board
+    /// nobody has open has no room, and there is no one to tell.
+    pub fn agent_seen(&self, board: &Uuid, id: Uuid, name: &str, person: &str, item: Option<&str>, verb: &str) {
+        let mut rooms = self.0.lock().unwrap();
+        let Some(room) = rooms.get_mut(board) else { return };
+        let now = now_ms();
+        match room.agents.iter_mut().find(|a| a.id == id) {
+            Some(a) => a.last_ms = now,
+            None => {
+                let colour = room.free_colour(letter_of(name));
+                let agent = AgentPresence { id, name: name.to_string(), person: person.to_string(), colour, last_ms: now };
+                room.broadcast(None, &json!({ "t": "presence", "joined": [agent.presence()] }));
+                room.agents.push(agent);
+            }
+        }
+        if let Some(item) = item.and_then(|i| Uuid::parse_str(i).ok()) {
+            room.broadcast(None, &json!({ "t": "focus", "actorId": id, "itemId": item, "verb": verb }));
+        }
+    }
+
+    /// A board's new title, and who gave it. Members only: a viewer learns no
+    /// names (ADR-0026).
+    pub fn board_renamed(&self, board: &Uuid, title: &str, by: &str) {
+        let rooms = self.0.lock().unwrap();
+        if let Some(room) = rooms.get(board) {
+            room.broadcast(None, &json!({ "t": "board", "title": title, "by": by }));
+        }
+    }
+
+    /// The board is gone. Members hear who deleted it; viewers are cut off,
+    /// since their link went with it.
+    pub fn board_deleted(&self, board: &Uuid, by: &str) {
+        let rooms = self.0.lock().unwrap();
+        if let Some(room) = rooms.get(board) {
+            room.broadcast(None, &json!({ "t": "board-deleted", "by": by }));
+            for v in &room.viewers {
+                let _ = v.tx.try_send(close_message(POLICY_VIOLATION, "this board was deleted"));
+            }
+        }
+    }
+
+    /// Drops agents quiet for longer than AGENT_QUIET_SECS.
+    pub fn sweep_agents(&self) {
+        self.sweep_agents_at(now_ms());
+    }
+
+    /// The sweep as of `now` (milliseconds since the epoch), for tests.
+    pub fn sweep_agents_at(&self, now: u64) {
+        let cutoff = now.saturating_sub(AGENT_QUIET_SECS * 1000);
+        let mut rooms = self.0.lock().unwrap();
+        for room in rooms.values_mut() {
+            let gone: Vec<Uuid> = room.agents.iter().filter(|a| a.last_ms < cutoff).map(|a| a.id).collect();
+            if !gone.is_empty() {
+                room.agents.retain(|a| a.last_ms >= cutoff);
+                room.broadcast(None, &json!({ "t": "presence", "left": gone }));
             }
         }
     }
@@ -172,6 +272,56 @@ impl Rooms {
         for v in rooms.values().flat_map(|r| &r.viewers).filter(|v| v.share_id == share_id) {
             let _ = v.tx.try_send(close_message(POLICY_VIOLATION, "this link is no longer active"));
         }
+    }
+}
+
+/// The letter a participant's tile shows: the first character of the name,
+/// folded to its base letter ("Šarūnas" → S) and uppercased; `?` for anything
+/// the tile cannot draw. The web client's `letterOf` is the same rule, and
+/// `packages/canvas-core/fixtures/presence-letters.json` holds both to it.
+pub fn letter_of(name: &str) -> char {
+    use unicode_normalization::UnicodeNormalization;
+    name.trim()
+        .chars()
+        .next()
+        .and_then(|c| c.nfd().next())
+        .and_then(|c| c.to_uppercase().next())
+        .filter(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+        .unwrap_or('?')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn letters_follow_the_shared_fixture() {
+        let fixture: Value =
+            serde_json::from_str(include_str!("../../packages/canvas-core/fixtures/presence-letters.json")).unwrap();
+        for case in fixture["cases"].as_array().unwrap() {
+            let (name, letter) = (case[0].as_str().unwrap(), case[1].as_str().unwrap());
+            assert_eq!(letter_of(name).to_string(), letter, "{name:?}");
+        }
+    }
+
+    fn agent(name: &str, colour: usize) -> AgentPresence {
+        AgentPresence { id: Uuid::new_v4(), name: name.into(), person: "Ada".into(), colour, last_ms: 0 }
+    }
+
+    #[test]
+    fn colours_are_unique_per_letter_not_per_room() {
+        let mut room = Room::default();
+        room.agents.push(agent("Ada", 0));
+        assert_ne!(room.free_colour('A'), 0, "a second A gets another colour");
+        assert_eq!(room.free_colour('R'), 0, "a different letter may share it");
+        for slot in 1..COLOUR_SLOTS {
+            room.agents.push(agent(&format!("A{slot}"), slot));
+        }
+        // Every colour is taken for A: the least used, with no panic.
+        room.agents.push(agent("Rokas", 0));
+        let seventh = room.free_colour('A');
+        assert!(seventh < COLOUR_SLOTS);
+        assert_ne!(seventh, 0, "slot 0 is used twice, so it is not the least used");
     }
 }
 
@@ -465,15 +615,14 @@ impl Connection {
             .ok_or_else(|| Close(POLICY_VIOLATION, "unknown board".into()))?;
         let id = Uuid::new_v4();
         self.app.rooms.with(&self.board, |r| {
-            let colour =
-                (0..COLOUR_SLOTS).find(|s| r.actors.iter().all(|a| a.colour != *s)).unwrap_or(r.actors.len() % COLOUR_SLOTS);
             let name = if self.display_name.trim().is_empty() {
                 format!("Guest {}", r.actors.len() + 1)
             } else {
                 self.display_name.clone()
             };
+            let colour = r.free_colour(letter_of(&name));
             r.actors.push(Actor { id, display_name: name, colour, tx: self.tx.clone(), too_slow: self.too_slow.clone() });
-            let actors: Vec<Value> = r.actors.iter().map(Actor::presence).collect();
+            let actors: Vec<Value> = r.actors.iter().map(Actor::presence).chain(r.agents.iter().map(AgentPresence::presence)).collect();
             r.send_to(id, &json!({ "t": "welcome", "actorId": id, "revision": revision, "actors": actors }));
             let me = r.actors.last().unwrap().presence();
             r.broadcast(Some(id), &json!({ "t": "presence", "joined": [me] }));

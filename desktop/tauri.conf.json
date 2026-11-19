@@ -5,7 +5,7 @@
   "identifier": "dev.visarium.desktop",
   "build": {
     "frontendDist": "static",
-    "beforeDevCommand": "pnpm --filter @visarium/web build",
+    "beforeDevCommand": { "script": "pnpm --filter @visarium/web build", "wait": true },
     "beforeBuildCommand": "pnpm --filter @visarium/web build"
   },
   "app": {

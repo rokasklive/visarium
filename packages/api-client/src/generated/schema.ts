@@ -478,6 +478,8 @@ export interface components {
             createdAt?: string;
             /** Format: date-time */
             updatedAt?: string;
+            /** The agent that made it for its owner; null when a person did. */
+            createdByAgent?: string | null;
         };
         Appearance: {
             /** Format: double */
@@ -535,6 +537,8 @@ export interface components {
             state?: "todo" | "doing" | "done" | "blocked";
             /** Format: uuid */
             by?: string | null;
+            /** @description The agent that acted for `by`, when one did (ADR-0031). Stamped by the server. */
+            byAgent?: string | null;
             /** Format: date-time */
             at?: string | null;
         };
@@ -555,6 +559,8 @@ export interface components {
             linkType: components["schemas"]["LinkType"];
             /** Format: uuid */
             by?: string | null;
+            /** @description The agent that acted for `by`, when one did (ADR-0031). Stamped by the server. */
+            byAgent?: string | null;
             /** Format: date-time */
             at?: string;
         };
@@ -737,6 +743,8 @@ export interface components {
             state?: "todo" | "doing" | "done" | "blocked";
             /** @description Stamped by the server. */
             by?: string | null;
+            /** @description The agent that acted for `by`, when one did (ADR-0031). Stamped by the server. */
+            byAgent?: string | null;
             /** @description Stamped by the server. */
             at?: string | null;
         } & {
@@ -765,6 +773,8 @@ export interface components {
             linkType?: components["schemas"]["LinkType"];
             /** @description Stamped by the server. */
             by?: string | null;
+            /** @description The agent that acted for `by`, when one did (ADR-0031). Stamped by the server. */
+            byAgent?: string | null;
             /** @description Stamped by the server. */
             at?: string | null;
         } & {
@@ -881,6 +891,8 @@ export interface components {
         Group: {
             /** Format: uuid */
             id?: string;
+            /** @description The group's short ref on its board, `g1` (ADR-0031). */
+            ref?: string;
             label?: string;
             frame?: boolean;
             memberIds?: string[];
@@ -888,6 +900,8 @@ export interface components {
         Item: {
             /** Format: uuid */
             id?: string;
+            /** @description The item's short ref on its board: a kind letter and a number never reused, `d2` (ADR-0031). */
+            ref?: string;
             transform?: components["schemas"]["Transform"];
             /** Format: double */
             z?: number;
@@ -1793,6 +1807,30 @@ export interface SessionView {
     current: boolean;
 }
 
+/** An agent token as listed: never its secret (ADR-0031). */
+export interface AgentToken {
+    id: string;
+    label?: string | null;
+    createdAt: string;
+    /** Null until the token is first used. */
+    lastUsedAt?: string | null;
+    /** The *Manage boards* grant: lets the agent create, rename, duplicate and delete boards. */
+    manageBoards: boolean;
+}
+
+/** The desktop's single-user grant for tokenless local agents. */
+export interface AgentSettings {
+    localAgentsManageBoards: boolean;
+}
+
+/** A token just made: the only response that ever carries the secret. */
+export interface NewAgentToken {
+    id: string;
+    label: string;
+    token: string;
+    createdAt: string;
+}
+
 export interface Identities {
     hasPassword: boolean;
     identities: { provider: string; name: string; email?: string | null; createdAt: string }[];
@@ -1859,6 +1897,24 @@ export interface paths {
     "/api/sessions/{id}": {
         parameters: NoParams;
         delete: Read<PathParams<{ id: string }>, { 204: Empty }>;
+    };
+    "/api/agent-tokens": {
+        parameters: NoParams;
+        /** My agent tokens, newest first, without their secrets */
+        get: Read<NoParams, { 200: Json<AgentToken[]> }>;
+        /** Mint one; the secret is in this response and never again */
+        post: Op<NoParams, Body<{ label: string }>, { 201: Json<NewAgentToken> }>;
+    };
+    "/api/agent-tokens/{id}": {
+        parameters: NoParams;
+        delete: Read<PathParams<{ id: string }>, { 204: Empty }>;
+        /** Turn the token's *Manage boards* grant on or off */
+        patch: Op<PathParams<{ id: string }>, Body<{ manageBoards: boolean }>, { 204: Empty }>;
+    };
+    "/api/agent-settings": {
+        parameters: NoParams;
+        get: Read<NoParams, { 200: Json<AgentSettings> }>;
+        patch: Op<NoParams, Body<{ localAgentsManageBoards: boolean }>, { 200: Json<AgentSettings> }>;
     };
     "/api/accounts/me/identities": {
         parameters: NoParams;

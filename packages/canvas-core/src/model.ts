@@ -41,6 +41,8 @@ export interface Task {
   readonly text: string;
   readonly state: TaskState;
   readonly by?: string | null;
+  /** The agent that acted for `by`, when one did (ADR-0031). Stamped by the server. */
+  readonly byAgent?: string | null;
   readonly at?: string | null;
 }
 
@@ -124,7 +126,14 @@ export function contentFrom(raw: unknown): CanvasItemContent | undefined {
             ? (t.state as TaskState)
             : 'todo';
           return [
-            { id, text: str(t.text) ?? '', state, by: str(t.by) ?? null, at: str(t.at) ?? null },
+            {
+              id,
+              text: str(t.text) ?? '',
+              state,
+              by: str(t.by) ?? null,
+              ...(typeof t.byAgent === 'string' ? { byAgent: t.byAgent } : {}),
+              at: str(t.at) ?? null,
+            },
           ];
         }),
       };
@@ -227,6 +236,8 @@ export interface Link {
   readonly to: Anchor;
   readonly linkType: LinkType;
   readonly by?: string | null;
+  /** The agent that acted for `by`, when one did (ADR-0031). Stamped by the server. */
+  readonly byAgent?: string | null;
   readonly at?: string | null;
 }
 

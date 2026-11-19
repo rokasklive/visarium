@@ -1,0 +1,5 @@
+@startuml
+class Board
+class Item
+Board "1" *-- "many" Item
+@enduml

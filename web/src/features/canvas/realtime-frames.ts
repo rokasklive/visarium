@@ -106,11 +106,18 @@ function previewItems(value: unknown): readonly PreviewItem[] | null {
 
 function actor(value: unknown): PresenceActor | null {
   if (!isObject(value)) return null;
-  const { actorId, displayName, colourIndex } = value;
+  const { actorId, displayName, colourIndex, kind, person } = value;
   if (!str(actorId) || !str(displayName) || !int(colourIndex)) return null;
   // Out-of-range would index past the token list and paint nothing.
   if (colourIndex < 0 || colourIndex >= PRESENCE_COLOUR_SLOTS) return null;
-  return { actorId, displayName, colourIndex } as PresenceActor;
+  // An agent says so, and whom it acts for; anything else there is ignored.
+  return {
+    actorId,
+    displayName,
+    colourIndex,
+    ...(kind === 'agent' ? { kind } : {}),
+    ...(kind === 'agent' && str(person) ? { person } : {}),
+  } as PresenceActor;
 }
 
 function actors(value: unknown): readonly PresenceActor[] | null {
@@ -356,6 +363,23 @@ export function parseServerMessage(raw: string): ServerMessage | null {
       return int(value.count) && value.count >= 0
         ? ({ t: 'viewers', count: value.count } as ServerMessage)
         : null;
+    case 'focus':
+      return str(value.actorId) &&
+        str(value.itemId) &&
+        (value.verb === 'reading' || value.verb === 'editing')
+        ? ({
+            t: 'focus',
+            actorId: value.actorId,
+            itemId: value.itemId,
+            verb: value.verb,
+          } as ServerMessage)
+        : null;
+    case 'board':
+      return str(value.title) && str(value.by)
+        ? ({ t: 'board', title: value.title, by: value.by } as ServerMessage)
+        : null;
+    case 'board-deleted':
+      return str(value.by) ? ({ t: 'board-deleted', by: value.by } as ServerMessage) : null;
     default:
       // An older client meeting a newer server. Dropping is the compatible half
       // of the evolution rule, and it is not an error.

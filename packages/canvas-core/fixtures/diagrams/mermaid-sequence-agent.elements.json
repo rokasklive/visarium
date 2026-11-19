@@ -1,0 +1,10 @@
+{
+  "elements": ["Agent", "Board"],
+  "edges": [
+    {
+      "from": "Agent",
+      "to": "Board",
+      "label": "add diagram"
+    }
+  ]
+}

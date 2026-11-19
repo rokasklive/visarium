@@ -7,6 +7,7 @@ import {
   useDuplicateBoard,
   useRenameBoard,
 } from '~/api/boards';
+import { useUiStore } from '~/app/ui-store';
 
 export const Route = createFileRoute('/')({ component: BoardsIndex });
 
@@ -27,6 +28,8 @@ function BoardsIndex() {
   const remove = useDeleteBoard();
   const navigate = useNavigate();
   const [title, setTitle] = useState('');
+  // Said until the next board opens, which clears it.
+  const notice = useUiStore((s) => s.boardNotice);
 
   /**
    * Making a board lands you in it.
@@ -40,6 +43,11 @@ function BoardsIndex() {
   return (
     <div className="mx-auto w-full max-w-2xl p-6">
       <h1 className="mb-4 text-base">Boards</h1>
+      {notice && (
+        <p className="mb-4 text-ink" role="status" data-testid="board-notice">
+          {notice}
+        </p>
+      )}
 
       <form
         className="mb-6 flex gap-2"

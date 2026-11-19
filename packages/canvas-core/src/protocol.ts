@@ -81,6 +81,13 @@ export interface PresenceActor {
   readonly displayName: string;
   /** Index into the presence colour tokens, `0 .. PRESENCE_COLOUR_SLOTS - 1`. Never a colour value. */
   readonly colourIndex: number;
+  /**
+   * `agent` for an AI agent working through `/mcp` (ADR-0031): present while
+   * its calls keep coming, with no cursor. Absent for a person.
+   */
+  readonly kind?: 'agent';
+  /** For an agent, the display name of the person it acts for. */
+  readonly person?: string;
 }
 
 /** One item's in-flight transform. A multi-item gesture sends these together in one frame. */
@@ -159,4 +166,18 @@ export type ServerMessage =
    * (ADR-0026). Members hear the count and nothing else about them; viewers
    * have no presence, no cursor and no name.
    */
-  | { readonly t: 'viewers'; readonly count: number };
+  | { readonly t: 'viewers'; readonly count: number }
+  /**
+   * What an agent just read or changed (ADR-0031). The item is outlined in the
+   * agent's colour for a moment. Never carries the item's content.
+   */
+  | {
+      readonly t: 'focus';
+      readonly actorId: ActorId;
+      readonly itemId: ItemId;
+      readonly verb: 'reading' | 'editing';
+    }
+  /** The board was renamed; `by` names who did ("Claude for Rokas"). Members only. */
+  | { readonly t: 'board'; readonly title: string; readonly by: string }
+  /** The board was deleted, by `by`. Members only; viewers are disconnected. */
+  | { readonly t: 'board-deleted'; readonly by: string };

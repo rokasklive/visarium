@@ -424,3 +424,85 @@ describe('board objects and links arrive from other people', () => {
     expect(op([body])).toBeNull();
   });
 });
+
+describe('agents on the board (ADR-0031)', () => {
+  it('reads an agent participant and ignores presence fields it does not know', () => {
+    const actorId = uuid();
+    const parsed = frame({
+      t: 'presence',
+      joined: [
+        {
+          actorId,
+          displayName: 'Claude Code',
+          colourIndex: 1,
+          kind: 'agent',
+          person: 'Ada',
+          mood: 'keen',
+        },
+      ],
+    });
+    expect(parsed).toEqual({
+      t: 'presence',
+      joined: [
+        { actorId, displayName: 'Claude Code', colourIndex: 1, kind: 'agent', person: 'Ada' },
+      ],
+    });
+    const person = frame({
+      t: 'presence',
+      joined: [{ actorId, displayName: 'Ada', colourIndex: 0, kind: 'robot' }],
+    });
+    expect(person).toEqual({
+      t: 'presence',
+      joined: [{ actorId, displayName: 'Ada', colourIndex: 0 }],
+    });
+  });
+
+  it('reads a focus frame and refuses one it cannot trust', () => {
+    const actorId = uuid();
+    const itemId = uuid();
+    expect(frame({ t: 'focus', actorId, itemId, verb: 'reading' })).toEqual({
+      t: 'focus',
+      actorId,
+      itemId,
+      verb: 'reading',
+    });
+    expect(frame({ t: 'focus', actorId, itemId, verb: 'deleting' })).toBeNull();
+    expect(frame({ t: 'focus', actorId, verb: 'reading' })).toBeNull();
+  });
+
+  it('keeps byAgent on stamped operations', () => {
+    const parsed = frame({
+      t: 'op',
+      fromRevision: 1,
+      toRevision: 2,
+      operations: [
+        {
+          type: 'task.set',
+          itemId: uuid(),
+          taskId: 't1',
+          state: 'done',
+          by: uuid(),
+          byAgent: 'Claude Code',
+          at: '2026-11-19T10:00:00Z',
+        },
+      ],
+    });
+    expect(parsed).toMatchObject({ operations: [{ byAgent: 'Claude Code' }] });
+  });
+});
+
+describe('the board itself changes (agents/board-management)', () => {
+  it('reads a rename and a deletion, with who did it', () => {
+    expect(frame({ t: 'board', title: 'Feature tour', by: 'Claude for Ada' })).toEqual({
+      t: 'board',
+      title: 'Feature tour',
+      by: 'Claude for Ada',
+    });
+    expect(frame({ t: 'board-deleted', by: 'Claude for Ada' })).toEqual({
+      t: 'board-deleted',
+      by: 'Claude for Ada',
+    });
+    expect(frame({ t: 'board', title: 3, by: 'x' })).toBeNull();
+    expect(frame({ t: 'board-deleted' })).toBeNull();
+  });
+});

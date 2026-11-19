@@ -1,0 +1,17 @@
+{
+  "elements": ["Client", "API", "Pay", "Provider"],
+  "edges": [
+    {
+      "from": "Client",
+      "to": "API"
+    },
+    {
+      "from": "API",
+      "to": "Pay"
+    },
+    {
+      "from": "Pay",
+      "to": "Provider"
+    }
+  ]
+}

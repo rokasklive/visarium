@@ -1,4 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from '@tanstack/react-router';
 import {
   type Anchor,
   applySelection,
@@ -113,7 +114,14 @@ import {
 import { loaded as objectRenderersLoaded } from './objects/loaders';
 import { drawnHeight, isObject, ObjectLayouts, type ObjectView } from './objects/store';
 import { useObjectEditing } from './objects/use-editing';
-import { PresenceRoster, previewFor, RemoteCursors, remoteSelectionMarks } from './presence-layer';
+import {
+  AgentFocusLabels,
+  agentFocusMarks,
+  PresenceRoster,
+  previewFor,
+  RemoteCursors,
+  remoteSelectionMarks,
+} from './presence-layer';
 import { BoardRealtime, EMPTY_PRESENCE, type RemotePresence } from './realtime';
 import {
   cropTargetOf,
@@ -382,6 +390,8 @@ export function CanvasSurface({
    * would put a duplicate in the panel.
    */
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const setBoardNotice = useUiStore((s) => s.setBoardNotice);
   useEffect(installBench, []);
 
   /**
@@ -531,14 +541,12 @@ export function CanvasSurface({
   };
 
   /** Another actor's selection, as world rectangles the renderer can stroke. */
-  const remoteMarks = remoteSelectionMarks(
-    presence,
-    (id) => {
-      const item = doc.item(id);
-      return item ? transformBounds(previewFor(presence, id) ?? item.transform) : undefined;
-    },
-    theme,
-  );
+  const remoteBounds = (id: ItemId) => {
+    const item = doc.item(id);
+    return item ? transformBounds(previewFor(presence, id) ?? item.transform) : undefined;
+  };
+  const remoteMarks = remoteSelectionMarks(presence, remoteBounds, theme);
+  const focusMarks = agentFocusMarks(presence, remoteBounds, theme);
 
   const commit = useCallback(
     (...bodies: CanvasOperationBody[]) => {
@@ -607,6 +615,8 @@ export function CanvasSurface({
 
   useEffect(() => {
     if (!boardId || readOnly) return;
+    // Why the person last left a board is old news once another opens.
+    setBoardNotice(null);
     const sync = new BoardSync({
       boardId,
       doc,
@@ -640,6 +650,12 @@ export function CanvasSurface({
       onRemoteChange: redraw,
       onLockRefused: (itemIds) => gestureRecovery.current.snapBack(itemIds),
       onViewers: setLinkViewers,
+      onRenamed: () => void queryClient.invalidateQueries({ queryKey: ['boards'] }),
+      onDeleted: (by) => {
+        setBoardNotice(`This board was deleted by ${by}.`);
+        void queryClient.invalidateQueries({ queryKey: ['boards'] });
+        void navigate({ to: '/' });
+      },
     });
     realtimeRef.current = realtime;
     realtime.connect();
@@ -668,7 +684,19 @@ export function CanvasSurface({
       sync.stop();
       void sync.flush(true);
     };
-  }, [boardId, doc, readOnly, setSync, setConnection, setLinkViewers, objects, opLog]);
+  }, [
+    boardId,
+    doc,
+    readOnly,
+    setSync,
+    setConnection,
+    setLinkViewers,
+    objects,
+    opLog,
+    queryClient,
+    navigate,
+    setBoardNotice,
+  ]);
 
   const setUploads = useUiStore((s) => s.setUploads);
   const addUploadFailure = useUiStore((s) => s.addUploadFailure);
@@ -2306,6 +2334,20 @@ export function CanvasSurface({
                 perfectDrawEnabled={false}
               />
             ))}
+            {focusMarks.map((mark) => (
+              <KonvaRect
+                key={mark.key}
+                name="agent-focus"
+                x={mark.rect.minX - 4 / camera.zoom}
+                y={mark.rect.minY - 4 / camera.zoom}
+                width={mark.rect.maxX - mark.rect.minX + 8 / camera.zoom}
+                height={mark.rect.maxY - mark.rect.minY + 8 / camera.zoom}
+                stroke={mark.colour}
+                strokeWidth={2 / camera.zoom}
+                listening={false}
+                perfectDrawEnabled={false}
+              />
+            ))}
             {/*
             Konva's Transformer ships with its own blue and white anchors, which
             is a third palette nobody chose. It is the most visible thing on a
@@ -2357,6 +2399,7 @@ export function CanvasSurface({
         {objectEditing.overlays}
 
         <RemoteCursors presence={presence} camera={camera} size={size} theme={theme} />
+        <AgentFocusLabels marks={focusMarks} presence={presence} camera={camera} size={size} />
         <PresenceRoster
           presence={presence}
           selfActorId={realtimeRef.current?.actorId}

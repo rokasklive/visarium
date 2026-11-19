@@ -1,0 +1,15 @@
+{
+  "elements": ["Provider", "API", "Orders"],
+  "edges": [
+    {
+      "from": "Provider",
+      "to": "API",
+      "label": "payment.succeeded"
+    },
+    {
+      "from": "API",
+      "to": "Orders",
+      "label": "mark paid"
+    }
+  ]
+}

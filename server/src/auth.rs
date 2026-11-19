@@ -10,6 +10,9 @@
 //!   * `Member`: a signed-in account.
 //!   * `Viewer`: someone holding a read-only share link to one board
 //!     (ADR-0026, `sharing.rs`).
+//!   * `Agent`: an AI agent holding an agent token, on `/mcp` and nowhere
+//!     else (ADR-0031, `agent/`). Cookies are never read there, so CSRF does
+//!     not apply to it.
 //!
 //! What a route admits is decided by **where it is mounted**, never by a check
 //! inside the handler: `require_user` (applied to `private_api` in
@@ -169,6 +172,8 @@ pub async fn insert_user<'e>(
 pub const BROWSER_SESSION_IDLE_SECS: i64 = 30 * 86_400;
 pub const DEVICE_SESSION_IDLE_SECS: i64 = 90 * 86_400;
 pub const SHARE_SESSION_IDLE_SECS: i64 = 86_400;
+/// An agent token lives until it is revoked: a hundred years is "never".
+pub const AGENT_SESSION_IDLE_SECS: i64 = 100 * 365 * 86_400;
 /// A session's `last_seen_at` is written at most this often, so reading a
 /// page does not turn every request into a database write.
 pub const SESSION_TOUCH_SECS: i64 = 300;
@@ -178,6 +183,7 @@ pub enum Kind {
     Browser,
     Device,
     Share,
+    Agent,
 }
 
 impl Kind {
@@ -186,12 +192,14 @@ impl Kind {
             Kind::Browser => "browser",
             Kind::Device => "device",
             Kind::Share => "share",
+            Kind::Agent => "agent",
         }
     }
     fn parse(s: &str) -> Self {
         match s {
             "device" => Kind::Device,
             "share" => Kind::Share,
+            "agent" => Kind::Agent,
             _ => Kind::Browser,
         }
     }
@@ -200,6 +208,7 @@ impl Kind {
             Kind::Browser => BROWSER_SESSION_IDLE_SECS,
             Kind::Device => DEVICE_SESSION_IDLE_SECS,
             Kind::Share => SHARE_SESSION_IDLE_SECS,
+            Kind::Agent => AGENT_SESSION_IDLE_SECS,
         }
     }
 }
@@ -367,6 +376,9 @@ pub enum Principal {
     Local(User),
     Member { user: User, session: Session },
     Viewer { link: ShareLink, session: Session },
+    /// On `/mcp` only. Deliberately not a `user()`: nothing mounted under
+    /// `require_user` can be reached with an agent token.
+    Agent { user: User, session: Session, label: String },
 }
 
 impl Principal {
@@ -379,7 +391,9 @@ impl Principal {
     /// The session the request arrived with, member or viewer.
     pub fn session_hash(&self) -> Option<&str> {
         match self {
-            Principal::Member { session, .. } | Principal::Viewer { session, .. } => Some(&session.token_hash),
+            Principal::Member { session, .. } | Principal::Viewer { session, .. } | Principal::Agent { session, .. } => {
+                Some(&session.token_hash)
+            }
             _ => None,
         }
     }
@@ -405,6 +419,12 @@ pub async fn session_layer(State(app): State<AppState>, jar: CookieJar, mut req:
             Some(user) => Principal::Local(user),
             None => Principal::Anonymous,
         };
+        req.extensions_mut().insert(principal);
+        return next.run(req).await;
+    }
+
+    if req.uri().path() == MCP_PATH {
+        let principal = agent_principal(&app.db, req.headers()).await;
         req.extensions_mut().insert(principal);
         return next.run(req).await;
     }
@@ -446,6 +466,44 @@ pub async fn session_layer(State(app): State<AppState>, jar: CookieJar, mut req:
     response
 }
 
+/// The agent endpoint. It authenticates by bearer token alone.
+pub const MCP_PATH: &str = "/mcp";
+
+/// `Authorization: Bearer <agent token>` → the agent and its person, or
+/// Anonymous. Only a live session of kind `agent`, of an active account, counts.
+async fn agent_principal(db: &SqlitePool, headers: &HeaderMap) -> Principal {
+    let token = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer ")))
+        .map(str::trim)
+        .filter(|t| !t.is_empty());
+    let Some(token) = token else { return Principal::Anonymous };
+    let row: Option<(String, String, String, Option<String>)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT id, token_hash, user_id, label FROM session WHERE token_hash = ? AND kind = 'agent' AND expires_at > {NOW}"
+    )))
+    .bind(hash_token(token))
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten();
+    let Some((id, token_hash, user_id, label)) = row else { return Principal::Anonymous };
+    let Ok(Some(user)) = find_user(db, &user_id).await else { return Principal::Anonymous };
+    if user.deactivated_at.is_some() {
+        return Principal::Anonymous;
+    }
+    // "Last used" is what the Agents list shows, so the first use is written
+    // at once, and later ones at most every SESSION_TOUCH_SECS.
+    let _ = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "UPDATE session SET last_seen_at = {NOW} WHERE token_hash = ?
+            AND (last_seen_at = created_at OR last_seen_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-{SESSION_TOUCH_SECS} seconds'))"
+    )))
+    .bind(&token_hash)
+    .execute(db)
+    .await;
+    Principal::Agent { user, session: Session { id, token_hash, kind: Kind::Agent }, label: label.unwrap_or_else(|| "Agent".into()) }
+}
+
 pub async fn require_user(mut req: Request, next: Next) -> Response {
     let user = req.extensions().get::<Principal>().and_then(|p| p.user().cloned());
     match user {
@@ -475,7 +533,9 @@ pub async fn require_viewer(mut req: Request, next: Next) -> Response {
 pub async fn csrf_layer(jar: CookieJar, req: Request, next: Next) -> Response {
     let cookie = jar.get(CSRF_COOKIE).map(|c| c.value().to_string());
     let safe = matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS | Method::TRACE);
-    if !safe {
+    // `/mcp` reads no cookie, so there is no ambient credential to forge a
+    // request with; it checks Origin and content type itself (agent::mcp).
+    if !safe && req.uri().path() != MCP_PATH {
         let header = req.headers().get(CSRF_HEADER).and_then(|v| v.to_str().ok());
         let ok = matches!((&cookie, header), (Some(c), Some(h)) if !c.is_empty() && c == h);
         if !ok {
@@ -918,7 +978,7 @@ async fn list_sessions(
     Ok(axum::Json(
         sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT id, kind, label, created_at, last_seen_at, expires_at, token_hash IS ? AS current \
-             FROM session WHERE user_id = ? AND expires_at > {NOW} ORDER BY last_seen_at DESC"
+             FROM session WHERE user_id = ? AND kind <> 'agent' AND expires_at > {NOW} ORDER BY last_seen_at DESC"
         )))
         .bind(principal.session_hash())
         .bind(&me.id)
@@ -932,7 +992,11 @@ async fn end_one_session(
     axum::Extension(me): axum::Extension<User>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<StatusCode> {
-    let done = sqlx::query("DELETE FROM session WHERE id = ? AND user_id = ?").bind(id.to_string()).bind(&me.id).execute(&app.db).await?;
+    let done = sqlx::query("DELETE FROM session WHERE id = ? AND user_id = ? AND kind <> 'agent'")
+        .bind(id.to_string())
+        .bind(&me.id)
+        .execute(&app.db)
+        .await?;
     if done.rows_affected() == 0 {
         return Err(ApiError::not_found(format!("no session {id}")));
     }
@@ -945,7 +1009,13 @@ async fn end_other_sessions(
     axum::Extension(me): axum::Extension<User>,
     axum::Extension(principal): axum::Extension<Principal>,
 ) -> ApiResult<StatusCode> {
-    end_sessions_of(&app.db, &me.id, principal.session_hash()).await?;
+    // Agent tokens are listed and revoked in their own place, not here. A
+    // password change still ends them (end_sessions_of): that is a reset.
+    sqlx::query("DELETE FROM session WHERE user_id = ? AND token_hash IS NOT ? AND kind <> 'agent'")
+        .bind(&me.id)
+        .bind(principal.session_hash())
+        .execute(&app.db)
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

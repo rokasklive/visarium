@@ -197,8 +197,35 @@ test('another person appears, with a cursor and a name', async ({ page }) => {
   });
   await deliver(page, { t: 'cursor', actorId: ADA, x: 120, y: 90 });
 
-  await expect(page.getByTestId('presence-roster')).toContainText('Ada');
+  const tile = page.getByTestId('presence-actor');
+  await expect(tile).toHaveAttribute('aria-label', 'Ada');
+  await expect(tile).toHaveAttribute('data-letter', 'A');
   await expect(page.getByTestId('remote-cursor')).toBeVisible();
+  await expect(page.getByTestId('remote-cursor-tile')).toHaveAttribute('data-letter', 'A');
+  // Every tile draws its letter: dots in the person's colour, never a bare block.
+  for (const t of await page.locator('[data-testid=presence-roster] svg').all()) {
+    expect(await t.locator('path').getAttribute('d')).toMatch(/^M\d/);
+  }
+  // And it is not blank on screen: the tile has more than one colour in it.
+  const shot = await tile.screenshot();
+  expect(
+    new Set(
+      await page.evaluate(async (png) => {
+        const img = new Image();
+        img.src = `data:image/png;base64,${png}`;
+        await img.decode();
+        const c = document.createElement('canvas');
+        c.width = img.width;
+        c.height = img.height;
+        const g = c.getContext('2d') as CanvasRenderingContext2D;
+        g.drawImage(img, 0, 0);
+        const d = g.getImageData(0, 0, c.width, c.height).data;
+        const seen: string[] = [];
+        for (let i = 0; i < d.length; i += 4) seen.push(`${d[i]},${d[i + 1]},${d[i + 2]}`);
+        return seen;
+      }, shot.toString('base64')),
+    ).size,
+  ).toBeGreaterThan(2);
 
   // And when they leave, they leave completely.
   await deliver(page, { t: 'presence', left: [ADA] });
@@ -308,4 +335,55 @@ test('a malformed frame does not take the session down', async ({ page }) => {
   });
   await expect(page.getByTestId('presence-roster')).toContainText('Ada');
   await expect(page.getByTestId('presence-status')).toHaveCount(0);
+});
+
+test('an agent at work is named in the roster and outlines what it touches', async ({ page }) => {
+  const ITEM = '01a01640-6b72-7d60-968b-88be186f3401';
+  const AGENT = '01a01640-6b72-7d60-968b-88be186f3500';
+  await stubBoard(page, [snapshotItem(ITEM, 0, 1)]);
+  await page.goto(`/boards/${BOARD}`);
+  await welcome(page);
+  const focusOutlines = () =>
+    page.evaluate(
+      () =>
+        (
+          window as unknown as { Konva: { stages: { find(s: string): unknown[] }[] } }
+        ).Konva.stages[0]?.find('.agent-focus').length ?? 0,
+    );
+
+  await deliver(page, {
+    t: 'presence',
+    joined: [
+      { actorId: AGENT, displayName: 'Claude Code', colourIndex: 2, kind: 'agent', person: 'Ada' },
+    ],
+  });
+  const agent = page.getByTestId('presence-agent');
+  await expect(agent).toHaveAttribute('aria-label', 'Claude Code, an AI agent working for Ada');
+  await expect(agent).toHaveAttribute('data-letter', 'C');
+  await expect(page.getByTestId('remote-cursor')).toHaveCount(0);
+
+  await deliver(page, { t: 'focus', actorId: AGENT, itemId: ITEM, verb: 'editing' });
+  await expect(agent).toHaveAttribute('aria-label', /· editing$/);
+  await expect.poll(focusOutlines).toBe(1);
+  await expect(page.getByTestId('agent-focus-label')).toContainText('editing');
+  // It lets go after a few seconds, while the agent stays on the board.
+  await expect.poll(focusOutlines, { timeout: 8_000 }).toBe(0);
+  await expect(agent).toHaveAttribute('aria-label', 'Claude Code, an AI agent working for Ada');
+  await expect(page.getByTestId('agent-focus-label')).toHaveCount(0);
+
+  await deliver(page, { t: 'presence', left: [AGENT] });
+  await expect(page.getByTestId('presence-agent')).toHaveCount(0);
+});
+
+test('a board deleted while open returns the person to the list, saying who deleted it', async ({
+  page,
+}) => {
+  await stubBoard(page, [snapshotItem('01a01640-6b72-7d60-968b-88be186f3401', 0, 1)]);
+  await page.goto(`/boards/${BOARD}`);
+  await welcome(page);
+  await deliver(page, { t: 'board-deleted', by: 'Claude for Ada' });
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByTestId('board-notice')).toHaveText(
+    'This board was deleted by Claude for Ada.',
+  );
 });

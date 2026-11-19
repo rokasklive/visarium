@@ -1,0 +1,19 @@
+{
+  "elements": ["BoardSync", "CanvasDocument", "OpQueue", "Snapshot"],
+  "edges": [
+    {
+      "from": "BoardSync",
+      "to": "OpQueue",
+      "label": "drains"
+    },
+    {
+      "from": "OpQueue",
+      "to": "CanvasDocument",
+      "label": "applies"
+    },
+    {
+      "from": "CanvasDocument",
+      "to": "Snapshot"
+    }
+  ]
+}

@@ -36,6 +36,8 @@ export default defineConfig(({ mode }) => ({
       '/api': { target: BACKEND, changeOrigin: false },
       '/health': { target: BACKEND, changeOrigin: false },
       '/ws': { target: BACKEND, ws: true, changeOrigin: false },
+      // The agent endpoint (ADR-0031), so an agent can use the dev origin too.
+      '/mcp': { target: BACKEND, changeOrigin: false },
     },
   },
   optimizeDeps: {

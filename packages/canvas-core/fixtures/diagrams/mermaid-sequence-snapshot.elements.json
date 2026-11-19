@@ -1,0 +1,20 @@
+{
+  "elements": ["W", "S"],
+  "edges": [
+    {
+      "from": "W",
+      "to": "S",
+      "label": "GET snapshot"
+    },
+    {
+      "from": "S",
+      "to": "W",
+      "label": "items"
+    },
+    {
+      "from": "W",
+      "to": "S",
+      "label": "POST operations"
+    }
+  ]
+}

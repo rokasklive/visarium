@@ -1,0 +1,20 @@
+{
+  "elements": ["Web", "Server"],
+  "edges": [
+    {
+      "from": "Web",
+      "to": "Server",
+      "label": "request"
+    },
+    {
+      "from": "Server",
+      "to": "Web",
+      "label": "response"
+    },
+    {
+      "from": "Server",
+      "to": "Web",
+      "label": "push"
+    }
+  ]
+}

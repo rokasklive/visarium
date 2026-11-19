@@ -133,6 +133,7 @@ export type CanvasOperationBody =
       readonly state?: TaskState;
       /** Stamped by the server; whatever a client sends is replaced. */
       readonly by?: string | null;
+      readonly byAgent?: string | null;
       readonly at?: string | null;
     }
   | { readonly type: 'task.remove'; readonly itemId: ItemId; readonly taskId: string }
@@ -144,6 +145,7 @@ export type CanvasOperationBody =
       readonly linkType: LinkType;
       /** Stamped by the server. */
       readonly by?: string | null;
+      readonly byAgent?: string | null;
       readonly at?: string | null;
     }
   | { readonly type: 'link.set'; readonly linkId: LinkId; readonly linkType: LinkType }

@@ -1,0 +1,27 @@
+{
+  "elements": ["Start", "Check", "Apply", "RetryLoop", "Done"],
+  "edges": [
+    {
+      "from": "Start",
+      "to": "Check"
+    },
+    {
+      "from": "Check",
+      "to": "Apply",
+      "label": "yes"
+    },
+    {
+      "from": "Check",
+      "to": "RetryLoop",
+      "label": "no"
+    },
+    {
+      "from": "RetryLoop",
+      "to": "Check"
+    },
+    {
+      "from": "Apply",
+      "to": "Done"
+    }
+  ]
+}

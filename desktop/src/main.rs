@@ -24,6 +24,7 @@
 
 mod connect;
 mod drag_out;
+mod local_port;
 
 use std::path::PathBuf;
 
@@ -32,11 +33,6 @@ use serde::Serialize;
 use tauri::menu::{Menu, MenuItem, Submenu};
 use tauri::webview::cookie::{Cookie, SameSite};
 use tauri::{Manager, State, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
-
-/// A stable port keeps the SPA's origin — and with it the browser storage it
-/// remembers view preferences in — the same from one launch to the next.
-/// Taken by something else, any free port will do.
-const PREFERRED_PORT: u16 = 47821;
 
 /// The bundled greeting page (desktop/static), at the app's own origin.
 #[cfg(windows)]
@@ -48,7 +44,6 @@ const GREETING: &str = "tauri://localhost/";
 const KEYCHAIN: &str = "dev.visarium.desktop";
 
 struct Desktop {
-    library: Url,
     http: reqwest::Client,
     connections: PathBuf,
 }
@@ -100,8 +95,10 @@ struct LocalBoards {
 }
 
 #[tauri::command]
-async fn local_boards(desktop: State<'_, Desktop>) -> Result<LocalBoards, Problem> {
-    Ok(LocalBoards { library: desktop.library.clone(), boards: connect::recent_boards(&desktop.http, &desktop.library).await? })
+async fn local_boards(desktop: State<'_, Desktop>, port: State<'_, local_port::LocalPort>) -> Result<LocalBoards, Problem> {
+    let library = port.library();
+    let boards = connect::recent_boards(&desktop.http, &library).await?;
+    Ok(LocalBoards { library, boards })
 }
 
 #[derive(Serialize)]
@@ -284,7 +281,9 @@ fn main() {
             connections,
             forget,
             drag_out::drag_stage,
-            drag_out::drag_out
+            drag_out::drag_out,
+            local_port::local_port,
+            local_port::set_local_port
         ])
         .setup(|app| {
             let data = app.path().app_data_dir()?;
@@ -297,9 +296,14 @@ fn main() {
                 single_user: true,
                 ..Default::default()
             };
+            // A stable port keeps the SPA's origin (and the browser storage
+            // it remembers view preferences in) and an agent's /mcp address the
+            // same from one launch to the next. Chosen in Settings.
+            let port_file = app.path().app_config_dir()?.join("local-server.json");
+            let preferred = local_port::preferred(&port_file);
             let (state, listener) = tauri::async_runtime::block_on(async {
                 let state = visarium::open(config).await?;
-                let listener = match tokio::net::TcpListener::bind(("127.0.0.1", PREFERRED_PORT)).await {
+                let listener = match tokio::net::TcpListener::bind(("127.0.0.1", preferred)).await {
                     Ok(l) => l,
                     Err(_) => tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?,
                 };
@@ -309,7 +313,8 @@ fn main() {
             let library: Url = format!("http://127.0.0.1:{}/", listener.local_addr()?.port()).parse()?;
             drag_out::clear();
             drag_out::allow(app.handle(), &library)?;
-            tauri::async_runtime::spawn(visarium::serve(state, listener));
+            local_port::allow(app.handle(), &library)?;
+            app.manage(local_port::LocalPort::start(state, port_file, listener)?);
 
             let server = Submenu::with_items(
                 app,
@@ -343,7 +348,6 @@ fn main() {
                 .disable_drag_drop_handler()
                 .build()?;
             app.manage(Desktop {
-                library,
                 http: connect::client(),
                 connections: app.path().app_config_dir()?.join("connections.json"),
             });
@@ -353,7 +357,7 @@ fn main() {
             let Some(window) = app.get_webview_window("main") else { return };
             let target = match event.id().as_ref() {
                 "home" => GREETING.parse().unwrap(),
-                "local" => app.state::<Desktop>().library.clone(),
+                "local" => app.state::<local_port::LocalPort>().library(),
                 _ => return,
             };
             let _ = window.set_title("Visarium");

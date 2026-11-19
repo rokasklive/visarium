@@ -67,3 +67,31 @@ prod-stop:
 
 prod-logs:
     docker compose logs -f
+
+# /mcp against the official MCP SDK client, on a throwaway single-user server
+mcp-conformance:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    dir=$(mktemp -d)
+    port=18765
+    VISARIUM_PORT=$port VISARIUM_SINGLE_USER=true VISARIUM_DATABASE="$dir/visarium.db" \
+      VISARIUM_ASSETS_PATH="$dir/assets" VISARIUM_DERIVATIVES_PATH="$dir/derivatives" \
+      cargo run -q -p visarium-server &
+    pid=$!
+    trap 'kill $pid 2>/dev/null; rm -rf "$dir"' EXIT
+    for _ in $(seq 1 240); do curl -sf "http://127.0.0.1:$port/health" >/dev/null && break; sleep 0.5; done
+    node server/tests/mcp-conformance.mjs "http://127.0.0.1:$port/mcp"
+
+# The agent eval: each task in server/tests/agent_eval/tasks.json run by Claude Code (args: --model M --only id,id --label name)
+agent-eval *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    dir=$(mktemp -d)
+    port=18766
+    VISARIUM_PORT=$port VISARIUM_SINGLE_USER=true VISARIUM_DATABASE="$dir/visarium.db" \
+      VISARIUM_ASSETS_PATH="$dir/assets" VISARIUM_DERIVATIVES_PATH="$dir/derivatives" \
+      cargo run -q -p visarium-server &
+    pid=$!
+    trap 'kill $pid 2>/dev/null; rm -rf "$dir"' EXIT
+    for _ in $(seq 1 240); do curl -sf "http://127.0.0.1:$port/health" >/dev/null && break; sleep 0.5; done
+    node server/tests/agent_eval/run.mjs "http://127.0.0.1:$port" {{args}}

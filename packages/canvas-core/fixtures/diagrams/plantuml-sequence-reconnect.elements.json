@@ -1,0 +1,30 @@
+{
+  "elements": ["Client", "Server", "Store"],
+  "edges": [
+    {
+      "from": "Client",
+      "to": "Server",
+      "label": "hello(sinceRevision)"
+    },
+    {
+      "from": "Server",
+      "to": "Store",
+      "label": "read operations since"
+    },
+    {
+      "from": "Store",
+      "to": "Server",
+      "label": "operations"
+    },
+    {
+      "from": "Server",
+      "to": "Client",
+      "label": "welcome"
+    },
+    {
+      "from": "Client",
+      "to": "Client",
+      "label": "replay offline queue"
+    }
+  ]
+}

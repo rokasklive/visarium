@@ -1,0 +1,23 @@
+{
+  "elements": ["LB", "Web1", "Web2", "Cache"],
+  "edges": [
+    {
+      "from": "LB",
+      "to": "Web1",
+      "label": "routes"
+    },
+    {
+      "from": "LB",
+      "to": "Web2",
+      "label": "routes"
+    },
+    {
+      "from": "Web1",
+      "to": "Cache"
+    },
+    {
+      "from": "Web2",
+      "to": "Cache"
+    }
+  ]
+}

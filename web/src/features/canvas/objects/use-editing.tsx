@@ -300,13 +300,8 @@ export function useObjectEditing(d: EditingDeps) {
       item?.content.kind === 'checklist'
         ? item.content.tasks.find((t) => t.id === hit.taskId)
         : undefined;
-    const who = task?.by
-      ? task.by === d.me?.id
-        ? d.me.displayName
-        : personName(task.by)
-      : undefined;
     const text = task?.by
-      ? `${who ?? 'Someone'} · ${task.state}${task.at ? ` · ${when(task.at)}` : ''}`
+      ? `${credit(task, d.me, personName)} · ${task.state}${task.at ? ` · ${when(task.at)}` : ''}`
       : null;
     setTip((current) =>
       text === null
@@ -512,6 +507,25 @@ function topZ(doc: CanvasDocument): number {
   let z = 0;
   for (const item of doc.items()) z = Math.max(z, item.z);
   return z + 1;
+}
+
+/**
+ * Who last changed a task: the person, or the agent that acted for them
+ * (ADR-0031) — "Claude Code (agent) for Ada", so an agent's work is never
+ * mistaken for the person's own.
+ */
+export function credit(
+  stamp: { readonly by?: string | null; readonly byAgent?: string | null },
+  me: { readonly id: string; readonly displayName: string } | undefined,
+  personName: (id: string) => string | undefined,
+): string {
+  const person = stamp.by
+    ? stamp.by === me?.id
+      ? me.displayName
+      : personName(stamp.by)
+    : undefined;
+  if (stamp.byAgent) return `${stamp.byAgent} (agent) for ${person ?? 'someone'}`;
+  return person ?? 'Someone';
 }
 
 function when(iso: string): string {

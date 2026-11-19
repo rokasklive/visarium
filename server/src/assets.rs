@@ -573,6 +573,34 @@ pub async fn serve_derivative(app: &AppState, id: &Uuid, width: u32, headers: &H
     send_file(&derivative_path(&app.config.derivatives, &asset.id, width), "image/webp", &etag, None).await
 }
 
+/// An image as an agent sees it (ADR-0031): the derivative rung at or above
+/// `width` (the largest when none is), cropped as the board shows it. A crop
+/// is cut from the derivative and sent as PNG; otherwise the WebP goes as is.
+/// Returns the bytes, their type, and the width sent.
+pub async fn view(app: &AppState, asset_id: &str, width: u32, crop: Option<(f64, f64, f64, f64)>) -> ApiResult<(Vec<u8>, &'static str, u32)> {
+    let id = Uuid::parse_str(asset_id).map_err(|_| ApiError::bad_request("not an asset id"))?;
+    let asset = find(app, &id).await?;
+    let rung = WIDTHS.iter().rev().copied().find(|w| *w >= width).unwrap_or(WIDTHS[0]);
+    materialise(app, &asset, vec![rung]).await?;
+    let path = derivative_path(&app.config.derivatives, &asset.id, rung);
+    let bytes = tokio::fs::read(&path).await.map_err(|e| ApiError::internal(e.to_string()))?;
+    let Some((x, y, w, h)) = crop else {
+        let sent = (rung as i64).min(asset.width) as u32;
+        return Ok((bytes, "image/webp", sent));
+    };
+    tokio::task::spawn_blocking(move || -> Result<(Vec<u8>, &'static str, u32), String> {
+        let img = image::load_from_memory_with_format(&bytes, ImageFormat::WebP).map_err(|e| e.to_string())?;
+        let (iw, ih) = (img.width() as f64, img.height() as f64);
+        let cut = img.crop_imm((x * iw) as u32, (y * ih) as u32, ((w * iw) as u32).max(1), ((h * ih) as u32).max(1));
+        let mut out = std::io::Cursor::new(Vec::new());
+        cut.write_to(&mut out, ImageFormat::Png).map_err(|e| e.to_string())?;
+        Ok((out.into_inner(), "image/png", cut.width()))
+    })
+    .await
+    .map_err(|e| ApiError::internal(e.to_string()))?
+    .map_err(ApiError::internal)
+}
+
 #[derive(Deserialize)]
 struct AssetFilename {
     filename: String,
@@ -635,7 +663,8 @@ async fn delete(
         }
         for (board, ops) in by_board {
             let board = Uuid::parse_str(&board).unwrap();
-            let (from, to) = boards::apply(&app, &board, &ops).await?;
+            let actor = boards::Actor { user_id: me.id.clone(), agent: None };
+            let (from, to) = boards::apply(&app, &board, &ops, &actor).await?;
             app.rooms.announce(&board, None, from, to, &ops);
         }
     } else {

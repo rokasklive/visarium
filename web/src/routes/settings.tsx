@@ -1,20 +1,28 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { type FormEvent, useState } from 'react';
+import { type FormEvent, useEffect, useState } from 'react';
 import {
   absoluteLink,
+  mcpUrl,
   useAccounts,
+  useAgentSettings,
+  useAgentTokens,
   useChangePassword,
+  useCreateAgentToken,
   useCreateInvitation,
   useDeactivateAccount,
   useEditSelf,
   useEndSession,
   useIdentities,
   useInvitations,
+  useRevokeAgentToken,
   useRevokeInvitation,
   useSessions,
   useSetAdmin,
+  useSetAgentGrant,
+  useSetAgentSettings,
   useUnlinkIdentity,
 } from '~/api/accounts';
+import { copyText, type LocalPort, localPort, setLocalPort } from '~/api/desktop';
 import { type Account, providerStart, useSession } from '~/api/session';
 
 export const Route = createFileRoute('/settings')({ component: Settings });
@@ -41,6 +49,7 @@ function Settings() {
       {me ? <SelfSection me={me} /> : null}
       {me && !session.data?.singleUser ? <SignInMethods /> : null}
       {me && !session.data?.singleUser ? <SessionsSection /> : null}
+      {me ? <AgentsSection singleUser={session.data?.singleUser ?? false} /> : null}
       {me?.admin && !session.data?.singleUser ? <AdminSection meId={me.id} /> : null}
     </div>
   );
@@ -314,6 +323,257 @@ function SessionsSection() {
         </p>
       )}
     </section>
+  );
+}
+
+/**
+ * AI agents working on your boards (ADR-0031): the tokens they connect with,
+ * and the line that connects one. A token is shown once, when it is made —
+ * copied then or made again — and acts with exactly your access.
+ *
+ * Everything meant to be copied sits in a read-only field with its own copy
+ * button: the interface's text does not select (app.css), fields do.
+ */
+function AgentsSection({ singleUser }: { singleUser: boolean }) {
+  const tokens = useAgentTokens(!singleUser);
+  const create = useCreateAgentToken();
+  const revoke = useRevokeAgentToken();
+  const grant = useSetAgentGrant();
+  const local = useAgentSettings(singleUser);
+  const setLocal = useSetAgentSettings();
+  const [label, setLabel] = useState('');
+  const made = create.data;
+  const url = mcpUrl();
+  const secret = made?.token ?? '<token>';
+  const claude = singleUser
+    ? `claude mcp add --transport http visarium ${url}`
+    : `claude mcp add --transport http visarium ${url} --header "Authorization: Bearer ${secret}"`;
+  const generic = JSON.stringify(
+    {
+      mcpServers: {
+        visarium: singleUser
+          ? { type: 'http', url }
+          : { type: 'http', url, headers: { Authorization: `Bearer ${secret}` } },
+      },
+    },
+    null,
+    2,
+  );
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    create.mutate(label.trim() || 'An agent', { onSuccess: () => setLabel('') });
+  }
+
+  return (
+    <section className="mb-6 border-b border-line pb-6" data-testid="agents-section">
+      <SectionHeading>Agents</SectionHeading>
+      <p className="mb-3 text-ink-dim">
+        An AI agent can read and change your boards through Visarium&apos;s MCP endpoint, as you,
+        and its changes are marked as the agent&apos;s.
+        {singleUser ? ' On this machine it needs no token.' : ' Each agent gets its own token.'}
+      </p>
+      {singleUser && <LocalPortControl />}
+      {singleUser && (
+        <label className="mb-3 flex items-center gap-2 text-ink" data-testid="local-manage-boards">
+          <input
+            type="checkbox"
+            checked={local.data?.localAgentsManageBoards ?? false}
+            disabled={!local.data || setLocal.isPending}
+            onChange={(e) => setLocal.mutate(e.target.checked)}
+          />
+          Let local agents manage boards
+          <span className="text-ink-dim">(create, rename, duplicate; deleting still asks you)</span>
+        </label>
+      )}
+      {!singleUser && (
+        <>
+          <form onSubmit={submit} className="mb-3 flex items-end gap-2">
+            <TextField label="New token for" value={label} onChange={setLabel} autoComplete="off" />
+            <span className="mb-3">
+              <GhostButton type="submit" disabled={create.isPending}>
+                Make token
+              </GhostButton>
+            </span>
+          </form>
+          {made && (
+            <div
+              className="mb-3 rounded-sm border border-line-strong p-2"
+              data-testid="agent-token-made"
+            >
+              <p className="mb-2 text-ink">
+                Token for {made.label}. Copy it now: it is not shown again.
+              </p>
+              <CopyField label="Token" value={made.token} testId="agent-token-secret" />
+            </div>
+          )}
+          {create.isError && (
+            <p className="mb-3 text-ink" role="alert">
+              {create.error.message}
+            </p>
+          )}
+          {tokens.isError && <p className="mb-3 text-ink">agent tokens could not be loaded</p>}
+          <ul className="mb-3">
+            {tokens.data?.map((t) => (
+              <li
+                key={t.id}
+                className="flex items-center gap-2 border-b border-line py-1.5"
+                data-testid="agent-token"
+              >
+                <span className="min-w-0 flex-1 truncate text-ink">
+                  {t.label || 'An agent'}
+                  <span className="ml-2 text-ink-dim">
+                    {t.lastUsedAt
+                      ? `last used ${new Date(t.lastUsedAt).toLocaleString()}`
+                      : 'not used yet'}
+                  </span>
+                </span>
+                <label
+                  className="flex items-center gap-1 text-ink-dim"
+                  data-testid="agent-token-grant"
+                >
+                  <input
+                    type="checkbox"
+                    checked={t.manageBoards}
+                    disabled={grant.isPending}
+                    onChange={(e) => grant.mutate({ id: t.id, manageBoards: e.target.checked })}
+                    aria-label={`Let ${t.label || 'this agent'} manage boards`}
+                  />
+                  manage boards
+                </label>
+                <GhostButton
+                  label={`Revoke ${t.label ?? 'this token'}`}
+                  disabled={revoke.isPending}
+                  onClick={() => revoke.mutate(t.id)}
+                >
+                  revoke
+                </GhostButton>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      <CopyField label="Claude Code" value={claude} testId="agent-snippet-claude" />
+      <CopyField label="Any MCP client" value={generic} testId="agent-snippet-json" lines={8} />
+    </section>
+  );
+}
+
+/** A value to copy: a read-only field that selects itself, and a copy button. */
+function CopyField({
+  label,
+  value,
+  testId,
+  lines,
+}: {
+  label: string;
+  value: string;
+  testId: string;
+  /** A multi-line value gets a text area this many lines tall. */
+  lines?: number;
+}) {
+  const [copied, setCopied] = useState(false);
+  const field =
+    'w-full min-w-0 rounded-sm border border-line bg-surface-raised px-2 py-1 font-mono text-[11px] text-ink';
+  return (
+    <div className="mb-3">
+      <span className="mb-1 block text-[11px] uppercase tracking-wide text-ink-dim">{label}</span>
+      <div className="flex items-start gap-2">
+        {lines ? (
+          <textarea
+            readOnly
+            value={value}
+            rows={lines}
+            aria-label={label}
+            data-testid={testId}
+            onFocus={(e) => e.target.select()}
+            className={`${field} resize-none`}
+          />
+        ) : (
+          <input
+            readOnly
+            value={value}
+            aria-label={label}
+            data-testid={testId}
+            onFocus={(e) => e.target.select()}
+            className={field}
+          />
+        )}
+        <GhostButton
+          label={`Copy ${label}`}
+          onClick={() => void copyText(value).then((ok) => setCopied(ok))}
+        >
+          {copied ? 'copied' : 'copy'}
+        </GhostButton>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The desktop app's local port (desktop/src/local_port.rs): fixed so an agent's
+ * address stays put, and moved at once when changed here — the app serves the
+ * same library on the new port and brings this window along. Absent in a
+ * browser, where there is no app to ask.
+ */
+function LocalPortControl() {
+  const [port, setPort] = useState<LocalPort | undefined>();
+  const [value, setValue] = useState('');
+  const [problem, setProblem] = useState<string | null>(null);
+  const [moving, setMoving] = useState<number | null>(null);
+  useEffect(() => {
+    void localPort().then((p) => {
+      setPort(p);
+      if (p) setValue(String(p.actual));
+    });
+  }, []);
+  if (!port) return null;
+
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    setProblem(null);
+    const n = Number(value);
+    if (!Number.isInteger(n) || n < 1024 || n > 65535) {
+      setProblem('a port is a whole number from 1024 to 65535');
+      return;
+    }
+    if (n === port?.actual && n === port?.preferred) return;
+    try {
+      setMoving(n);
+      await setLocalPort(n);
+      setPort(await localPort());
+    } catch (error) {
+      setMoving(null);
+      setProblem((error as Error).message);
+    }
+  }
+
+  return (
+    <form onSubmit={save} className="mb-3" data-testid="local-port">
+      <div className="flex items-end gap-2">
+        <TextField label="Local port" value={value} onChange={setValue} autoComplete="off" />
+        <span className="mb-3">
+          <GhostButton type="submit" disabled={moving !== null}>
+            Save
+          </GhostButton>
+        </span>
+      </div>
+      {moving !== null && (
+        <p className="mb-2 text-ink" role="status">
+          Moving to port {moving}… Agents need the new address below.
+        </p>
+      )}
+      {moving === null && port.preferred !== port.actual && (
+        <p className="mb-2 text-ink-dim" role="status">
+          Port {port.preferred} was in use when Visarium started, so it is on {port.actual} for now.
+        </p>
+      )}
+      {problem && (
+        <p className="mb-2 text-ink" role="alert">
+          {problem}
+        </p>
+      )}
+    </form>
   );
 }
 

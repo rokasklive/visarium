@@ -7,6 +7,7 @@
 //!   * embedded in the desktop app: `single_user`, one implicit account, bound
 //!     to loopback, and no sign-in screen.
 
+pub mod agent;
 pub mod assets;
 pub mod auth;
 pub mod boards;
@@ -70,6 +71,8 @@ pub struct App {
     pub flows: oidc::Flows,
     pub device_codes: device::Codes,
     pub rooms: realtime::Rooms,
+    /// Writes per agent per minute (ADR-0031).
+    pub agent_writes: agent::Limiter,
     /// Bounds how many images decode at once: a 12-megapixel decode is ~50 MB
     /// of pixels, and a dropped folder should not be forty of them in parallel.
     pub image_permits: tokio::sync::Semaphore,
@@ -133,7 +136,7 @@ pub async fn open(config: Config) -> anyhow_lite::Result<AppState> {
         });
     }
     let cpus = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2);
-    Ok(Arc::new(App {
+    let app = Arc::new(App {
         db,
         config,
         throttle: Default::default(),
@@ -142,10 +145,23 @@ pub async fn open(config: Config) -> anyhow_lite::Result<AppState> {
         flows: Default::default(),
         device_codes: Default::default(),
         rooms: Default::default(),
+        agent_writes: Default::default(),
         image_permits: tokio::sync::Semaphore::new(cpus.clamp(1, 4)),
         setup_lock: Default::default(),
         local_user,
-    }))
+    });
+    // An agent stays on a board's participant list while it keeps calling;
+    // this drops the ones that went quiet. Weak, so it ends with the app.
+    let weak = Arc::downgrade(&app);
+    tokio::spawn(async move {
+        let mut every = tokio::time::interval(Duration::from_secs(5));
+        loop {
+            every.tick().await;
+            let Some(app) = weak.upgrade() else { break };
+            app.rooms.sweep_agents();
+        }
+    });
+    Ok(app)
 }
 
 pub fn router(state: AppState) -> Router {
@@ -161,6 +177,7 @@ pub fn router(state: AppState) -> Router {
         .merge(invitations::admin_routes())
         .merge(sharing::member_routes())
         .merge(device::member_routes())
+        .merge(agent::member_routes())
         .merge(boards::routes())
         .merge(collections::routes())
         .merge(assets::routes())
@@ -181,8 +198,12 @@ pub fn router(state: AppState) -> Router {
         .fallback(|| async { ApiError::not_found("no such endpoint") })
         .layer(DefaultBodyLimit::max(32 * 1024 * 1024));
 
+    // Agents: bearer token or the local account, never a cookie (ADR-0031).
+    let agents = agent::routes().route_layer(from_fn(agent::require_agent));
+
     Router::new()
         .nest("/api", api)
+        .merge(agents)
         .route("/ws/canvas/{id}", get(realtime::upgrade).route_layer(require_user))
         .route("/ws/shared", get(realtime::upgrade_viewer).route_layer(require_viewer))
         .merge(oidc::routes())
@@ -220,7 +241,7 @@ struct Web;
 /// answering HTML to something expecting JSON.
 async fn spa(uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
-    if ["health", "ws", "auth"].iter().any(|p| path == *p || path.starts_with(&format!("{p}/"))) {
+    if ["health", "ws", "auth", "mcp"].iter().any(|p| path == *p || path.starts_with(&format!("{p}/"))) {
         return ApiError::not_found("no such endpoint").into_response();
     }
     if let Some(file) = Web::get(path) {

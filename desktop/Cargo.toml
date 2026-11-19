@@ -27,3 +27,5 @@ visarium-server = { path = "../server" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+# The server's own, to seed a library in tests.
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite"] }

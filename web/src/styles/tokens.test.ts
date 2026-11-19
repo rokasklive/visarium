@@ -233,19 +233,19 @@ describe('presence colours', () => {
   }
 
   /**
-   * A presence colour stopped being only an indicator in M06.
+   * A presence colour carries a person's LETTER (agents/board-management's
+   * sibling capability, canvas/presence-indicators).
    *
-   * The rule above validates each slot at 3:1 as a MARK on the canvas. The
-   * cursor label and the presence roster now carry a person's NAME on that
-   * colour, and text owes 4.5:1 — so the label is inverted into a filled pill
-   * with `surface`-coloured ink, and this is the assertion that keeps that safe.
+   * Every participant is a tile in the app icon's style: the `surface` ground
+   * with their first letter drawn as dots in their colour. A dot-matrix glyph
+   * is a graphic and owes 3:1; the bar here is 4.5:1 anyway, because the
+   * letter is the only thing on the tile that tells two people apart.
    *
-   * If a slot ever fails here, nudge the token rather than the rule: the design
-   * depends on a name being readable, not on a particular hue.
+   * If a slot ever fails here, nudge the token rather than the rule.
    */
   for (let slot = 0; slot < SLOTS; slot++) {
-    it(`surface ink on presence-${slot} clears 4.5:1 as text`, () => {
-      expect(contrast('surface', `presence-${slot}`)).toBeGreaterThanOrEqual(4.5);
+    it(`presence-${slot} letter reads on the tile ground`, () => {
+      expect(contrast(`presence-${slot}`, 'surface')).toBeGreaterThanOrEqual(4.5);
     });
   }
 });

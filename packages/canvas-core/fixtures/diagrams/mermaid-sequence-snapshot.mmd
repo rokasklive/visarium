@@ -1,0 +1,9 @@
+sequenceDiagram
+  participant W as Web app
+  participant S as Server
+  W->>+S: GET snapshot
+  S-->>-W: items
+  loop every change
+    W->>S: POST operations
+  end
+  Note over W,S: broadcast after commit

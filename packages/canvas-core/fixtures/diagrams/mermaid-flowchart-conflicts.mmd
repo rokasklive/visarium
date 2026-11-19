@@ -1,0 +1,6 @@
+flowchart TD
+  Start[Edit arrives] --> Check{Base revision current?}
+  Check -->|yes| Apply[Apply and commit]
+  Check -->|no| RetryLoop[Re-read and retry]
+  RetryLoop --> Check
+  Apply --> Done[Broadcast to peers]

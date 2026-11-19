@@ -32,15 +32,17 @@ pub fn routes() -> Router<AppState> {
 #[derive(Serialize, sqlx::FromRow)]
 #[serde(rename_all = "camelCase")]
 pub struct Board {
-    id: String,
-    title: String,
-    owner_id: Option<String>,
-    revision: i64,
-    created_at: String,
-    updated_at: String,
+    pub id: String,
+    pub title: String,
+    pub owner_id: Option<String>,
+    pub revision: i64,
+    pub created_at: String,
+    pub updated_at: String,
+    /// The agent that made it, for its owner; null when a person did.
+    pub created_by_agent: Option<String>,
 }
 
-const COLUMNS: &str = "id, title, owner_id, revision, created_at, updated_at";
+const COLUMNS: &str = "id, title, owner_id, revision, created_at, updated_at, created_by_agent";
 
 fn not_found(id: impl std::fmt::Display) -> ApiError {
     ApiError::not_found(format!("no board {id}"))
@@ -110,8 +112,30 @@ pub struct Task {
     pub state: String,
     #[serde(default)]
     pub by: Option<String>,
+    /// The agent that acted for `by`, when one did (ADR-0031).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by_agent: Option<String>,
     #[serde(default)]
     pub at: Option<String>,
+}
+
+/// Who a batch is from: an account, and the agent acting for it when there is
+/// one. Taken from the session, never from an operation's body.
+#[derive(Clone, Debug)]
+pub struct Actor {
+    pub user_id: String,
+    pub agent: Option<String>,
+}
+
+/// The letter a ref starts with: `d2` is the board's second diagram.
+pub fn ref_letter(kind: &str) -> &'static str {
+    match kind {
+        "image" => "i",
+        "note" => "n",
+        "diagram" => "d",
+        "checklist" => "c",
+        _ => "x",
+    }
 }
 
 fn todo() -> String {
@@ -120,9 +144,9 @@ fn todo() -> String {
 
 /// A checklist's `body` column.
 #[derive(Serialize, Deserialize)]
-struct Checklist {
-    title: String,
-    tasks: Vec<Task>,
+pub struct Checklist {
+    pub title: String,
+    pub tasks: Vec<Task>,
 }
 
 /// One end of a link: a whole item, or one named element inside a diagram.
@@ -349,6 +373,8 @@ pub enum Op {
         state: Option<String>,
         #[serde(default)]
         by: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        by_agent: Option<String>,
         #[serde(default)]
         at: Option<String>,
     },
@@ -362,6 +388,8 @@ pub enum Op {
         link_type: String,
         #[serde(default)]
         by: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        by_agent: Option<String>,
         #[serde(default)]
         at: Option<String>,
     },
@@ -379,20 +407,40 @@ impl Op {
     /// ponytail: an `item.create` that restores a deleted checklist (undo)
     /// re-stamps its tasks with whoever pressed undo. Carry the original
     /// stamps through history if that ever matters.
-    pub fn stamp(&mut self, by: &str, at: &str) {
-        let mark = |b: &mut Option<String>, a: &mut Option<String>| {
-            *b = Some(by.to_string());
+    pub fn stamp(&mut self, actor: &Actor, at: &str) {
+        let mark = |b: &mut Option<String>, g: &mut Option<String>, a: &mut Option<String>| {
+            *b = Some(actor.user_id.clone());
+            *g = actor.agent.clone();
             *a = Some(at.to_string());
         };
         match self {
             Op::ItemCreate { content, .. } => {
                 for t in content.tasks.iter_mut().flatten() {
-                    mark(&mut t.by, &mut t.at);
+                    mark(&mut t.by, &mut t.by_agent, &mut t.at);
                 }
             }
-            Op::TaskAdd { task, .. } => mark(&mut task.by, &mut task.at),
-            Op::TaskSet { by: b, at: a, .. } | Op::LinkAdd { by: b, at: a, .. } => mark(b, a),
+            Op::TaskAdd { task, .. } => mark(&mut task.by, &mut task.by_agent, &mut task.at),
+            Op::TaskSet { by: b, by_agent: g, at: a, .. } | Op::LinkAdd { by: b, by_agent: g, at: a, .. } => mark(b, g, a),
             _ => {}
+        }
+    }
+
+    /// The item an operation touches, if it touches one.
+    pub fn item_id(&self) -> Option<Uuid> {
+        match self {
+            Op::ItemCreate { item_id, .. }
+            | Op::ItemDelete { item_id }
+            | Op::ItemTransform { item_id, .. }
+            | Op::ItemContent { item_id, .. }
+            | Op::ItemZ { item_id, .. }
+            | Op::ItemAppearance { item_id, .. }
+            | Op::ItemSource { item_id, .. }
+            | Op::ChecklistTitle { item_id, .. }
+            | Op::TaskAdd { item_id, .. }
+            | Op::TaskSet { item_id, .. }
+            | Op::TaskRemove { item_id, .. } => Some(*item_id),
+            Op::LinkAdd { from, .. } => Some(from.item_id),
+            _ => None,
         }
     }
 }
@@ -464,10 +512,12 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
             if kind != "image" && c.is_some() {
                 return Err(ApiError::bad_request("only an image can be cropped"));
             }
-            sqlx::query(
+            let letter = ref_letter(kind);
+            let inserted = sqlx::query(
                 "INSERT INTO canvas_item (id, canvas_id, kind, asset_id, lang, body, group_id, x, y, width, height, rotation, z,
-                                          opacity, flip_x, flip_y, crop_x, crop_y, crop_w, crop_h)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                          opacity, flip_x, flip_y, crop_x, crop_y, crop_w, crop_h, ref_no)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                         (SELECT coalesce(json_extract(next_refs, '$.' || ?), 0) + 1 FROM canvas WHERE id = ?))
                  ON CONFLICT (id) DO NOTHING",
             )
             .bind(item_id.to_string())
@@ -490,9 +540,16 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
             .bind(c.map(|c| c.1))
             .bind(c.map(|c| c.2))
             .bind(c.map(|c| c.3))
+            .bind(letter)
+            .bind(board)
             .execute(&mut **tx)
             .await
             .map_err(integrity)?;
+            // A replayed create (same id) changes nothing, so it takes no number.
+            if inserted.rows_affected() == 1 {
+                take_ref(tx, board, letter).await?;
+                reindex(tx, &item_id.to_string()).await?;
+            }
         }
         Op::ItemDelete { item_id } => {
             sqlx::query("DELETE FROM canvas_item WHERE id = ? AND canvas_id = ?")
@@ -500,6 +557,7 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
                 .bind(board)
                 .execute(&mut **tx)
                 .await?;
+            sqlx::query("DELETE FROM item_text WHERE item_id = ?").bind(item_id.to_string()).execute(&mut **tx).await?;
         }
         Op::ItemTransform { item_id, transform: t, crop } => {
             // Absent crop: the columns are not in the statement at all, so a
@@ -556,16 +614,22 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
             .map_err(integrity)?;
         }
         Op::GroupCreate { group_id, member_ids, label, frame } => {
-            sqlx::query(
-                "INSERT INTO canvas_group (id, canvas_id, label, frame) VALUES (?, ?, ?, ?) ON CONFLICT (id) DO NOTHING",
+            let inserted = sqlx::query(
+                "INSERT INTO canvas_group (id, canvas_id, label, frame, ref_no)
+                 VALUES (?, ?, ?, ?, (SELECT coalesce(json_extract(next_refs, '$.g'), 0) + 1 FROM canvas WHERE id = ?))
+                 ON CONFLICT (id) DO NOTHING",
             )
             .bind(group_id.to_string())
             .bind(board)
             .bind(label)
             .bind(frame.unwrap_or(false))
+            .bind(board)
             .execute(&mut **tx)
             .await
             .map_err(integrity)?;
+            if inserted.rows_affected() == 1 {
+                take_ref(tx, board, "g").await?;
+            }
             join(tx, board, group_id, member_ids).await.map_err(integrity)?;
         }
         Op::GroupDelete { group_id } => {
@@ -633,7 +697,7 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
             list.tasks.insert(at, task.clone());
             save_checklist(tx, board, item_id, &list).await?;
         }
-        Op::TaskSet { item_id, task_id, text, state, by, at } => {
+        Op::TaskSet { item_id, task_id, text, state, by, by_agent, at } => {
             if let Some(t) = text {
                 check_task_text(t)?;
             }
@@ -650,6 +714,7 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
                 task.state = s.clone();
             }
             task.by = by.clone();
+            task.by_agent = by_agent.clone();
             task.at = at.clone();
             save_checklist(tx, board, item_id, &list).await?;
         }
@@ -661,7 +726,7 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
                 save_checklist(tx, board, item_id, &list).await?;
             }
         }
-        Op::LinkAdd { link_id, from, to, link_type, by, at } => {
+        Op::LinkAdd { link_id, from, to, link_type, by, by_agent, at } => {
             check_link_type(link_type)?;
             for (end, a) in [("from", from), ("to", to)] {
                 // A link is a create: an end that is not on this board is refused, as
@@ -683,8 +748,9 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
                 return Err(ApiError::bad_request("a link needs two different ends"));
             }
             sqlx::query(sqlx::AssertSqlSafe(format!(
-                "INSERT INTO canvas_link (id, canvas_id, from_item, from_element, to_item, to_element, link_type, created_by, created_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, coalesce(?, {NOW}))
+                "INSERT INTO canvas_link (id, canvas_id, from_item, from_element, to_item, to_element, link_type, created_by,
+                                          created_by_agent, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, coalesce(?, {NOW}))
                  ON CONFLICT (id) DO NOTHING"
             )))
             .bind(link_id.to_string())
@@ -695,6 +761,7 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
             .bind(&to.element)
             .bind(link_type)
             .bind(by)
+            .bind(by_agent)
             .bind(at)
             .execute(&mut **tx)
             .await
@@ -744,8 +811,42 @@ async fn set_body(tx: &mut Transaction<'_, Sqlite>, board: &str, item: &Uuid, bo
     .execute(&mut **tx)
     .await
     .map_err(integrity)?;
+    reindex(tx, &item.to_string()).await
+}
+
+/// Moves a kind's counter past the number the row just took. Paired with the
+/// `coalesce(json_extract(next_refs, …)) + 1` in the insert, in one transaction.
+async fn take_ref(tx: &mut Transaction<'_, Sqlite>, board: &str, letter: &str) -> ApiResult<()> {
+    sqlx::query(
+        "UPDATE canvas SET next_refs = json_set(next_refs, '$.' || ?1, coalesce(json_extract(next_refs, '$.' || ?1), 0) + 1)
+          WHERE id = ?2",
+    )
+    .bind(letter)
+    .bind(board)
+    .execute(&mut **tx)
+    .await?;
     Ok(())
 }
+
+/// What search finds an item by: a note's or diagram's source, a checklist's
+/// title and task texts. Images have no text. Same expression as migration 0005.
+const ITEM_TEXT_SQL: &str = "INSERT INTO item_text (text, canvas_id, item_id)
+     SELECT CASE kind
+              WHEN 'checklist' THEN coalesce(json_extract(body, '$.title'), '') || char(10) ||
+                   coalesce((SELECT group_concat(json_extract(value, '$.text'), char(10)) FROM json_each(body, '$.tasks')), '')
+              ELSE body
+            END, canvas_id, id
+       FROM canvas_item WHERE id = ? AND kind <> 'image'";
+
+async fn reindex(tx: &mut Transaction<'_, Sqlite>, item: &str) -> ApiResult<()> {
+    sqlx::query("DELETE FROM item_text WHERE item_id = ?").bind(item).execute(&mut **tx).await?;
+    sqlx::query(ITEM_TEXT_SQL).bind(item).execute(&mut **tx).await?;
+    Ok(())
+}
+
+/// Operations kept per board for `changes` (ADR-0031). A hypothesis; see
+/// OPEN_QUESTIONS.md.
+pub const OPERATION_LOG_KEEP: i64 = 5_000;
 
 /// Reads a checklist inside the batch's transaction, or None when the item is
 /// gone. The batch already holds SQLite's write lock (the revision bump runs
@@ -770,7 +871,10 @@ async fn save_checklist(tx: &mut Transaction<'_, Sqlite>, board: &str, item: &Uu
 /// The revision bump runs FIRST: it takes SQLite's write lock at the start of
 /// the transaction, so a concurrent batch waits on `busy_timeout` rather than
 /// failing on a read-to-write lock upgrade halfway through.
-pub async fn apply(app: &AppState, board: &Uuid, ops: &[Op]) -> ApiResult<(i64, i64)> {
+///
+/// Each operation is logged with its actor in the same transaction, so history
+/// can never disagree with state.
+pub async fn apply(app: &AppState, board: &Uuid, ops: &[Op], actor: &Actor) -> ApiResult<(i64, i64)> {
     let n = ops.len() as i64;
     let id = board.to_string();
     let mut tx = app.db.begin().await?;
@@ -782,9 +886,24 @@ pub async fn apply(app: &AppState, board: &Uuid, ops: &[Op]) -> ApiResult<(i64, 
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| not_found(board))?;
-    for op in ops {
+    for (i, op) in ops.iter().enumerate() {
         apply_one(&mut tx, &id, op).await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "INSERT INTO canvas_operation (canvas_id, revision, actor_id, actor_agent, at, body) VALUES (?, ?, ?, ?, {NOW}, ?)"
+        )))
+        .bind(&id)
+        .bind(to - n + 1 + i as i64)
+        .bind(&actor.user_id)
+        .bind(&actor.agent)
+        .bind(serde_json::to_string(op).unwrap())
+        .execute(&mut *tx)
+        .await?;
     }
+    sqlx::query("DELETE FROM canvas_operation WHERE canvas_id = ? AND revision <= ?")
+        .bind(&id)
+        .bind(to - OPERATION_LOG_KEEP)
+        .execute(&mut *tx)
+        .await?;
     tx.commit().await?;
     Ok((to - n, to))
 }
@@ -823,27 +942,20 @@ async fn create(
     axum::Extension(me): axum::Extension<User>,
     Json(body): Json<BoardTitle>,
 ) -> ApiResult<(StatusCode, axum::Json<Board>)> {
-    let board = sqlx::query_as(sqlx::AssertSqlSafe(format!("INSERT INTO canvas (id, title, owner_id) VALUES (?, ?, ?) RETURNING {COLUMNS}")))
-        .bind(new_id())
-        .bind(valid_title(&body.title)?)
-        .bind(&me.id)
-        .fetch_one(&app.db)
-        .await?;
-    Ok((StatusCode::CREATED, axum::Json(board)))
+    Ok((StatusCode::CREATED, axum::Json(create_board(&app, &me.id, &body.title, None).await?)))
 }
 
 async fn get_board(State(app): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<axum::Json<Board>> {
     Ok(axum::Json(find(&app, &id.to_string()).await?))
 }
 
-async fn rename(State(app): State<AppState>, Path(id): Path<Uuid>, Json(body): Json<BoardTitle>) -> ApiResult<axum::Json<Board>> {
-    let board: Option<Board> =
-        sqlx::query_as(sqlx::AssertSqlSafe(format!("UPDATE canvas SET title = ?, updated_at = {NOW} WHERE id = ? RETURNING {COLUMNS}")))
-            .bind(valid_title(&body.title)?)
-            .bind(id.to_string())
-            .fetch_optional(&app.db)
-            .await?;
-    Ok(axum::Json(board.ok_or_else(|| not_found(id))?))
+async fn rename(
+    State(app): State<AppState>,
+    axum::Extension(me): axum::Extension<User>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<BoardTitle>,
+) -> ApiResult<axum::Json<Board>> {
+    Ok(axum::Json(rename_board(&app, &id, &body.title, &me.display_name).await?))
 }
 
 async fn delete(
@@ -852,15 +964,11 @@ async fn delete(
     Path(id): Path<Uuid>,
 ) -> ApiResult<StatusCode> {
     let board = find(&app, &id.to_string()).await?;
-    if !me.admin && board.owner_id.as_deref() != Some(me.id.as_str()) {
-        return Err(ApiError::forbidden("only the person who made this board, or an admin, can delete it"));
-    }
-    sqlx::query("DELETE FROM canvas WHERE id = ?").bind(&board.id).execute(&app.db).await?;
+    may_delete(&me, &board)?;
+    delete_board(&app, &board, &me.display_name).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Copies items and groups under fresh ids into a new board owned by the
-/// caller. The images are shared, not copied.
 async fn duplicate(
     State(app): State<AppState>,
     axum::Extension(me): axum::Extension<User>,
@@ -874,29 +982,95 @@ async fn duplicate(
             .map_err(|e| ApiError::bad_request(e.to_string()))?
             .map(|b| b.title)
     };
-    let source = find(&app, &id.to_string()).await?;
-    let title = match requested.filter(|t| !t.trim().is_empty()) {
+    Ok((StatusCode::CREATED, axum::Json(duplicate_board(&app, &id, &me.id, requested, None).await?)))
+}
+
+// --- board operations, shared by the HTTP handlers and the agent tools -------
+
+/// One board by id.
+pub async fn board(app: &AppState, id: &Uuid) -> ApiResult<Board> {
+    find(app, &id.to_string()).await
+}
+
+/// A new, empty board owned by `owner`; `agent` names the agent that made it.
+pub async fn create_board(app: &AppState, owner: &str, title: &str, agent: Option<&str>) -> ApiResult<Board> {
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO canvas (id, title, owner_id, created_by_agent) VALUES (?, ?, ?, ?) RETURNING {COLUMNS}"
+    )))
+    .bind(new_id())
+    .bind(valid_title(title)?)
+    .bind(owner)
+    .bind(agent)
+    .fetch_one(&app.db)
+    .await?)
+}
+
+/// Renames a board and tells everyone on it, naming who did (`by`).
+pub async fn rename_board(app: &AppState, id: &Uuid, title: &str, by: &str) -> ApiResult<Board> {
+    let board: Option<Board> =
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("UPDATE canvas SET title = ?, updated_at = {NOW} WHERE id = ? RETURNING {COLUMNS}")))
+            .bind(valid_title(title)?)
+            .bind(id.to_string())
+            .fetch_optional(&app.db)
+            .await?;
+    let board = board.ok_or_else(|| not_found(id))?;
+    app.rooms.board_renamed(id, &board.title, by);
+    Ok(board)
+}
+
+/// Only the person who made a board, or an admin, deletes it.
+pub fn may_delete(me: &User, board: &Board) -> ApiResult<()> {
+    if !me.admin && board.owner_id.as_deref() != Some(me.id.as_str()) {
+        return Err(ApiError::forbidden("only the person who made this board, or an admin, can delete it"));
+    }
+    Ok(())
+}
+
+/// Deletes a board for good and tells everyone on it who did (`by`). The
+/// caller has checked `may_delete`.
+pub async fn delete_board(app: &AppState, board: &Board, by: &str) -> ApiResult<()> {
+    let mut tx = app.db.begin().await?;
+    sqlx::query("DELETE FROM canvas WHERE id = ?").bind(&board.id).execute(&mut *tx).await?;
+    // A virtual table has no foreign keys to cascade through.
+    sqlx::query("DELETE FROM item_text WHERE canvas_id = ?").bind(&board.id).execute(&mut *tx).await?;
+    tx.commit().await?;
+    if let Ok(id) = Uuid::parse_str(&board.id) {
+        app.rooms.board_deleted(&id, by);
+    }
+    Ok(())
+}
+
+/// Copies items and groups under fresh ids into a new board owned by
+/// `owner`. The images are shared, not copied.
+pub async fn duplicate_board(app: &AppState, id: &Uuid, owner: &str, title: Option<String>, agent: Option<&str>) -> ApiResult<Board> {
+    let source = find(app, &id.to_string()).await?;
+    let title = match title.filter(|t| !t.trim().is_empty()) {
         Some(t) => valid_title(&t)?.to_string(),
         None => format!("{} copy", source.title),
     };
     let copy = new_id();
     let mut tx = app.db.begin().await?;
-    sqlx::query("INSERT INTO canvas (id, title, owner_id) VALUES (?, ?, ?)")
+    // Refs are copied as they are, counters included: `d2` in the copy is the
+    // copy of `d2`.
+    sqlx::query("INSERT INTO canvas (id, title, owner_id, next_refs, created_by_agent) SELECT ?, ?, ?, next_refs, ? FROM canvas WHERE id = ?")
         .bind(&copy)
         .bind(&title)
-        .bind(&me.id)
+        .bind(owner)
+        .bind(agent)
+        .bind(&source.id)
         .execute(&mut *tx)
         .await?;
-    let groups: Vec<(String, Option<String>, bool)> =
-        sqlx::query_as("SELECT id, label, frame FROM canvas_group WHERE canvas_id = ?").bind(&source.id).fetch_all(&mut *tx).await?;
+    let groups: Vec<(String, Option<String>, bool, i64)> =
+        sqlx::query_as("SELECT id, label, frame, ref_no FROM canvas_group WHERE canvas_id = ?").bind(&source.id).fetch_all(&mut *tx).await?;
     let mut group_map = std::collections::HashMap::new();
-    for (old, label, frame) in groups {
+    for (old, label, frame, ref_no) in groups {
         let new = new_id();
-        sqlx::query("INSERT INTO canvas_group (id, canvas_id, label, frame) VALUES (?, ?, ?, ?)")
+        sqlx::query("INSERT INTO canvas_group (id, canvas_id, label, frame, ref_no) VALUES (?, ?, ?, ?, ?)")
             .bind(&new)
             .bind(&copy)
             .bind(label)
             .bind(frame)
+            .bind(ref_no)
             .execute(&mut *tx)
             .await?;
         group_map.insert(old, new);
@@ -908,10 +1082,10 @@ async fn duplicate(
         item_map.insert(i.id.clone(), new.clone());
         sqlx::query(
             "INSERT INTO canvas_item (id, canvas_id, kind, asset_id, lang, body, group_id, x, y, width, height, rotation, z,
-                                      opacity, flip_x, flip_y, crop_x, crop_y, crop_w, crop_h)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                      opacity, flip_x, flip_y, crop_x, crop_y, crop_w, crop_h, ref_no)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
-        .bind(new)
+        .bind(&new)
         .bind(&copy)
         .bind(&i.kind)
         .bind(&i.asset_id)
@@ -931,15 +1105,18 @@ async fn duplicate(
         .bind(i.crop_y)
         .bind(i.crop_w)
         .bind(i.crop_h)
+        .bind(i.ref_no)
         .execute(&mut *tx)
         .await?;
+        reindex(&mut tx, &new).await?;
     }
     // Links follow their items to the copy; both ends are on the source board,
     // so both are in the map.
     for l in links_of(&mut tx, &source.id).await? {
         sqlx::query(
-            "INSERT INTO canvas_link (id, canvas_id, from_item, from_element, to_item, to_element, link_type, created_by, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO canvas_link (id, canvas_id, from_item, from_element, to_item, to_element, link_type, created_by,
+                                      created_by_agent, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(new_id())
         .bind(&copy)
@@ -949,29 +1126,31 @@ async fn duplicate(
         .bind(&l.to_element)
         .bind(&l.link_type)
         .bind(&l.created_by)
+        .bind(&l.created_by_agent)
         .bind(&l.created_at)
         .execute(&mut *tx)
         .await?;
     }
     tx.commit().await?;
-    Ok((StatusCode::CREATED, axum::Json(find(&app, &copy).await?)))
+    find(app, &copy).await
 }
 
 #[derive(sqlx::FromRow)]
-struct LinkRow {
-    id: String,
-    from_item: String,
-    from_element: Option<String>,
-    to_item: String,
-    to_element: Option<String>,
-    link_type: String,
-    created_by: Option<String>,
-    created_at: String,
+pub struct LinkRow {
+    pub id: String,
+    pub from_item: String,
+    pub from_element: Option<String>,
+    pub to_item: String,
+    pub to_element: Option<String>,
+    pub link_type: String,
+    pub created_by: Option<String>,
+    pub created_by_agent: Option<String>,
+    pub created_at: String,
 }
 
-async fn links_of(tx: &mut Transaction<'_, Sqlite>, board: &str) -> sqlx::Result<Vec<LinkRow>> {
+pub async fn links_of(tx: &mut Transaction<'_, Sqlite>, board: &str) -> sqlx::Result<Vec<LinkRow>> {
     sqlx::query_as(
-        "SELECT id, from_item, from_element, to_item, to_element, link_type, created_by, created_at
+        "SELECT id, from_item, from_element, to_item, to_element, link_type, created_by, created_by_agent, created_at
            FROM canvas_link WHERE canvas_id = ? ORDER BY created_at, id",
     )
     .bind(board)
@@ -980,35 +1159,41 @@ async fn links_of(tx: &mut Transaction<'_, Sqlite>, board: &str) -> sqlx::Result
 }
 
 #[derive(sqlx::FromRow)]
-struct ItemRow {
-    id: String,
-    kind: String,
-    lang: Option<String>,
-    body: Option<String>,
-    revision: i64,
-    group_id: Option<String>,
-    x: f64,
-    y: f64,
-    width: f64,
-    height: f64,
-    rotation: f64,
-    z: f64,
-    opacity: f64,
-    flip_x: bool,
-    flip_y: bool,
-    crop_x: Option<f64>,
-    crop_y: Option<f64>,
-    crop_w: Option<f64>,
-    crop_h: Option<f64>,
-    asset_id: Option<String>,
-    intrinsic_width: Option<i64>,
-    intrinsic_height: Option<i64>,
-    mime_type: Option<String>,
+pub struct ItemRow {
+    pub id: String,
+    pub kind: String,
+    pub lang: Option<String>,
+    pub body: Option<String>,
+    pub revision: i64,
+    pub group_id: Option<String>,
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    pub rotation: f64,
+    pub z: f64,
+    pub opacity: f64,
+    pub flip_x: bool,
+    pub flip_y: bool,
+    pub crop_x: Option<f64>,
+    pub crop_y: Option<f64>,
+    pub crop_w: Option<f64>,
+    pub crop_h: Option<f64>,
+    pub asset_id: Option<String>,
+    pub intrinsic_width: Option<i64>,
+    pub intrinsic_height: Option<i64>,
+    pub mime_type: Option<String>,
+    pub ref_no: i64,
 }
 
 impl ItemRow {
+    /// `d2`, `n4`: what agents call this item (ADR-0031).
+    pub fn short_ref(&self) -> String {
+        format!("{}{}", ref_letter(&self.kind), self.ref_no)
+    }
+
     /// The item's content as canvas-core models it.
-    fn content(&self) -> serde_json::Value {
+    pub fn content(&self) -> serde_json::Value {
         match self.kind.as_str() {
             "note" => json!({ "kind": "note", "source": self.body }),
             "diagram" => json!({ "kind": "diagram", "lang": self.lang, "source": self.body }),
@@ -1024,9 +1209,9 @@ impl ItemRow {
     }
 }
 
-const ITEMS_SQL: &str = "SELECT i.id, i.kind, i.lang, i.body, i.revision, i.group_id, i.x, i.y, i.width, i.height, i.rotation, i.z,
+pub const ITEMS_SQL: &str = "SELECT i.id, i.kind, i.lang, i.body, i.revision, i.group_id, i.x, i.y, i.width, i.height, i.rotation, i.z,
                                 i.opacity, i.flip_x, i.flip_y, i.crop_x, i.crop_y, i.crop_w, i.crop_h,
-                                i.asset_id, a.width AS intrinsic_width, a.height AS intrinsic_height, a.mime_type
+                                i.asset_id, a.width AS intrinsic_width, a.height AS intrinsic_height, a.mime_type, i.ref_no
                            FROM canvas_item i LEFT JOIN asset a ON a.id = i.asset_id
                           WHERE i.canvas_id = ? ORDER BY i.z";
 
@@ -1045,8 +1230,8 @@ pub async fn snapshot_of(db: &sqlx::SqlitePool, id: &str) -> ApiResult<serde_jso
         .await?
         .ok_or_else(|| not_found(id))?;
     let rows: Vec<ItemRow> = sqlx::query_as(ITEMS_SQL).bind(id).fetch_all(&mut *tx).await?;
-    let groups: Vec<(String, Option<String>, bool)> =
-        sqlx::query_as("SELECT id, label, frame FROM canvas_group WHERE canvas_id = ?").bind(id).fetch_all(&mut *tx).await?;
+    let groups: Vec<(String, Option<String>, bool, i64)> =
+        sqlx::query_as("SELECT id, label, frame, ref_no FROM canvas_group WHERE canvas_id = ?").bind(id).fetch_all(&mut *tx).await?;
     let link_rows = links_of(&mut tx, id).await?;
     let items: Vec<_> = rows.iter().map(|r| (r, r.content())).collect();
     // Display names for everyone the board credits, so a hover can say who
@@ -1071,8 +1256,9 @@ pub async fn snapshot_of(db: &sqlx::SqlitePool, id: &str) -> ApiResult<serde_jso
     }
     let groups: Vec<_> = groups
         .iter()
-        .map(|(gid, label, frame)| {
-            json!({ "id": gid, "label": label, "frame": frame, "memberIds": members.get(gid.as_str()).cloned().unwrap_or_default() })
+        .map(|(gid, label, frame, ref_no)| {
+            json!({ "id": gid, "ref": format!("g{ref_no}"), "label": label, "frame": frame,
+                    "memberIds": members.get(gid.as_str()).cloned().unwrap_or_default() })
         })
         .collect();
     let items: Vec<_> = items
@@ -1080,6 +1266,7 @@ pub async fn snapshot_of(db: &sqlx::SqlitePool, id: &str) -> ApiResult<serde_jso
         .map(|(r, content)| {
             let mut item = json!({
                 "id": r.id,
+                "ref": r.short_ref(),
                 "transform": { "x": r.x, "y": r.y, "width": r.width, "height": r.height, "rotation": r.rotation },
                 "z": r.z,
                 "revision": r.revision,
@@ -1101,7 +1288,7 @@ pub async fn snapshot_of(db: &sqlx::SqlitePool, id: &str) -> ApiResult<serde_jso
                 "id": l.id,
                 "from": { "itemId": l.from_item, "element": l.from_element },
                 "to": { "itemId": l.to_item, "element": l.to_element },
-                "linkType": l.link_type, "by": l.created_by, "at": l.created_at,
+                "linkType": l.link_type, "by": l.created_by, "byAgent": l.created_by_agent, "at": l.created_at,
             })
         })
         .collect();
@@ -1137,11 +1324,12 @@ async fn operations(
     }
     // Who and when come from the session, never from the body.
     let at: String = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT {NOW}"))).fetch_one(&app.db).await?;
+    let actor = Actor { user_id: me.id, agent: None };
     let mut ops: Vec<Op> = batch.operations.into_iter().map(|p| p.body).collect();
     for op in &mut ops {
-        op.stamp(&me.id, &at);
+        op.stamp(&actor, &at);
     }
-    let (from, to) = apply(&app, &id, &ops).await?;
+    let (from, to) = apply(&app, &id, &ops, &actor).await?;
     // The author already applied these optimistically; everyone else hears them,
     // stamped. The author takes the stamps from the applied bodies returned here.
     let actor = headers.get(ACTOR_HEADER).and_then(|v| v.to_str().ok()).and_then(|v| Uuid::parse_str(v).ok());

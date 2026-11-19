@@ -412,6 +412,7 @@ export class CanvasDocument {
           ...(body.text !== undefined ? { text: body.text } : {}),
           ...(body.state !== undefined ? { state: body.state } : {}),
           ...(body.by !== undefined ? { by: body.by } : {}),
+          ...(body.byAgent !== undefined ? { byAgent: body.byAgent } : {}),
           ...(body.at !== undefined ? { at: body.at } : {}),
         };
         this.#setTasks(
@@ -450,6 +451,7 @@ export class CanvasDocument {
           to: body.to,
           linkType: body.linkType,
           ...(body.by !== undefined ? { by: body.by } : {}),
+          ...(body.byAgent !== undefined ? { byAgent: body.byAgent } : {}),
           ...(body.at !== undefined ? { at: body.at } : {}),
         });
         return { type: 'link.delete', linkId: body.linkId };
@@ -473,6 +475,7 @@ export class CanvasDocument {
           to: existing.to,
           linkType: existing.linkType,
           ...(existing.by !== undefined ? { by: existing.by } : {}),
+          ...(existing.byAgent !== undefined ? { byAgent: existing.byAgent } : {}),
           ...(existing.at !== undefined ? { at: existing.at } : {}),
         };
       }

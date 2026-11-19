@@ -10,11 +10,10 @@
  *
  * That choice became load-bearing in M06 and must not be undone. The labels are
  * DOM positioned THROUGH the camera and **never scaled by zoom**: they are
- * translated to follow a point on the board, and their text stays at a fixed
- * screen size at every zoom level. A person's name is drawn in the pixel face
- * (`.wordmark`), and a pixel face needs integer sizes on the grid it was drawn
- * at — moving these into the Konva layer would scale the glyphs with the camera
- * and quietly smear that grid at every zoom but 1.
+ * translated to follow a point on the board, and stay at a fixed screen size at
+ * every zoom level. A participant is a letter tile drawn as device-pixel dots,
+ * and dots need whole pixels — moving these into the Konva layer would scale
+ * them with the camera and quietly smear the grid at every zoom but 1.
  *
  * **Remote selection is drawn by the renderer**, because it is a world-space
  * rectangle that has to survive pan, zoom and LOD exactly like the local
@@ -27,8 +26,20 @@
 import type { Camera, ItemId, Rect, Transform } from '@visarium/canvas-core';
 import { worldToScreen } from '@visarium/canvas-core';
 import { useEffect, useRef } from 'react';
+import { LetterTile } from '~/components/letter-tile';
 import type { CanvasTheme } from './canvas-theme';
 import type { RemotePresence } from './realtime';
+
+type Participant = RemotePresence['actors'] extends ReadonlyMap<string, infer A> ? A : never;
+
+/**
+ * Who a tile is, in words: its hover text and accessible name. A person is
+ * their name; an agent says so, for whom, and what it is doing.
+ */
+export function participantLabel(actor: Participant, verb?: string): string {
+  if (actor.kind !== 'agent') return actor.displayName;
+  return `${actor.displayName}, an AI agent working for ${actor.person ?? 'someone'}${verb ? ` · ${verb}` : ''}`;
+}
 
 /**
  * How long a cursor takes to reach where it was last reported.
@@ -130,23 +141,19 @@ export function RemoteCursors({
             />
           </svg>
           {/*
-           * A filled pill in the actor's colour with `surface`-coloured ink,
-           * rather than coloured text on the ground.
-           *
-           * Not conservatism: the presence tokens were validated at 3:1 against
-           * the canvas as INDICATORS, and a name is text, which owes 4.5:1.
-           * Inverting it into a fill puts dark ink on the bright colour, which
-           * clears the bar comfortably without nudging a token — asserted in
-           * tokens.test.ts.
-           *
-           * The name is set in the identity face: the pixel face names the
-           * product and a person, and nothing else.
+           * The participant's letter tile (canvas/presence-indicators), at a
+           * fixed screen size: never scaled by zoom, for the same reason the
+           * old name label was not.
            */}
-          <span
-            className="wordmark ml-2 rounded-sm px-1.5 py-0.5 text-[11px] whitespace-nowrap text-surface"
-            style={{ backgroundColor: theme.presence[actor.colourIndex] ?? theme.presence[0] }}
-          >
-            {actor.displayName}
+          <span className="ml-1 inline-block align-top">
+            <LetterTile
+              name={actor.displayName}
+              colour={theme.presence[actor.colourIndex] ?? theme.presence[0] ?? ''}
+              label={participantLabel(actor)}
+              agent={actor.kind === 'agent'}
+              size={18}
+              testId="remote-cursor-tile"
+            />
           </span>
         </div>
       ))}
@@ -180,6 +187,72 @@ export function remoteSelectionMarks(
   return marks;
 }
 
+/**
+ * The item each agent just read or changed (ADR-0031), outlined solid in the
+ * agent's colour — solid, where a person's selection is dashed, so the two
+ * never read as the same thing.
+ */
+export function agentFocusMarks(
+  presence: RemotePresence,
+  bounds: (id: ItemId) => Rect | undefined,
+  theme: CanvasTheme,
+): readonly { key: string; actorId: string; verb: string; rect: Rect; colour: string }[] {
+  const marks: { key: string; actorId: string; verb: string; rect: Rect; colour: string }[] = [];
+  for (const [actorId, { itemId, verb }] of presence.focus) {
+    const actor = presence.actors.get(actorId);
+    const colour = actor && (theme.presence[actor.colourIndex] ?? theme.presence[0]);
+    const rect = bounds(itemId);
+    if (colour && rect) marks.push({ key: `focus:${actorId}`, actorId, verb, rect, colour });
+  }
+  return marks;
+}
+
+/**
+ * The label on an agent's focus outline: its tile and what it is doing, at
+ * the outline's top-left corner. DOM, through the camera and never scaled, like
+ * the cursor labels.
+ */
+export function AgentFocusLabels({
+  marks,
+  presence,
+  camera,
+  size,
+}: {
+  marks: readonly { key: string; actorId: string; verb: string; rect: Rect; colour: string }[];
+  presence: RemotePresence;
+  camera: Camera;
+  size: { width: number; height: number };
+}) {
+  if (marks.length === 0) return null;
+  return (
+    <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
+      {marks.flatMap((mark) => {
+        const actor = presence.actors.get(mark.actorId);
+        if (!actor) return [];
+        const at = worldToScreen(camera, size, { x: mark.rect.minX, y: mark.rect.minY });
+        return [
+          <div
+            key={mark.key}
+            data-testid="agent-focus-label"
+            className="absolute top-0 left-0 flex items-center gap-1 text-[11px]"
+            style={{
+              transform: `translate3d(${Math.round(at.x)}px, ${Math.round(at.y) - 26}px, 0)`,
+            }}
+          >
+            <LetterTile
+              name={actor.displayName}
+              colour={mark.colour}
+              label={participantLabel(actor, mark.verb)}
+              agent
+            />
+            <span className="rounded-sm bg-surface/90 px-1 text-ink">{mark.verb}</span>
+          </div>,
+        ];
+      })}
+    </div>
+  );
+}
+
 /** The transform another actor is previewing for an item, if any. */
 export function previewFor(presence: RemotePresence, itemId: ItemId): Transform | undefined {
   return presence.previews.get(itemId)?.transform;
@@ -198,9 +271,11 @@ export function previewFor(presence: RemotePresence, itemId: ItemId): Transform 
  * you who you are. M05's text input and its `localStorage` entry were explicitly
  * a placeholder for this, and both are gone.
  *
- * The coloured dot went with them. It was a circle in a system that permits one
- * radius and no circles, and it repeated a colour the name now carries — "colour
- * is never the only carrier of meaning" is satisfied by the name itself.
+ * Each participant is a letter tile (canvas/presence-indicators): the app
+ * icon's ground with their first letter in their colour, outlined for an agent.
+ * The full name — and for an agent, whose it is and what it is doing — is the
+ * tile's hover text and accessible name, so colour is never the only carrier
+ * of meaning, and neither is the letter.
  */
 export function PresenceRoster({
   presence,
@@ -216,18 +291,21 @@ export function PresenceRoster({
 
   return (
     <div
-      className="absolute top-2 right-2 flex items-center gap-2 rounded-sm border border-line-strong bg-surface/90 px-2 py-1 text-[11px]"
+      className="absolute top-2 right-2 flex items-center gap-1 rounded-sm border border-line-strong bg-surface/90 p-1"
       data-testid="presence-roster"
     >
       {others.map((actor) => (
-        <span
+        <LetterTile
           key={actor.actorId}
-          className="wordmark rounded-sm px-1.5 py-0.5 text-surface"
-          style={{ backgroundColor: theme.presence[actor.colourIndex] ?? theme.presence[0] }}
-          data-testid="presence-actor"
-        >
-          {actor.displayName}
-        </span>
+          name={actor.displayName}
+          colour={theme.presence[actor.colourIndex] ?? theme.presence[0] ?? ''}
+          label={participantLabel(
+            actor,
+            actor.kind === 'agent' ? presence.focus.get(actor.actorId as string)?.verb : undefined,
+          )}
+          agent={actor.kind === 'agent'}
+          testId={actor.kind === 'agent' ? 'presence-agent' : 'presence-actor'}
+        />
       ))}
     </div>
   );

@@ -8,10 +8,13 @@
 
 export * from './client';
 export type {
+  AgentSettings,
+  AgentToken,
   components,
   Identities,
   Invitation,
   InvitationInfo,
+  NewAgentToken,
   operations,
   paths,
   SessionView,

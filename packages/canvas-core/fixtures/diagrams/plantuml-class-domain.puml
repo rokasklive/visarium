@@ -1,0 +1,10 @@
+@startuml
+title Domain model
+class BoardSync
+class CanvasDocument
+class OpQueue
+class Snapshot
+BoardSync --> OpQueue : drains
+OpQueue --> CanvasDocument : applies
+CanvasDocument --> Snapshot
+@enduml

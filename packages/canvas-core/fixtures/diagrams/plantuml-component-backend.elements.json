@@ -1,0 +1,14 @@
+{
+  "elements": ["Backend", "Backend.API", "Backend.Pay", "Orders"],
+  "edges": [
+    {
+      "from": "Backend.API",
+      "to": "Backend.Pay"
+    },
+    {
+      "from": "Backend.Pay",
+      "to": "Orders",
+      "label": "write"
+    }
+  ]
+}

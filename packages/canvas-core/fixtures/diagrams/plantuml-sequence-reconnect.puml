@@ -1,0 +1,11 @@
+@startuml
+title Reconnect
+participant Client
+participant Server
+database Store
+Client -> Server : hello(sinceRevision)
+Server -> Store : read operations since
+Store --> Server : operations
+Server --> Client : welcome
+Client -> Client : replay offline queue
+@enduml

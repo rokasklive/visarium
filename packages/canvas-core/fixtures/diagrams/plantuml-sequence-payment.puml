@@ -1,0 +1,7 @@
+@startuml
+participant Provider
+participant API
+database Orders
+Provider -> API : payment.succeeded
+API -> Orders : mark paid
+@enduml

@@ -1,0 +1,7 @@
+@startuml
+participant "Web client" as Web
+participant Server
+Web -> Server : request
+Server --> Web : response
+Web <-- Server : push
+@enduml

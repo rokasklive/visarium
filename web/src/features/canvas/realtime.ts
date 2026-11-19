@@ -68,7 +68,12 @@ export interface RemotePresence {
   >;
   /** Who holds what. Includes our own claims, so the renderer can tell them apart. */
   readonly locks: ReadonlyMap<ItemId, string>;
+  /** What each agent last read or changed, for FOCUS_MS (ADR-0031). */
+  readonly focus: ReadonlyMap<string, { readonly itemId: ItemId; readonly verb: string }>;
 }
+
+/** How long an agent's focus outline stays on an item. */
+export const FOCUS_MS = 4_000;
 
 export type ConnectionState = 'connecting' | 'live' | 'offline';
 
@@ -78,6 +83,7 @@ const EMPTY_PRESENCE: RemotePresence = {
   selections: new Map(),
   previews: new Map(),
   locks: new Map(),
+  focus: new Map(),
 };
 
 export { EMPTY_PRESENCE };
@@ -111,6 +117,10 @@ export interface RealtimeOptions {
   onLockRefused?: (itemIds: readonly ItemId[]) => void;
   /** How many share-link viewers have the board open (ADR-0026). */
   onViewers?: (count: number) => void;
+  /** Someone renamed the board while it was open. */
+  onRenamed?: (title: string, by: string) => void;
+  /** Someone deleted the board while it was open. */
+  onDeleted?: (by: string) => void;
   /**
    * The socket's path. A share-link viewer's is `/ws/shared`, which hears
    * committed operations and nothing else; a member's is the board's own.
@@ -136,6 +146,7 @@ export class BoardRealtime {
   #cursors = new Map<string, { x: number; y: number }>();
   #selections = new Map<string, readonly ItemId[]>();
   #previews = new Map<ItemId, { actorId: string; transform: Transform }>();
+  #focus = new Map<string, { itemId: ItemId; verb: string }>();
   #locks = new Map<ItemId, string>();
 
   /** Items this client currently claims, re-stated on the heartbeat. */
@@ -164,6 +175,7 @@ export class BoardRealtime {
       cursors: this.#cursors,
       selections: this.#selections,
       previews: this.#previews,
+      focus: this.#focus,
       locks: this.#locks,
     };
   }
@@ -339,6 +351,18 @@ export class BoardRealtime {
         this.#publish();
         return;
       }
+      case 'focus': {
+        const focus = { itemId: frame.itemId, verb: frame.verb };
+        this.#focus = new Map(this.#focus).set(frame.actorId as string, focus);
+        this.#publish();
+        // Gone after a moment, unless the agent has moved on to something else.
+        setTimeout(() => {
+          if (this.#focus.get(frame.actorId as string) !== focus) return;
+          this.#focus = new Map([...this.#focus].filter(([id]) => id !== frame.actorId));
+          this.#publish();
+        }, FOCUS_MS);
+        return;
+      }
       case 'cursor': {
         this.#cursors = new Map(this.#cursors).set(frame.actorId as string, {
           x: frame.x,
@@ -390,6 +414,12 @@ export class BoardRealtime {
       case 'viewers':
         this.#options.onViewers?.(frame.count);
         return;
+      case 'board':
+        this.#options.onRenamed?.(frame.title, frame.by);
+        return;
+      case 'board-deleted':
+        this.#options.onDeleted?.(frame.by);
+        return;
     }
   }
 
@@ -440,6 +470,7 @@ export class BoardRealtime {
     this.#selections = new Map([...this.#selections].filter(([id]) => id !== actorId));
     this.#previews = new Map([...this.#previews].filter(([, p]) => p.actorId !== actorId));
     this.#locks = new Map([...this.#locks].filter(([, holder]) => holder !== actorId));
+    this.#focus = new Map([...this.#focus].filter(([id]) => id !== actorId));
   }
 
   #forgetEveryone(): void {
@@ -448,6 +479,7 @@ export class BoardRealtime {
     this.#selections = new Map();
     this.#previews = new Map();
     this.#locks = new Map();
+    this.#focus = new Map();
     this.#held.clear();
     this.#publish();
   }

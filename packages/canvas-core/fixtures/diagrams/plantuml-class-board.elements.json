@@ -1,0 +1,9 @@
+{
+  "elements": ["Board", "Item"],
+  "edges": [
+    {
+      "from": "Board",
+      "to": "Item"
+    }
+  ]
+}

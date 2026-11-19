@@ -1,0 +1,7 @@
+graph TD
+  subgraph Edge
+    LB((Load balancer))
+  end
+  LB -- routes --> Web1[Web 1] & Web2[Web 2]
+  Web1 -.-> Cache[(Redis)]
+  Web2 ==> Cache

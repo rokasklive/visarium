@@ -181,6 +181,7 @@ function toLink(link: components['schemas']['Link']): Link[] {
       to: { itemId: asItemId(link.to.itemId), element: link.to.element ?? null },
       linkType: link.linkType,
       by: link.by ?? null,
+      ...(link.byAgent ? { byAgent: link.byAgent } : {}),
       ...(link.at ? { at: link.at } : {}),
     },
   ];

@@ -7,7 +7,7 @@ import {
   PROTOCOL_VERSION,
 } from '@visarium/canvas-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { BoardRealtime } from './realtime';
+import { BoardRealtime, FOCUS_MS } from './realtime';
 
 /**
  * The reconciliation rules, without a server.
@@ -374,5 +374,51 @@ describe('throttling', () => {
     expect(
       (previews[0] as unknown as { items: { transform: { x: number } }[] }).items[0]?.transform.x,
     ).toBe(59);
+  });
+});
+
+describe('an agent at work', () => {
+  it('outlines what it touched for a moment, then lets go', () => {
+    vi.useFakeTimers();
+    const { socket, realtime } = setup();
+    welcome(socket);
+    const agent = crypto.randomUUID();
+    const itemId = crypto.randomUUID();
+    socket.deliver({
+      t: 'presence',
+      joined: [
+        {
+          actorId: agent,
+          displayName: 'Claude Code',
+          colourIndex: 3,
+          kind: 'agent',
+          person: 'Ada',
+        },
+      ],
+    });
+    socket.deliver({ t: 'focus', actorId: agent, itemId, verb: 'editing' });
+    expect(realtime.presence.focus.get(agent)).toEqual({ itemId, verb: 'editing' });
+    expect(realtime.presence.actors.get(agent)?.kind).toBe('agent');
+    vi.advanceTimersByTime(FOCUS_MS + 1);
+    expect(realtime.presence.focus.size).toBe(0);
+  });
+
+  it('keeps a newer focus when an older one times out', () => {
+    vi.useFakeTimers();
+    const { socket, realtime } = setup();
+    welcome(socket);
+    const agent = crypto.randomUUID();
+    const [first, second] = [crypto.randomUUID(), crypto.randomUUID()];
+    socket.deliver({
+      t: 'presence',
+      joined: [{ actorId: agent, displayName: 'Claude Code', colourIndex: 3, kind: 'agent' }],
+    });
+    socket.deliver({ t: 'focus', actorId: agent, itemId: first, verb: 'reading' });
+    vi.advanceTimersByTime(FOCUS_MS - 100);
+    socket.deliver({ t: 'focus', actorId: agent, itemId: second, verb: 'reading' });
+    vi.advanceTimersByTime(200);
+    expect(realtime.presence.focus.get(agent)?.itemId).toBe(second);
+    socket.deliver({ t: 'presence', left: [agent] });
+    expect(realtime.presence.focus.size).toBe(0);
   });
 });

@@ -1,0 +1,103 @@
+{
+  "board_fixture": "../fixtures/offline-sync.json",
+  "tasks": [
+    {
+      "id": "blocked-nodes",
+      "prompt": "On the Visarium board \"Offline sync\": which tasks are blocked, and which diagram elements does the work relate to? Answer with task refs and element refs.",
+      "check": {
+        "kind": "answer_mentions",
+        "all": [
+          "c1/t4",
+          "d2"
+        ]
+      }
+    },
+    {
+      "id": "explain-opqueue",
+      "prompt": "On the board \"Offline sync\", explain what OpQueue is responsible for and what it connects to, citing the notes that discuss it.",
+      "check": {
+        "kind": "answer_mentions",
+        "all": [
+          "CanvasDocument",
+          "BoardSync",
+          "n1"
+        ]
+      }
+    },
+    {
+      "id": "fix-broken-links",
+      "prompt": "On the board \"Offline sync\", find links that point at diagram elements that no longer exist and repair them so they point at the element that was clearly meant.",
+      "check": {
+        "kind": "board_state",
+        "no_broken_links": true
+      }
+    },
+    {
+      "id": "rename-keep-links",
+      "prompt": "In the conflict-resolution flowchart on \"Offline sync\", rename the RetryLoop node's id to RetryPolicy without leaving any link broken.",
+      "check": {
+        "kind": "board_state",
+        "diagram_declares": {
+          "d3": [
+            "RetryPolicy"
+          ]
+        },
+        "max_broken_links": 1
+      }
+    },
+    {
+      "id": "draft-plan",
+      "prompt": "On \"Offline sync\", draft an implementation checklist for the proposed reconnect flow, place it next to the reconnect diagram, and link it so it implements that diagram.",
+      "check": {
+        "kind": "board_state",
+        "new_checklist_linked": {
+          "type": "implements",
+          "to": "d2"
+        }
+      }
+    },
+    {
+      "id": "catch-up",
+      "prompt": "Something changed on \"Offline sync\" since revision {{BASELINE}}. What changed, who did it, and does it affect the open tasks?",
+      "check": {
+        "kind": "answer_mentions",
+        "all": [
+          "t5"
+        ]
+      }
+    },
+    {
+      "id": "tick-done",
+      "prompt": "On \"Offline sync\", the offline indicator has shipped. Update the plan accordingly.",
+      "check": {
+        "kind": "board_state",
+        "task_state": {
+          "c1/t6": "done"
+        }
+      }
+    },
+    {
+      "id": "search-across",
+      "prompt": "Across my boards, where is IndexedDB mentioned, and is anything about it blocked?",
+      "check": {
+        "kind": "answer_mentions",
+        "all": [
+          "c1/t4",
+          "blocked"
+        ]
+      }
+    },
+    {
+      "id": "long-note",
+      "extra": "long-note",
+      "prompt": "On the board \"Offline sync\", the note \"Sync protocol notes\" sets the retry limits somewhere in it. What is the maximum number of retries, and the backoff cap in seconds?",
+      "check": {
+        "kind": "answer_mentions",
+        "all": [
+          "7",
+          "45"
+        ]
+      }
+    }
+  ]
+}

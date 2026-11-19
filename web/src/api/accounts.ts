@@ -1,5 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, type Identities, type Invitation, type SessionView } from '@visarium/api-client';
+import {
+  type AgentSettings,
+  type AgentToken,
+  api,
+  type Identities,
+  type Invitation,
+  type NewAgentToken,
+  type SessionView,
+} from '@visarium/api-client';
 import { type Account, problemDetail, sessionKey } from './session';
 
 /**
@@ -149,6 +157,99 @@ export function useEndSession() {
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: sessionsKey }),
   });
+}
+
+// --- agents (ADR-0031) ----------------------------------------------------
+
+const agentTokensKey = ['agent-tokens'] as const;
+
+export function useAgentTokens(enabled: boolean) {
+  return useQuery({
+    queryKey: agentTokensKey,
+    enabled,
+    queryFn: async (): Promise<AgentToken[]> => {
+      const { data, response } = await api.GET('/api/agent-tokens');
+      if (!data) throw new Error(`could not list your agent tokens: ${response.status}`);
+      return data;
+    },
+  });
+}
+
+/** Mints a token. The secret is in this result and nowhere else, ever. */
+export function useCreateAgentToken() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (label: string): Promise<NewAgentToken> => {
+      const { data, error, response } = await api.POST('/api/agent-tokens', { body: { label } });
+      if (!data)
+        throw new Error(problemDetail(error, `the token could not be made: ${response.status}`));
+      return data;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: agentTokensKey }),
+  });
+}
+
+export function useRevokeAgentToken() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error, response } = await api.DELETE('/api/agent-tokens/{id}', {
+        params: { path: { id } },
+      });
+      if (!response.ok) throw new Error(problemDetail(error, 'that token could not be revoked'));
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: agentTokensKey }),
+  });
+}
+
+/** Turns a token's *Manage boards* grant on or off. */
+export function useSetAgentGrant() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, manageBoards }: { id: string; manageBoards: boolean }) => {
+      const { error, response } = await api.PATCH('/api/agent-tokens/{id}', {
+        params: { path: { id } },
+        body: { manageBoards },
+      });
+      if (!response.ok) throw new Error(problemDetail(error, 'the grant could not be changed'));
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: agentTokensKey }),
+  });
+}
+
+const agentSettingsKey = ['agent-settings'] as const;
+
+/** The single-user grant for tokenless local agents. */
+export function useAgentSettings(enabled: boolean) {
+  return useQuery({
+    queryKey: agentSettingsKey,
+    enabled,
+    queryFn: async (): Promise<AgentSettings> => {
+      const { data, response } = await api.GET('/api/agent-settings');
+      if (!data) throw new Error(`could not read agent settings: ${response.status}`);
+      return data;
+    },
+  });
+}
+
+export function useSetAgentSettings() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (localAgentsManageBoards: boolean): Promise<AgentSettings> => {
+      const { data, error, response } = await api.PATCH('/api/agent-settings', {
+        body: { localAgentsManageBoards },
+      });
+      if (!data)
+        throw new Error(problemDetail(error, `the setting could not be saved: ${response.status}`));
+      return data;
+    },
+    onSuccess: (data) => queryClient.setQueryData(agentSettingsKey, data),
+  });
+}
+
+/** Where an agent connects: this origin's `/mcp`. */
+export function mcpUrl(): string {
+  return `${window.location.origin}/mcp`;
 }
 
 // --- invitations (admins) -------------------------------------------------

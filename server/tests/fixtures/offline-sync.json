@@ -1,0 +1,307 @@
+{
+ "title": "Offline sync",
+ "operations": [
+  {
+   "type": "group.create",
+   "groupId": "00000000-0000-4000-8000-000000000101",
+   "memberIds": [],
+   "label": "Current architecture",
+   "frame": true
+  },
+  {
+   "type": "group.create",
+   "groupId": "00000000-0000-4000-8000-000000000102",
+   "memberIds": [],
+   "label": "Proposed flow",
+   "frame": true
+  },
+  {
+   "type": "item.create",
+   "itemId": "00000000-0000-4000-8000-000000000001",
+   "transform": {
+    "x": 0,
+    "y": 0,
+    "width": 480,
+    "height": 360,
+    "rotation": 0
+   },
+   "z": 1,
+   "content": {
+    "kind": "diagram",
+    "lang": "plantuml",
+    "source": "@startuml\ntitle Domain model\nclass BoardSync\nclass CanvasDocument\nclass OpQueue\nclass Snapshot\nclass Revision\nclass Socket\nclass Store\nBoardSync --> OpQueue : drains\nOpQueue --> CanvasDocument : applies\nBoardSync --> Socket : sends\nCanvasDocument --> Snapshot\nSnapshot --> Revision\nStore --> Snapshot : persists\n@enduml"
+   },
+   "groupId": "00000000-0000-4000-8000-000000000101"
+  },
+  {
+   "type": "item.create",
+   "itemId": "00000000-0000-4000-8000-000000000002",
+   "transform": {
+    "x": 420,
+    "y": -80,
+    "width": 280,
+    "height": 200,
+    "rotation": 0
+   },
+   "z": 2,
+   "content": {
+    "kind": "note",
+    "source": "# Why OpQueue is per tab\n\nEach tab keeps its own OpQueue so an undo in one tab never replays another tab's\nedits. The queue drains through BoardSync, which owns the socket.\n\nTwo tabs editing offline will both replay on reconnect; the server orders them."
+   },
+   "groupId": "00000000-0000-4000-8000-000000000101"
+  },
+  {
+   "type": "item.create",
+   "itemId": "00000000-0000-4000-8000-000000000003",
+   "transform": {
+    "x": 420,
+    "y": 120,
+    "width": 280,
+    "height": 100,
+    "rotation": 0
+   },
+   "z": 3,
+   "content": {
+    "kind": "note",
+    "source": "BoardSync smells: it both drains the queue and owns the socket. Split it before adding offline replay?"
+   },
+   "groupId": "00000000-0000-4000-8000-000000000101"
+  },
+  {
+   "type": "item.create",
+   "itemId": "00000000-0000-4000-8000-000000000004",
+   "transform": {
+    "x": 1100,
+    "y": 0,
+    "width": 520,
+    "height": 420,
+    "rotation": 0
+   },
+   "z": 4,
+   "content": {
+    "kind": "diagram",
+    "lang": "plantuml",
+    "source": "@startuml\ntitle Reconnect\nparticipant Client\nparticipant Server\ndatabase Store\nClient -> Server : hello(sinceRevision)\nServer -> Store : read operations since\nStore --> Server : operations\nServer --> Client : welcome\nServer --> Client : op frames (catch-up)\nClient -> Client : replay offline queue\nClient -> Server : POST operations\nServer -> Store : commit\nServer --> Client : revision\nServer -> Server : broadcast to peers\nClient -> Client : clear queue\n@enduml"
+   },
+   "groupId": "00000000-0000-4000-8000-000000000102"
+  },
+  {
+   "type": "item.create",
+   "itemId": "00000000-0000-4000-8000-000000000005",
+   "transform": {
+    "x": 1100,
+    "y": 520,
+    "width": 360,
+    "height": 420,
+    "rotation": 0
+   },
+   "z": 5,
+   "content": {
+    "kind": "diagram",
+    "lang": "mermaid",
+    "source": "flowchart TD\n  Start[Edit arrives] --> Check{Base revision current?}\n  Check -->|yes| Apply[Apply and commit]\n  Check -->|no| RetryLoop[Re-read and retry]\n  RetryLoop --> Check\n  Apply --> Done[Broadcast to peers]"
+   },
+   "groupId": "00000000-0000-4000-8000-000000000102"
+  },
+  {
+   "type": "item.create",
+   "itemId": "00000000-0000-4000-8000-000000000006",
+   "transform": {
+    "x": 1520,
+    "y": -60,
+    "width": 300,
+    "height": 180,
+    "rotation": 0
+   },
+   "z": 6,
+   "content": {
+    "kind": "note",
+    "source": "# Reconnect edge cases\n\n- The server may have trimmed history older than `sinceRevision`: fall back to a snapshot.\n- A replayed `item.source` can be stale; the 409 must surface, not loop."
+   },
+   "groupId": "00000000-0000-4000-8000-000000000102"
+  },
+  {
+   "type": "item.create",
+   "itemId": "00000000-0000-4000-8000-000000000007",
+   "transform": {
+    "x": 1460,
+    "y": 460,
+    "width": 260,
+    "height": 90,
+    "rotation": 0
+   },
+   "z": 7,
+   "content": {
+    "kind": "note",
+    "source": "Retry with exponential backoff, capped at 30 s. Reset after a successful commit."
+   },
+   "groupId": "00000000-0000-4000-8000-000000000102"
+  },
+  {
+   "type": "item.create",
+   "itemId": "00000000-0000-4000-8000-000000000008",
+   "transform": {
+    "x": 1460,
+    "y": 620,
+    "width": 260,
+    "height": 90,
+    "rotation": 0
+   },
+   "z": 8,
+   "content": {
+    "kind": "note",
+    "source": "The retry loop re-reads the item before retrying, so a stale edit is never sent twice unchanged."
+   },
+   "groupId": "00000000-0000-4000-8000-000000000102"
+  },
+  {
+   "type": "item.create",
+   "itemId": "00000000-0000-4000-8000-000000000009",
+   "transform": {
+    "x": 0,
+    "y": 700,
+    "width": 360,
+    "height": 320,
+    "rotation": 0
+   },
+   "z": 9,
+   "content": {
+    "kind": "checklist",
+    "title": "Offline sync plan",
+    "tasks": [
+     {
+      "id": "t1",
+      "text": "Queue operations while offline",
+      "state": "done"
+     },
+     {
+      "id": "t2",
+      "text": "Persist the queue in IndexedDB",
+      "state": "done"
+     },
+     {
+      "id": "t3",
+      "text": "Replay the queue on reconnect",
+      "state": "done"
+     },
+     {
+      "id": "t4",
+      "text": "Decide the IndexedDB schema",
+      "state": "blocked"
+     },
+     {
+      "id": "t5",
+      "text": "Resolve conflicts on replay",
+      "state": "todo"
+     },
+     {
+      "id": "t6",
+      "text": "Show an offline indicator",
+      "state": "todo"
+     },
+     {
+      "id": "t7",
+      "text": "Retry with backoff",
+      "state": "doing"
+     },
+     {
+      "id": "t8",
+      "text": "End-to-end test in airplane mode",
+      "state": "todo"
+     }
+    ]
+   }
+  },
+  {
+   "type": "item.create",
+   "itemId": "00000000-0000-4000-8000-000000000010",
+   "transform": {
+    "x": 500,
+    "y": 760,
+    "width": 400,
+    "height": 300,
+    "rotation": 0
+   },
+   "z": 10,
+   "content": {
+    "kind": "image",
+    "asset": {
+     "assetId": "{{ASSET}}",
+     "intrinsicWidth": 1600,
+     "intrinsicHeight": 1200
+    }
+   }
+  },
+  {
+   "type": "link.add",
+   "linkId": "00000000-0000-4000-8000-000000000200",
+   "from": {
+    "itemId": "00000000-0000-4000-8000-000000000002"
+   },
+   "to": {
+    "itemId": "00000000-0000-4000-8000-000000000001",
+    "element": "OpQueue"
+   },
+   "linkType": "describes"
+  },
+  {
+   "type": "link.add",
+   "linkId": "00000000-0000-4000-8000-000000000201",
+   "from": {
+    "itemId": "00000000-0000-4000-8000-000000000003"
+   },
+   "to": {
+    "itemId": "00000000-0000-4000-8000-000000000001",
+    "element": "BoardSync"
+   },
+   "linkType": "comments"
+  },
+  {
+   "type": "link.add",
+   "linkId": "00000000-0000-4000-8000-000000000202",
+   "from": {
+    "itemId": "00000000-0000-4000-8000-000000000006"
+   },
+   "to": {
+    "itemId": "00000000-0000-4000-8000-000000000004",
+    "element": "Server"
+   },
+   "linkType": "describes"
+  },
+  {
+   "type": "link.add",
+   "linkId": "00000000-0000-4000-8000-000000000203",
+   "from": {
+    "itemId": "00000000-0000-4000-8000-000000000007"
+   },
+   "to": {
+    "itemId": "00000000-0000-4000-8000-000000000005",
+    "element": "Backoff"
+   },
+   "linkType": "describes"
+  },
+  {
+   "type": "link.add",
+   "linkId": "00000000-0000-4000-8000-000000000204",
+   "from": {
+    "itemId": "00000000-0000-4000-8000-000000000008"
+   },
+   "to": {
+    "itemId": "00000000-0000-4000-8000-000000000005",
+    "element": "RetryLoop"
+   },
+   "linkType": "describes"
+  },
+  {
+   "type": "link.add",
+   "linkId": "00000000-0000-4000-8000-000000000205",
+   "from": {
+    "itemId": "00000000-0000-4000-8000-000000000009"
+   },
+   "to": {
+    "itemId": "00000000-0000-4000-8000-000000000004"
+   },
+   "linkType": "implements"
+  }
+ ]
+}
