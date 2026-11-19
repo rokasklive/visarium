@@ -16,7 +16,11 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 COPY tsconfig.base.json biome.json ./
 COPY packages/ packages/
 COPY web/ web/
-RUN pnpm --filter @visarium/web build
+# prod (default) ships no developer tools at all; dev adds the inspector, for a
+# dev environment that runs this same image (`just dev-image`).
+ARG WEB_BUILD=prod
+RUN if [ "$WEB_BUILD" = dev ]; then pnpm --filter @visarium/web build:dev; \
+    else pnpm --filter @visarium/web build && pnpm --filter @visarium/web check:bundle; fi
 
 FROM rust:1-bookworm AS server
 WORKDIR /build

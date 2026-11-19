@@ -46,10 +46,16 @@ desktop:
 desktop-build:
     pnpm desktop:build
 
-# Rust and TypeScript tests
+# Rust and TypeScript tests, and proof the production bundle has no dev tools
 test:
     cargo test --workspace
     pnpm test
+    pnpm --filter @visarium/web build
+    pnpm --filter @visarium/web check:bundle
+
+# The production image, but with the inspector: for a dev environment
+dev-image:
+    WEB_BUILD=dev docker compose build
 
 # Build and start the production image (--build, or a code change looks like it did nothing)
 prod:

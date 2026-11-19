@@ -14,6 +14,7 @@
 import { api } from '@visarium/api-client';
 import type {
   CanvasDocument,
+  CanvasItemContent,
   CanvasOperationBody,
   ItemId,
   OperationOrigin,
@@ -61,12 +62,32 @@ export type OperationPoster = (
  * typecheck rather than where a board quietly persists wrong.
  */
 function wire(body: CanvasOperationBody) {
-  return 'memberIds' in body ? { ...body, memberIds: [...body.memberIds] } : body;
+  if ('memberIds' in body) return { ...body, memberIds: [...body.memberIds] };
+  if (body.type === 'item.create' || body.type === 'item.content')
+    return { ...body, content: wireContent(body.content) };
+  return body;
+}
+
+function wireContent(content: CanvasItemContent) {
+  switch (content.kind) {
+    case 'checklist':
+      return { ...content, tasks: content.tasks.map((t) => ({ ...t })) };
+    case 'unknown':
+      // ponytail: an item of a kind this client cannot model is never written
+      // back (an undo of its delete fails here and the board resyncs). Carry the
+      // raw wire content through the model if that ever happens in practice.
+      throw new SyncError(
+        `content of kind '${content.original}' is not this client's to write`,
+        400,
+      );
+    default:
+      return content;
+  }
 }
 
 /** @returns the board revision the server reached. */
 export const postOperations: OperationPoster = async (boardId, operations, init) => {
-  const { data, response } = await api.POST('/api/boards/{id}/operations', {
+  const { data, error, response } = await api.POST('/api/boards/{id}/operations', {
     params: {
       path: { id: boardId },
       // Names the socket that posted, so the server's broadcast can skip us: we
@@ -89,10 +110,22 @@ export const postOperations: OperationPoster = async (boardId, operations, init)
   });
 
   if (!data || typeof data.revision !== 'number') {
-    throw new SyncError(`could not persist operations: ${response.status}`, response.status);
+    // The server's own words when it gave any (a problem document's detail):
+    // "stale edit: based on revision 3, the item is at revision 4" says what a
+    // bare 409 does not.
+    const detail = (error as { detail?: unknown } | undefined)?.detail;
+    throw new SyncError(
+      typeof detail === 'string' ? detail : `could not persist operations: ${response.status}`,
+      response.status,
+    );
   }
   return data.revision;
 };
+
+/** What became of a posted batch. */
+export type PostOutcome =
+  | { readonly ok: true; readonly revision: number }
+  | { readonly ok: false; readonly status: number; readonly message: string };
 
 export class SyncError extends Error {
   readonly status: number;
@@ -143,6 +176,9 @@ export class BoardSync {
   #settling: (() => void)[] = [];
   /** Who we are on the socket, when there is one. Passed on every post. */
   #actorId: string | undefined;
+  readonly #onPosted:
+    | ((batch: readonly CanvasOperationBody[], outcome: PostOutcome) => void)
+    | undefined;
 
   constructor(options: {
     boardId: string;
@@ -150,7 +186,10 @@ export class BoardSync {
     post?: OperationPoster;
     flushMs?: number;
     onStatus?: (status: SyncStatus) => void;
+    /** Each batch's fate, for a dev build's operation log. */
+    onPosted?: (batch: readonly CanvasOperationBody[], outcome: PostOutcome) => void;
   }) {
+    this.#onPosted = options.onPosted;
     this.#boardId = options.boardId;
     this.#doc = options.doc;
     this.#post = options.post ?? postOperations;
@@ -276,15 +315,20 @@ export class BoardSync {
     this.#report();
 
     try {
-      this.#doc.setRevision(
-        await this.#post(this.#boardId, batch, {
-          keepalive,
-          ...(this.#actorId ? { actorId: this.#actorId } : {}),
-        }),
-      );
+      const revision = await this.#post(this.#boardId, batch, {
+        keepalive,
+        ...(this.#actorId ? { actorId: this.#actorId } : {}),
+      });
+      this.#doc.setRevision(revision);
       this.#failures = 0;
+      this.#onPosted?.(batch, { ok: true, revision });
     } catch (cause) {
       if (permanent(cause)) {
+        this.#onPosted?.(batch, {
+          ok: false,
+          status: (cause as SyncError).status,
+          message: (cause as Error).message,
+        });
         // The server has refused this batch and will refuse it again. Keeping
         // it would block every operation behind it forever.
         this.#failures = ATTEMPTS;

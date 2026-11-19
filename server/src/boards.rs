@@ -76,10 +76,160 @@ pub struct AssetRef {
     pub intrinsic_height: i64,
 }
 
+/// What an item shows. `kind` says which of the other fields apply: `asset`
+/// for an image, `source` for a note, `lang` + `source` for a diagram, `title`
+/// + `tasks` for a checklist. Absent kind is an image, as before kinds existed.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Content {
     pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asset: Option<AssetRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lang: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tasks: Option<Vec<Task>>,
+}
+
+/// One task of a checklist. `by` and `at` are stamped by the server from the
+/// session; whatever a client sends there is overwritten.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Task {
+    pub id: String,
+    pub text: String,
+    #[serde(default = "todo")]
+    pub state: String,
+    #[serde(default)]
+    pub by: Option<String>,
+    #[serde(default)]
+    pub at: Option<String>,
+}
+
+fn todo() -> String {
+    "todo".into()
+}
+
+/// A checklist's `body` column.
+#[derive(Serialize, Deserialize)]
+struct Checklist {
+    title: String,
+    tasks: Vec<Task>,
+}
+
+/// One end of a link: a whole item, or one named element inside a diagram.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Anchor {
+    pub item_id: Uuid,
+    #[serde(default)]
+    pub element: Option<String>,
+}
+
+const MAX_BODY: usize = 64 * 1024;
+const MAX_TASKS: usize = 200;
+const MAX_TASK_TEXT: usize = 500;
+const MAX_TITLE: usize = 200;
+const MAX_ELEMENT: usize = 200;
+const TASK_STATES: [&str; 4] = ["todo", "doing", "done", "blocked"];
+const LINK_TYPES: [&str; 4] = ["describes", "comments", "implements", "depends-on"];
+const LANGS: [&str; 2] = ["mermaid", "plantuml"];
+
+fn check_body(body: &str) -> ApiResult<()> {
+    if body.len() > MAX_BODY {
+        return Err(ApiError::bad_request(format!("an item's text is limited to {MAX_BODY} bytes; this one is {}", body.len())));
+    }
+    Ok(())
+}
+
+fn check_task(t: &Task) -> ApiResult<()> {
+    let id_ok = (1..=40).contains(&t.id.len()) && t.id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+    if !id_ok {
+        return Err(ApiError::bad_request(format!("task id '{}' must be 1-40 letters, digits, '-' or '_'", t.id)));
+    }
+    check_task_text(&t.text)?;
+    check_state(&t.state)
+}
+
+fn check_task_text(text: &str) -> ApiResult<()> {
+    if text.trim().is_empty() || text.chars().count() > MAX_TASK_TEXT {
+        return Err(ApiError::bad_request(format!("task text must be 1-{MAX_TASK_TEXT} characters")));
+    }
+    Ok(())
+}
+
+fn check_state(state: &str) -> ApiResult<()> {
+    if !TASK_STATES.contains(&state) {
+        return Err(ApiError::bad_request(format!("task state must be one of {}", TASK_STATES.join(", "))));
+    }
+    Ok(())
+}
+
+fn check_tasks(tasks: &[Task]) -> ApiResult<()> {
+    if tasks.len() > MAX_TASKS {
+        return Err(ApiError::bad_request(format!("a checklist holds at most {MAX_TASKS} tasks")));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for t in tasks {
+        check_task(t)?;
+        if !seen.insert(t.id.as_str()) {
+            return Err(ApiError::bad_request(format!("task id '{}' is used twice in one checklist", t.id)));
+        }
+    }
+    Ok(())
+}
+
+fn check_title(title: &str) -> ApiResult<()> {
+    if title.chars().count() > MAX_TITLE {
+        return Err(ApiError::bad_request(format!("a checklist title is at most {MAX_TITLE} characters")));
+    }
+    Ok(())
+}
+
+fn check_link_type(t: &str) -> ApiResult<()> {
+    if !LINK_TYPES.contains(&t) {
+        return Err(ApiError::bad_request(format!("link type must be one of {}", LINK_TYPES.join(", "))));
+    }
+    Ok(())
+}
+
+/// The stored columns for a piece of content: (kind, asset_id, lang, body).
+type ContentColumns = (&'static str, Option<String>, Option<String>, Option<String>);
+
+fn content_columns(c: &Content) -> ApiResult<ContentColumns> {
+    let missing_source = |kind: &str| ApiError::bad_request(format!("a {kind} needs its source text"));
+    match c.kind.as_deref() {
+        None | Some("image") | Some("placeholder") => Ok(("image", Some(c.asset_id()?), None, None)),
+        Some("note") => {
+            let source = c.source.clone().ok_or_else(|| missing_source("note"))?;
+            check_body(&source)?;
+            Ok(("note", None, None, Some(source)))
+        }
+        Some("diagram") => {
+            let lang = c.lang.as_deref().filter(|l| LANGS.contains(l)).ok_or_else(|| {
+                ApiError::bad_request(format!("a diagram's lang must be one of {}", LANGS.join(", ")))
+            })?;
+            let source = c.source.clone().ok_or_else(|| missing_source("diagram"))?;
+            check_body(&source)?;
+            Ok(("diagram", None, Some(lang.to_string()), Some(source)))
+        }
+        Some("checklist") => {
+            let title = c.title.clone().unwrap_or_default();
+            check_title(&title)?;
+            let tasks = c.tasks.clone().unwrap_or_default();
+            check_tasks(&tasks)?;
+            let body = serde_json::to_string(&Checklist { title, tasks }).unwrap();
+            check_body(&body)?;
+            Ok(("checklist", None, None, Some(body)))
+        }
+        Some(other) => Err(ApiError::bad_request(format!(
+            "unknown item kind '{other}'; use image, note, diagram or checklist"
+        ))),
+    }
 }
 
 impl Content {
@@ -165,6 +315,82 @@ pub enum Op {
         #[serde(default)]
         frame: bool,
     },
+    /// Replaces a note's or diagram's source. With `baseRevision`, it is
+    /// refused unless the item is still at that revision.
+    #[serde(rename = "item.source", rename_all = "camelCase")]
+    ItemSource {
+        item_id: Uuid,
+        source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        base_revision: Option<i64>,
+    },
+    #[serde(rename = "checklist.title", rename_all = "camelCase")]
+    ChecklistTitle { item_id: Uuid, title: String },
+    /// Inserts a task at `index` (clamped), or at the end without one.
+    #[serde(rename = "task.add", rename_all = "camelCase")]
+    TaskAdd {
+        item_id: Uuid,
+        task: Task,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        index: Option<usize>,
+    },
+    /// Changes a task's text and/or state; absent fields are left alone.
+    #[serde(rename = "task.set", rename_all = "camelCase")]
+    TaskSet {
+        item_id: Uuid,
+        task_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        state: Option<String>,
+        #[serde(default)]
+        by: Option<String>,
+        #[serde(default)]
+        at: Option<String>,
+    },
+    #[serde(rename = "task.remove", rename_all = "camelCase")]
+    TaskRemove { item_id: Uuid, task_id: String },
+    #[serde(rename = "link.add", rename_all = "camelCase")]
+    LinkAdd {
+        link_id: Uuid,
+        from: Anchor,
+        to: Anchor,
+        link_type: String,
+        #[serde(default)]
+        by: Option<String>,
+        #[serde(default)]
+        at: Option<String>,
+    },
+    #[serde(rename = "link.set", rename_all = "camelCase")]
+    LinkSet { link_id: Uuid, link_type: String },
+    #[serde(rename = "link.delete", rename_all = "camelCase")]
+    LinkDelete { link_id: Uuid },
+}
+
+impl Op {
+    /// Writes the session's account and the time onto everything that records
+    /// who changed it. Runs before apply, so the database, the author's
+    /// response and every peer's broadcast carry the same stamp.
+    ///
+    /// ponytail: an `item.create` that restores a deleted checklist (undo)
+    /// re-stamps its tasks with whoever pressed undo. Carry the original
+    /// stamps through history if that ever matters.
+    pub fn stamp(&mut self, by: &str, at: &str) {
+        let mark = |b: &mut Option<String>, a: &mut Option<String>| {
+            *b = Some(by.to_string());
+            *a = Some(at.to_string());
+        };
+        match self {
+            Op::ItemCreate { content, .. } => {
+                for t in content.tasks.iter_mut().flatten() {
+                    mark(&mut t.by, &mut t.at);
+                }
+            }
+            Op::TaskAdd { task, .. } => mark(&mut task.by, &mut task.at),
+            Op::TaskSet { by: b, at: a, .. } | Op::LinkAdd { by: b, at: a, .. } => mark(b, a),
+            _ => {}
+        }
+    }
 }
 
 fn check_appearance(a: &Appearance) -> ApiResult<()> {
@@ -230,15 +456,22 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
             let a = appearance.clone().unwrap_or(Appearance { opacity: 1.0, flip_x: false, flip_y: false });
             check_appearance(&a)?;
             let c = crop.as_ref().map(check_crop).transpose()?.flatten();
+            let (kind, asset_id, lang, body) = content_columns(content)?;
+            if kind != "image" && c.is_some() {
+                return Err(ApiError::bad_request("only an image can be cropped"));
+            }
             sqlx::query(
-                "INSERT INTO canvas_item (id, canvas_id, asset_id, group_id, x, y, width, height, rotation, z,
+                "INSERT INTO canvas_item (id, canvas_id, kind, asset_id, lang, body, group_id, x, y, width, height, rotation, z,
                                           opacity, flip_x, flip_y, crop_x, crop_y, crop_w, crop_h)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT (id) DO NOTHING",
             )
             .bind(item_id.to_string())
             .bind(board)
-            .bind(content.asset_id()?)
+            .bind(kind)
+            .bind(asset_id)
+            .bind(lang)
+            .bind(body)
             .bind(group_id.map(|g| g.to_string()))
             .bind(t.x)
             .bind(t.y)
@@ -362,8 +595,170 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
                 .execute(&mut **tx)
                 .await?;
         }
+        Op::ItemSource { item_id, source, base_revision } => {
+            let Some((kind, revision)) = item_kind(tx, board, item_id).await? else { return Ok(()) };
+            if kind != "note" && kind != "diagram" {
+                return Err(ApiError::bad_request(format!("item {item_id} is a {kind}; only notes and diagrams have source")));
+            }
+            if base_revision.is_some_and(|b| b != revision) {
+                return Err(ApiError::conflict(format!(
+                    "item {item_id} changed since this edit began: the edit is based on revision {}, the item is at revision {revision}. Re-read it and apply the edit again.",
+                    base_revision.unwrap()
+                ))
+                .titled("Stale edit"));
+            }
+            check_body(source)?;
+            set_body(tx, board, item_id, source).await?;
+        }
+        Op::ChecklistTitle { item_id, title } => {
+            check_title(title)?;
+            let Some(mut list) = checklist(tx, board, item_id).await? else { return Ok(()) };
+            list.title = title.clone();
+            save_checklist(tx, board, item_id, &list).await?;
+        }
+        Op::TaskAdd { item_id, task, index } => {
+            check_task(task)?;
+            let Some(mut list) = checklist(tx, board, item_id).await? else { return Ok(()) };
+            if list.tasks.len() >= MAX_TASKS {
+                return Err(ApiError::bad_request(format!("a checklist holds at most {MAX_TASKS} tasks")));
+            }
+            if list.tasks.iter().any(|t| t.id == task.id) {
+                return Err(ApiError::bad_request(format!("task id '{}' is already in this checklist", task.id)));
+            }
+            let at = index.unwrap_or(list.tasks.len()).min(list.tasks.len());
+            list.tasks.insert(at, task.clone());
+            save_checklist(tx, board, item_id, &list).await?;
+        }
+        Op::TaskSet { item_id, task_id, text, state, by, at } => {
+            if let Some(t) = text {
+                check_task_text(t)?;
+            }
+            if let Some(s) = state {
+                check_state(s)?;
+            }
+            let Some(mut list) = checklist(tx, board, item_id).await? else { return Ok(()) };
+            // Tolerant like every update: a task removed meanwhile is nothing to change.
+            let Some(task) = list.tasks.iter_mut().find(|t| &t.id == task_id) else { return Ok(()) };
+            if let Some(t) = text {
+                task.text = t.clone();
+            }
+            if let Some(s) = state {
+                task.state = s.clone();
+            }
+            task.by = by.clone();
+            task.at = at.clone();
+            save_checklist(tx, board, item_id, &list).await?;
+        }
+        Op::TaskRemove { item_id, task_id } => {
+            let Some(mut list) = checklist(tx, board, item_id).await? else { return Ok(()) };
+            let before = list.tasks.len();
+            list.tasks.retain(|t| &t.id != task_id);
+            if list.tasks.len() != before {
+                save_checklist(tx, board, item_id, &list).await?;
+            }
+        }
+        Op::LinkAdd { link_id, from, to, link_type, by, at } => {
+            check_link_type(link_type)?;
+            for (end, a) in [("from", from), ("to", to)] {
+                // A link is a create: an end that is not on this board is refused, as
+                // item.create refuses a missing asset.
+                let (kind, _) = item_kind(tx, board, &a.item_id).await?.ok_or_else(|| no_item(&a.item_id))?;
+                if let Some(e) = &a.element {
+                    if kind != "diagram" {
+                        return Err(ApiError::bad_request(format!(
+                            "link {end}: only a diagram has named elements, and item {} is a {kind}",
+                            a.item_id
+                        )));
+                    }
+                    if e.is_empty() || e.chars().count() > MAX_ELEMENT {
+                        return Err(ApiError::bad_request(format!("link {end}: an element name is 1-{MAX_ELEMENT} characters")));
+                    }
+                }
+            }
+            if from.item_id == to.item_id && from.element == to.element {
+                return Err(ApiError::bad_request("a link needs two different ends"));
+            }
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "INSERT INTO canvas_link (id, canvas_id, from_item, from_element, to_item, to_element, link_type, created_by, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, coalesce(?, {NOW}))
+                 ON CONFLICT (id) DO NOTHING"
+            )))
+            .bind(link_id.to_string())
+            .bind(board)
+            .bind(from.item_id.to_string())
+            .bind(&from.element)
+            .bind(to.item_id.to_string())
+            .bind(&to.element)
+            .bind(link_type)
+            .bind(by)
+            .bind(at)
+            .execute(&mut **tx)
+            .await
+            .map_err(integrity)?;
+        }
+        Op::LinkSet { link_id, link_type } => {
+            check_link_type(link_type)?;
+            sqlx::query("UPDATE canvas_link SET link_type = ? WHERE id = ? AND canvas_id = ?")
+                .bind(link_type)
+                .bind(link_id.to_string())
+                .bind(board)
+                .execute(&mut **tx)
+                .await?;
+        }
+        Op::LinkDelete { link_id } => {
+            sqlx::query("DELETE FROM canvas_link WHERE id = ? AND canvas_id = ?")
+                .bind(link_id.to_string())
+                .bind(board)
+                .execute(&mut **tx)
+                .await?;
+        }
     }
     Ok(())
+}
+
+fn no_item(item: &Uuid) -> ApiError {
+    ApiError::bad_request(format!("no item {item} on this board")).titled("Operation references something that does not exist")
+}
+
+/// An item's kind and revision, or None when it is not on this board. Updates
+/// treat None as nothing to do (the API's tolerance rule); creates refuse it.
+async fn item_kind(tx: &mut Transaction<'_, Sqlite>, board: &str, item: &Uuid) -> ApiResult<Option<(String, i64)>> {
+    Ok(sqlx::query_as("SELECT kind, revision FROM canvas_item WHERE id = ? AND canvas_id = ?")
+        .bind(item.to_string())
+        .bind(board)
+        .fetch_optional(&mut **tx)
+        .await?)
+}
+
+async fn set_body(tx: &mut Transaction<'_, Sqlite>, board: &str, item: &Uuid, body: &str) -> ApiResult<()> {
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "UPDATE canvas_item SET body = ?, revision = revision + 1, updated_at = {NOW} WHERE id = ? AND canvas_id = ?"
+    )))
+    .bind(body)
+    .bind(item.to_string())
+    .bind(board)
+    .execute(&mut **tx)
+    .await
+    .map_err(integrity)?;
+    Ok(())
+}
+
+/// Reads a checklist inside the batch's transaction, or None when the item is
+/// gone. The batch already holds SQLite's write lock (the revision bump runs
+/// first), so read-modify-write here cannot interleave with another batch.
+async fn checklist(tx: &mut Transaction<'_, Sqlite>, board: &str, item: &Uuid) -> ApiResult<Option<Checklist>> {
+    let Some((kind, _)) = item_kind(tx, board, item).await? else { return Ok(None) };
+    if kind != "checklist" {
+        return Err(ApiError::bad_request(format!("item {item} is a {kind}, not a checklist")));
+    }
+    let body: String = sqlx::query_scalar("SELECT body FROM canvas_item WHERE id = ?").bind(item.to_string()).fetch_one(&mut **tx).await?;
+    serde_json::from_str(&body).map(Some).map_err(|e| ApiError::internal(format!("checklist {item} is stored unreadably: {e}")))
+}
+
+async fn save_checklist(tx: &mut Transaction<'_, Sqlite>, board: &str, item: &Uuid, list: &Checklist) -> ApiResult<()> {
+    let body = serde_json::to_string(list).unwrap();
+    check_body(&body)?;
+    set_body(tx, board, item, &body).await
 }
 
 /// Applies a batch atomically and returns the committed revision range.
@@ -503,15 +898,21 @@ async fn duplicate(
         group_map.insert(old, new);
     }
     let items: Vec<ItemRow> = sqlx::query_as(ITEMS_SQL).bind(&source.id).fetch_all(&mut *tx).await?;
+    let mut item_map = std::collections::HashMap::new();
     for i in items {
+        let new = new_id();
+        item_map.insert(i.id.clone(), new.clone());
         sqlx::query(
-            "INSERT INTO canvas_item (id, canvas_id, asset_id, group_id, x, y, width, height, rotation, z,
+            "INSERT INTO canvas_item (id, canvas_id, kind, asset_id, lang, body, group_id, x, y, width, height, rotation, z,
                                       opacity, flip_x, flip_y, crop_x, crop_y, crop_w, crop_h)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
-        .bind(new_id())
+        .bind(new)
         .bind(&copy)
+        .bind(&i.kind)
         .bind(&i.asset_id)
+        .bind(&i.lang)
+        .bind(&i.body)
         .bind(i.group_id.and_then(|g| group_map.get(&g).cloned()))
         .bind(i.x)
         .bind(i.y)
@@ -529,13 +930,58 @@ async fn duplicate(
         .execute(&mut *tx)
         .await?;
     }
+    // Links follow their items to the copy; both ends are on the source board,
+    // so both are in the map.
+    for l in links_of(&mut tx, &source.id).await? {
+        sqlx::query(
+            "INSERT INTO canvas_link (id, canvas_id, from_item, from_element, to_item, to_element, link_type, created_by, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(new_id())
+        .bind(&copy)
+        .bind(&item_map[&l.from_item])
+        .bind(&l.from_element)
+        .bind(&item_map[&l.to_item])
+        .bind(&l.to_element)
+        .bind(&l.link_type)
+        .bind(&l.created_by)
+        .bind(&l.created_at)
+        .execute(&mut *tx)
+        .await?;
+    }
     tx.commit().await?;
     Ok((StatusCode::CREATED, axum::Json(find(&app, &copy).await?)))
 }
 
 #[derive(sqlx::FromRow)]
+struct LinkRow {
+    id: String,
+    from_item: String,
+    from_element: Option<String>,
+    to_item: String,
+    to_element: Option<String>,
+    link_type: String,
+    created_by: Option<String>,
+    created_at: String,
+}
+
+async fn links_of(tx: &mut Transaction<'_, Sqlite>, board: &str) -> sqlx::Result<Vec<LinkRow>> {
+    sqlx::query_as(
+        "SELECT id, from_item, from_element, to_item, to_element, link_type, created_by, created_at
+           FROM canvas_link WHERE canvas_id = ? ORDER BY created_at, id",
+    )
+    .bind(board)
+    .fetch_all(&mut **tx)
+    .await
+}
+
+#[derive(sqlx::FromRow)]
 struct ItemRow {
     id: String,
+    kind: String,
+    lang: Option<String>,
+    body: Option<String>,
+    revision: i64,
     group_id: Option<String>,
     x: f64,
     y: f64,
@@ -550,15 +996,32 @@ struct ItemRow {
     crop_y: Option<f64>,
     crop_w: Option<f64>,
     crop_h: Option<f64>,
-    asset_id: String,
-    intrinsic_width: i64,
-    intrinsic_height: i64,
+    asset_id: Option<String>,
+    intrinsic_width: Option<i64>,
+    intrinsic_height: Option<i64>,
 }
 
-const ITEMS_SQL: &str = "SELECT i.id, i.group_id, i.x, i.y, i.width, i.height, i.rotation, i.z,
+impl ItemRow {
+    /// The item's content as canvas-core models it.
+    fn content(&self) -> serde_json::Value {
+        match self.kind.as_str() {
+            "note" => json!({ "kind": "note", "source": self.body }),
+            "diagram" => json!({ "kind": "diagram", "lang": self.lang, "source": self.body }),
+            "checklist" => {
+                let list: Checklist = serde_json::from_str(self.body.as_deref().unwrap_or_default())
+                    .unwrap_or(Checklist { title: String::new(), tasks: vec![] });
+                json!({ "kind": "checklist", "title": list.title, "tasks": list.tasks })
+            }
+            _ => json!({ "kind": "image", "asset": {
+                "assetId": self.asset_id, "intrinsicWidth": self.intrinsic_width, "intrinsicHeight": self.intrinsic_height } }),
+        }
+    }
+}
+
+const ITEMS_SQL: &str = "SELECT i.id, i.kind, i.lang, i.body, i.revision, i.group_id, i.x, i.y, i.width, i.height, i.rotation, i.z,
                                 i.opacity, i.flip_x, i.flip_y, i.crop_x, i.crop_y, i.crop_w, i.crop_h,
                                 i.asset_id, a.width AS intrinsic_width, a.height AS intrinsic_height
-                           FROM canvas_item i JOIN asset a ON a.id = i.asset_id
+                           FROM canvas_item i LEFT JOIN asset a ON a.id = i.asset_id
                           WHERE i.canvas_id = ? ORDER BY i.z";
 
 /// Everything on the board in paint order, at one revision — read in one
@@ -578,6 +1041,20 @@ pub async fn snapshot_of(db: &sqlx::SqlitePool, id: &str) -> ApiResult<serde_jso
     let rows: Vec<ItemRow> = sqlx::query_as(ITEMS_SQL).bind(id).fetch_all(&mut *tx).await?;
     let groups: Vec<(String, Option<String>, bool)> =
         sqlx::query_as("SELECT id, label, frame FROM canvas_group WHERE canvas_id = ?").bind(id).fetch_all(&mut *tx).await?;
+    let link_rows = links_of(&mut tx, id).await?;
+    let items: Vec<_> = rows.iter().map(|r| (r, r.content())).collect();
+    // Display names for everyone the board credits, so a hover can say who
+    // finished a task without a second request.
+    let mut credited: Vec<&str> = link_rows.iter().filter_map(|l| l.created_by.as_deref()).collect();
+    for (_, c) in &items {
+        for t in c["tasks"].as_array().into_iter().flatten() {
+            credited.extend(t["by"].as_str());
+        }
+    }
+    let people: Vec<(String, String)> = sqlx::query_as("SELECT id, display_name FROM app_user WHERE id IN (SELECT value FROM json_each(?))")
+        .bind(serde_json::to_string(&credited).unwrap())
+        .fetch_all(&mut *tx)
+        .await?;
     tx.commit().await?;
 
     let mut members: std::collections::HashMap<&str, Vec<&str>> = Default::default();
@@ -592,16 +1069,16 @@ pub async fn snapshot_of(db: &sqlx::SqlitePool, id: &str) -> ApiResult<serde_jso
             json!({ "id": gid, "label": label, "frame": frame, "memberIds": members.get(gid.as_str()).cloned().unwrap_or_default() })
         })
         .collect();
-    let items: Vec<_> = rows
-        .iter()
-        .map(|r| {
+    let items: Vec<_> = items
+        .into_iter()
+        .map(|(r, content)| {
             let mut item = json!({
                 "id": r.id,
                 "transform": { "x": r.x, "y": r.y, "width": r.width, "height": r.height, "rotation": r.rotation },
                 "z": r.z,
+                "revision": r.revision,
                 "groupId": r.group_id,
-                "content": { "kind": "image", "asset": {
-                    "assetId": r.asset_id, "intrinsicWidth": r.intrinsic_width, "intrinsicHeight": r.intrinsic_height } },
+                "content": content,
                 "appearance": { "opacity": r.opacity, "flipX": r.flip_x, "flipY": r.flip_y },
             });
             // Absent is the whole image; the CHECK keeps the four all-or-nothing.
@@ -611,7 +1088,19 @@ pub async fn snapshot_of(db: &sqlx::SqlitePool, id: &str) -> ApiResult<serde_jso
             item
         })
         .collect();
-    Ok(json!({ "revision": revision, "items": items, "groups": groups }))
+    let links: Vec<_> = link_rows
+        .iter()
+        .map(|l| {
+            json!({
+                "id": l.id,
+                "from": { "itemId": l.from_item, "element": l.from_element },
+                "to": { "itemId": l.to_item, "element": l.to_element },
+                "linkType": l.link_type, "by": l.created_by, "at": l.created_at,
+            })
+        })
+        .collect();
+    let people: serde_json::Map<String, serde_json::Value> = people.into_iter().map(|(id, name)| (id, json!(name))).collect();
+    Ok(json!({ "revision": revision, "items": items, "groups": groups, "links": links, "people": people }))
 }
 
 #[derive(Deserialize)]
@@ -632,6 +1121,7 @@ struct Batch {
 
 async fn operations(
     State(app): State<AppState>,
+    axum::Extension(me): axum::Extension<User>,
     Path(id): Path<Uuid>,
     headers: HeaderMap,
     Json(batch): Json<Batch>,
@@ -639,10 +1129,16 @@ async fn operations(
     if batch.operations.is_empty() {
         return Err(ApiError::bad_request("a batch needs at least one operation"));
     }
-    let ops: Vec<Op> = batch.operations.into_iter().map(|p| p.body).collect();
+    // Who and when come from the session, never from the body.
+    let at: String = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT {NOW}"))).fetch_one(&app.db).await?;
+    let mut ops: Vec<Op> = batch.operations.into_iter().map(|p| p.body).collect();
+    for op in &mut ops {
+        op.stamp(&me.id, &at);
+    }
     let (from, to) = apply(&app, &id, &ops).await?;
-    // The author already applied these optimistically; everyone else hears them.
+    // The author already applied these optimistically; everyone else hears them,
+    // stamped. The author takes the stamps from the applied bodies returned here.
     let actor = headers.get(ACTOR_HEADER).and_then(|v| v.to_str().ok()).and_then(|v| Uuid::parse_str(v).ok());
     app.rooms.announce(&id, actor, from, to, &ops);
-    Ok(axum::Json(json!({ "revision": to })))
+    Ok(axum::Json(json!({ "revision": to, "operations": ops })))
 }

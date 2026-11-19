@@ -144,9 +144,10 @@ describe('appearance', () => {
     const d = doc();
     d.apply(create());
     d.apply({ type: 'item.appearance', itemId: A, appearance: faded });
-    const once = d.item(A);
+    const { revision: _, ...once } = d.item(A) as CanvasItem;
     d.apply({ type: 'item.appearance', itemId: A, appearance: faded });
-    expect(d.item(A)).toEqual(once);
+    const { revision: __, ...twice } = d.item(A) as CanvasItem;
+    expect(twice).toEqual(once);
   });
 
   it('does not move an item, so the index is untouched', () => {
@@ -326,10 +327,17 @@ describe('snapshots', () => {
   });
 });
 
+/**
+ * What a round trip must restore. `revision` is left out on purpose: it counts
+ * changes, like the server's, so an undo moves it forward rather than back.
+ */
 function snapshot(d: CanvasDocument) {
   return {
-    items: [...d.items()].sort((a, b) => a.id.localeCompare(b.id)),
+    items: [...d.items()]
+      .map(({ revision: _, ...rest }) => rest)
+      .sort((a, b) => a.id.localeCompare(b.id)),
     groups: [...d.groups()].sort((a, b) => a.id.localeCompare(b.id)),
+    links: [...d.links()].sort((a, b) => a.id.localeCompare(b.id)),
   };
 }
 

@@ -1,18 +1,23 @@
 import { useQueryClient } from '@tanstack/react-query';
 import {
+  type Anchor,
   applySelection,
   asAssetId,
+  asItemId,
   type Camera,
   type CanvasDocument,
   CanvasHistory,
   type CanvasItem,
+  type CanvasItemContent,
   type CanvasOperationBody,
   type Crop,
   type CropFrame,
   clampEdges,
+  classifyText,
   computeActiveSet,
   cropFrame,
   DEFAULT_CAMERA,
+  deleteItemsBodies,
   type Edges,
   expandToGroups,
   type FlipAxis,
@@ -24,13 +29,16 @@ import {
   groupOutline,
   type ItemId,
   ItemLod,
+  type LinkId,
   marqueeSelect,
   movingEdges,
+  newLinkId,
   originalTransform,
   panBy,
   type Rect,
   rotateSelection,
   type SelectionMode,
+  sameAnchor,
   scaleSelection,
   screenToWorld,
   selectionState,
@@ -55,7 +63,7 @@ import {
   toStageAttrs,
 } from '@visarium/canvas-renderer-konva';
 import type Konva from 'konva';
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
   Image as KonvaImage,
   Line as KonvaLine,
@@ -68,8 +76,12 @@ import {
 } from 'react-konva';
 import { assetsById } from '~/api/assets';
 import { loadSnapshotInto } from '~/api/boards';
+import { type SessionState, sessionKey } from '~/api/session';
 import { loadSharedSnapshotInto } from '~/api/sharing';
 import { useUiStore } from '~/app/ui-store';
+import { DEVTOOLS, INSPECTOR_WIDTH } from '~/devtools';
+import { Inspector } from '../inspector/load';
+import { OpLog } from '../inspector/log';
 import { installBench, noteRender } from './bench';
 import { useBitmaps } from './bitmap-cache';
 import { BoardSync } from './board-sync';
@@ -85,6 +97,21 @@ import {
   readTransfer,
 } from './capture';
 import { copySelection, NO_ORIGINALS, NOTICES } from './interchange';
+import {
+  anchorAt,
+  anchorBox,
+  contains,
+  type DrawnLink,
+  defaultLinkType,
+  labelBox,
+  linkNear,
+  midpoint,
+  nextLinkType,
+  segmentBetween,
+} from './objects/links';
+import { loaded as objectRenderersLoaded } from './objects/loaders';
+import { drawnHeight, isObject, ObjectLayouts, type ObjectView } from './objects/store';
+import { useObjectEditing } from './objects/use-editing';
 import { PresenceRoster, previewFor, RemoteCursors, remoteSelectionMarks } from './presence-layer';
 import { BoardRealtime, EMPTY_PRESENCE, type RemotePresence } from './realtime';
 import {
@@ -201,7 +228,7 @@ type Gesture =
 
 export function CanvasSurface({
   doc,
-  width,
+  width: fullWidth,
   height,
   bitmapBudgetBytes,
   boardId,
@@ -227,6 +254,12 @@ export function CanvasSurface({
   readOnly?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  /** Dev builds: the inspector beside the board, which gives up its width. */
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const width = inspectorOpen ? Math.max(0, fullWidth - INSPECTOR_WIDTH) : fullWidth;
+  /** Dev builds: every operation sent and received, and what became of it. */
+  // biome-ignore lint/correctness/useExhaustiveDependencies: one log per board, so a new document starts a new log
+  const opLog = useMemo(() => (DEVTOOLS ? new OpLog() : null), [doc]);
   const stageRef = useRef<Konva.Stage | null>(null);
   const transformerRef = useRef<Konva.Transformer | null>(null);
   const gesture = useRef<Gesture>({ kind: 'none' });
@@ -278,6 +311,59 @@ export function CanvasSurface({
 
   const theme = canvasTheme();
   const history = useMemo(() => new CanvasHistory(doc), [doc]);
+  /** Notes, diagrams and checklists, laid out for drawing (design D2). */
+  const objects = useMemo(() => new ObjectLayouts(doc, redraw), [doc]);
+
+  // --- links (spec: canvas/links) ---------------------------------------------
+  /** The selected link. Selecting a link clears the item selection and back. */
+  const [selectedLink, setSelectedLink] = useState<LinkId | null>(null);
+  const [hoveredLink, setHoveredLink] = useState<LinkId | null>(null);
+  /** Every link as last drawn, for hit-testing: the shape draws from live positions. */
+  const drawnLinks = useRef<DrawnLink[]>([]);
+  const linkShape = useRef<Konva.Shape | null>(null);
+  /** The item under the pointer's drag: in `dragOrigins` only once the selection has caught up. */
+  const draggingItem = useRef<ItemId | null>(null);
+  /** An Alt-drag in progress: from where, to where the pointer is, onto what. */
+  const linkDraft = useRef<{
+    from: Anchor;
+    pointer: { x: number; y: number };
+    target: Anchor | null;
+  } | null>(null);
+  const linkUi = useRef({ hovered: null as LinkId | null, selected: null as LinkId | null });
+  linkUi.current = { hovered: hoveredLink, selected: selectedLink };
+
+  // A dev build's window onto objects, for the specs that pin their layout.
+  useEffect(() => {
+    if (!DEVTOOLS) return;
+    const hook = {
+      layout: (id: string) => objects.debug(asItemId(id)),
+      loaded: objectRenderersLoaded,
+      apply: (...bodies: CanvasOperationBody[]) => {
+        const changed = history.apply(...bodies);
+        redraw();
+        return changed;
+      },
+      /** As if another client sent these: the path realtime takes. */
+      remote: (...bodies: CanvasOperationBody[]) => {
+        for (const body of bodies) doc.apply(body, 'remote');
+        redraw();
+      },
+      item: (id: string) => doc.item(asItemId(id)),
+      links: () =>
+        drawnLinks.current.map((d) => ({
+          id: d.link.id,
+          linkType: d.link.linkType,
+          broken: d.from.broken || d.to.broken,
+          from: d.segment.from,
+          to: d.segment.to,
+        })),
+      linkUi: () => linkUi.current,
+    };
+    (window as unknown as { __objects?: typeof hook }).__objects = hook;
+    return () => {
+      delete (window as unknown as { __objects?: typeof hook }).__objects;
+    };
+  }, [objects, history, doc]);
   /**
    * The library is beside the canvas now.
    *
@@ -332,7 +418,7 @@ export function CanvasSurface({
 
   // Bitmaps follow the active set: what is drawn is pinned, what has left is
   // aborted, and the tier each item wants comes from its size on screen.
-  const bitmaps = useBitmaps(active.visible, camera.zoom, bitmapBudgetBytes);
+  const bitmaps = useBitmaps(active.visible, camera.zoom, bitmapBudgetBytes, objects);
 
   /** Split the active set: real nodes, and everything painted as aggregate. */
   const nodes: CanvasItem[] = [];
@@ -447,6 +533,33 @@ export function CanvasSurface({
     [history, readOnly],
   );
 
+  /**
+   * Notes, diagrams and checklists, made and changed by hand: double-click,
+   * paste, drop, clicks on the controls inside them, in-place editors.
+   */
+  const signedInAs = (queryClient.getQueryData(sessionKey) as SessionState | undefined)?.user;
+  const objectEditing = useObjectEditing({
+    doc,
+    history,
+    objects,
+    commit,
+    redraw,
+    camera,
+    size,
+    editable: !readOnly && tool === 'select',
+    realtime: () => realtimeRef.current,
+    settled: () => syncRef.current?.settled() ?? Promise.resolve(),
+    select: (ids) => setSelection(ids),
+    notify: (message) => setInterchangeNotice(message),
+    me: signedInAs?.id
+      ? { id: signedInAs.id, displayName: signedInAs.displayName ?? '' }
+      : undefined,
+  });
+  /** Where the pointer last was over the board, for a paste to land under it (spec). */
+  const lastPointer = useRef<{ x: number; y: number } | null>(null);
+  /** A press that began on a control inside an object: it must not become a drag. */
+  const controlPress = useRef<ItemId | null>(null);
+
   const setSync = useUiStore((s) => s.setSync);
   const setConnection = useUiStore((s) => s.setConnection);
   const setLinkViewers = useUiStore((s) => s.setLinkViewers);
@@ -479,8 +592,19 @@ export function CanvasSurface({
 
   useEffect(() => {
     if (!boardId || readOnly) return;
-    const sync = new BoardSync({ boardId, doc, onStatus: setSync });
-    doc.onApplied(sync.applied);
+    const sync = new BoardSync({
+      boardId,
+      doc,
+      onStatus: setSync,
+      ...(opLog ? { onPosted: (batch, outcome) => opLog.posted(batch, outcome) } : {}),
+    });
+    // Persistence hears every change; the object layouts hear which ones were
+    // ours, so that exactly one client writes an object's new height.
+    doc.onApplied((body, origin) => {
+      sync.applied(body, origin);
+      objects.noteApplied(body, origin);
+      opLog?.record(body, origin);
+    });
     syncRef.current = sync;
 
     /*
@@ -529,7 +653,7 @@ export function CanvasSurface({
       sync.stop();
       void sync.flush(true);
     };
-  }, [boardId, doc, readOnly, setSync, setConnection, setLinkViewers]);
+  }, [boardId, doc, readOnly, setSync, setConnection, setLinkViewers, objects, opLog]);
 
   const setUploads = useUiStore((s) => s.setUploads);
   const addUploadFailure = useUiStore((s) => s.addUploadFailure);
@@ -704,7 +828,17 @@ export function CanvasSurface({
       // Ours first — the ordering `readTransfer` states once, unchanged in
       // meaning since M04 and now shared with the paste handler below.
       const arrival = readTransfer(event.dataTransfer);
-      if (arrival.kind === 'nothing') return;
+      if (arrival.kind === 'nothing') {
+        // Not an image: Markdown, Mermaid or PlantUML files become objects.
+        const texts = textFilesOf(event.dataTransfer);
+        if (texts.length === 0) return;
+        event.preventDefault();
+        const { camera: c, size: z } = view.current;
+        void Promise.all(texts.map(readTextFile)).then((contents) =>
+          placeObjects.current(contents, screenToWorld(c, z, at)),
+        );
+        return;
+      }
       event.preventDefault();
       if (arrival.kind === 'assets' && arrival.origin === doc.canvasId) {
         /*
@@ -734,12 +868,82 @@ export function CanvasSurface({
     };
   }, [capture, doc, place, placeById, readOnly]);
 
+  // The latest placement function, for listeners attached once.
+  const placeObjects = useRef(objectEditing.place);
+  placeObjects.current = objectEditing.place;
+
+  /*
+   * Double-click on empty board: a new note, typed where it will be (spec).
+   *
+   * Native, not Konva's `dblclick`: a press on empty board starts a marquee or
+   * a pan that captures the pointer, so Konva never sees the release and never
+   * synthesises a click. The browser's own dblclick still arrives here.
+   */
+  const startNewNote = useRef((_world: { x: number; y: number }) => {});
+  startNewNote.current = (world) => {
+    if (!readOnly && tool === 'select') objectEditing.startNewNote(world);
+  };
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const onDblClick = (event: MouseEvent) => {
+      const stage = stageRef.current;
+      // The board's own surface only (the gesture's pointer capture makes the
+      // container the target); an editor's field keeps its double-click.
+      if (!stage || (event.target !== container && !(event.target instanceof HTMLCanvasElement)))
+        return;
+      stage.setPointersPositions(event);
+      const world = stage.getRelativePointerPosition();
+      if (!world) return;
+      // Only EMPTY board: a double-click on an item is that item's. Asked of
+      // the document's index, not the drawn hit canvas, which can be a frame
+      // behind an item that has just laid out.
+      const point = { minX: world.x, minY: world.y, maxX: world.x, maxY: world.y };
+      if (doc.index.search(point).length > 0) return;
+      // Nor a link: two quick clicks on one are a selection and a retype.
+      if (linkNear(drawnLinks.current, world, 8 / stage.scaleX())) return;
+      startNewNote.current(world);
+    };
+    container.addEventListener('dblclick', onDblClick);
+    return () => container.removeEventListener('dblclick', onDblClick);
+  }, [doc]);
+
+  // Where the pointer is over the board, so a paste lands under it.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const onMove = (event: PointerEvent) => {
+      lastPointer.current = pointerIn(container, event);
+    };
+    const onLeave = () => {
+      lastPointer.current = null;
+    };
+    container.addEventListener('pointermove', onMove);
+    container.addEventListener('pointerleave', onLeave);
+    return () => {
+      container.removeEventListener('pointermove', onMove);
+      container.removeEventListener('pointerleave', onLeave);
+    };
+  }, []);
+
   // Paste is a window event: it has no target inside the canvas to hang off.
   useEffect(() => {
     if (readOnly) return;
     const onPaste = (event: ClipboardEvent) => {
       const arrival = readTransfer(event.clipboardData);
-      if (arrival.kind === 'nothing') return;
+      if (arrival.kind === 'nothing') {
+        // Text that is not ours and not an image: a note, a diagram or a
+        // checklist (classifyText), under the pointer or mid-view. A field
+        // being typed in keeps its own paste.
+        if (isTyping(event.target)) return;
+        const text = event.clipboardData?.getData('text/plain') ?? '';
+        if (!text.trim()) return;
+        event.preventDefault();
+        const { camera: c, size: z } = view.current;
+        const at = lastPointer.current ?? { x: z.width / 2, y: z.height / 2 };
+        placeObjects.current([classifyText(text)], screenToWorld(c, z, at));
+        return;
+      }
       // A text field's paste is its own. Narrow on purpose: only the URL payload
       // is text, so only it can be stolen from a field somebody is typing in —
       // and an image paste keeps behaving exactly as M02 specified.
@@ -1016,6 +1220,14 @@ export function CanvasSurface({
         event.preventDefault();
         abandonGesture();
         setSelection([]);
+        setSelectedLink(null);
+        return;
+      }
+      // Dev builds: backquote opens and closes the inspector. A text field
+      // gets its backquote: this handler has already returned for typing.
+      if (DEVTOOLS && !mod && event.key === '`') {
+        event.preventDefault();
+        setInspectorOpen((open) => !open);
         return;
       }
       if (!mod && event.key.toLowerCase() === 'f') {
@@ -1024,11 +1236,17 @@ export function CanvasSurface({
         return;
       }
       if (event.key === 'Delete' || event.key === 'Backspace') {
+        if (selectedLink && !readOnly) {
+          event.preventDefault();
+          commit({ type: 'link.delete', linkId: selectedLink });
+          setSelectedLink(null);
+          return;
+        }
         if (selection.size === 0) return;
         event.preventDefault();
-        commit(
-          ...[...selection].map((id): CanvasOperationBody => ({ type: 'item.delete', itemId: id })),
-        );
+        // Links first, as their own operations, so one undo brings every link
+        // back with its items (canvas-core `deleteItemsBodies`).
+        commit(...deleteItemsBodies(doc, selection));
         setSelection([]);
         return;
       }
@@ -1151,6 +1369,7 @@ export function CanvasSurface({
     setCropItemId,
     setInterchangeNotice,
     setSelection,
+    selectedLink,
   ]);
 
   /**
@@ -1162,6 +1381,7 @@ export function CanvasSurface({
   const onPointerDown = (e: Konva.KonvaEventObject<PointerEvent>) => {
     const hitEmpty = e.target === e.target.getStage();
     const wantsPan = tool === 'pan' || spaceHeld.current || e.evt.button === 1;
+    if (hitEmpty) setSelectedLink(null);
     if (!hitEmpty && !wantsPan) return; // the node's own drag handles it
 
     const container = containerRef.current;
@@ -1240,6 +1460,19 @@ export function CanvasSurface({
 
   const onItemPointerDown = (item: CanvasItem, e: Konva.KonvaEventObject<PointerEvent>) => {
     pressedAt.current = stageRef.current?.getRelativePointerPosition() ?? null;
+    setSelectedLink(null);
+    // Alt-drag from an item, or a node inside a diagram, draws a link (spec).
+    if (e.evt.altKey && !readOnly && tool === 'select' && pressedAt.current) {
+      controlPress.current = item.id;
+      startLink(item, pressedAt.current, e.evt);
+      return;
+    }
+    // A press on a checkbox, task marker or link inside an object is for that
+    // control: it must not start moving the object (onDragStart checks this).
+    controlPress.current =
+      isObject(item) && pressedAt.current && objectEditing.isControlAt(item, pressedAt.current)
+        ? item.id
+        : null;
     if (tool === 'pan' || spaceHeld.current || e.evt.button === 1) return;
     // Selecting someone else's item is fine; manipulating it is not. `draggable`
     // already refuses the drag, and this keeps it out of a multi-item gesture.
@@ -1255,6 +1488,219 @@ export function CanvasSurface({
    * Picking one member out of a group is the point: a click selects the whole
    * group, and crop acts on exactly one image.
    */
+  /** The anchor under a world point: the topmost item there, or one of its diagram's nodes. */
+  const anchorUnder = (world: { x: number; y: number }): Anchor | null => {
+    const point = { minX: world.x, minY: world.y, maxX: world.x, maxY: world.y };
+    const hits = doc.index
+      .search(point)
+      .flatMap((id) => {
+        const it = doc.item(id);
+        return it && contains(it, objects.view(it), world) ? [it] : [];
+      })
+      .sort((a, b) => b.z - a.z);
+    const top = hits[0];
+    return top ? anchorAt(top, objects.view(top), world) : null;
+  };
+
+  const startLink = (item: CanvasItem, world: { x: number; y: number }, evt: PointerEvent) => {
+    const stage = stageRef.current;
+    const container = containerRef.current;
+    if (!stage || !container) return;
+    const from = anchorAt(item, objects.view(item), world);
+    linkDraft.current = { from, pointer: world, target: null };
+    container.setPointerCapture(evt.pointerId);
+    const move = (ev: PointerEvent) => {
+      const draft = linkDraft.current;
+      if (!draft) return;
+      stage.setPointersPositions(ev);
+      const at = stage.getRelativePointerPosition();
+      if (!at) return;
+      const target = anchorUnder(at);
+      draft.pointer = at;
+      draft.target = target && !sameAnchor(target, from) ? target : null;
+      linkShape.current?.getLayer()?.batchDraw();
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      const target = linkDraft.current?.target ?? null;
+      linkDraft.current = null;
+      // Released over empty board: nothing (spec).
+      if (target) {
+        const linkId = newLinkId();
+        commit({
+          type: 'link.add',
+          linkId,
+          from,
+          to: target,
+          linkType: defaultLinkType(item.content),
+        });
+        setSelection([]);
+        setSelectedLink(linkId);
+      }
+      redraw();
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+
+  /** A click on the links: the nearest link, or its label when it is selected. */
+  const onLinkClick = () => {
+    const at = stageRef.current?.getRelativePointerPosition();
+    if (!at) return;
+    // The selected link's label first: a click on it cycles the type (spec).
+    const selected = drawnLinks.current.find((d) => d.link.id === selectedLink);
+    const label = selected ? labelBox(selected, camera.zoom) : undefined;
+    const onLabel =
+      label !== undefined &&
+      at.x >= label.minX &&
+      at.x <= label.maxX &&
+      at.y >= label.minY &&
+      at.y <= label.maxY;
+    if (selected && onLabel && !readOnly) {
+      commit({
+        type: 'link.set',
+        linkId: selected.link.id,
+        linkType: nextLinkType(selected.link.linkType),
+      });
+      return;
+    }
+    const near = linkNear(drawnLinks.current, at, 8 / camera.zoom);
+    if (!near) return;
+    setSelection([]);
+    setSelectedLink(near.link.id);
+  };
+
+  const onLinkHover = () => {
+    const at = stageRef.current?.getRelativePointerPosition();
+    const near = at ? linkNear(drawnLinks.current, at, 8 / camera.zoom) : undefined;
+    setHoveredLink(near?.link.id ?? null);
+  };
+
+  /** Where an item is right now: the dragged node's place while it moves, so lines follow. */
+  const liveTransform = (item: CanvasItem): Transform => {
+    if (!dragOrigins.current.has(item.id) && draggingItem.current !== item.id)
+      return item.transform;
+    const node = stageRef.current?.findOne(`#${item.id}`);
+    return node ? { ...item.transform, x: node.x(), y: node.y() } : item.transform;
+  };
+
+  /**
+   * Every link, drawn quietly (spec): a thin line with an arrowhead, edge to
+   * edge. A broken one is dashed in the dimmer annotation colour. The type label
+   * and the anchors' outlines appear only for the hovered or selected link.
+   * Drawn in the items' layer from live node positions, so a line follows an
+   * item while it is dragged.
+   */
+  const paintLinks = (ctx: Konva.Context) => {
+    const c = (ctx as unknown as { _context: CanvasRenderingContext2D })._context;
+    const zoom = camera.zoom;
+    const list: DrawnLink[] = [];
+    for (const link of doc.links()) {
+      const a = doc.item(link.from.itemId);
+      const b = doc.item(link.to.itemId);
+      if (!a || !b) continue;
+      const from = anchorBox(a, objects.view(a), link.from.element, liveTransform(a));
+      const to = anchorBox(b, objects.view(b), link.to.element, liveTransform(b));
+      list.push({ link, segment: segmentBetween(from.box, to.box, zoom), from, to });
+    }
+    drawnLinks.current = list;
+    const arrow = (seg: { from: { x: number; y: number }; to: { x: number; y: number } }) => {
+      const angle = Math.atan2(seg.to.y - seg.from.y, seg.to.x - seg.from.x);
+      const head = 7 / zoom;
+      c.beginPath();
+      c.moveTo(seg.from.x, seg.from.y);
+      c.lineTo(seg.to.x, seg.to.y);
+      c.stroke();
+      c.beginPath();
+      c.moveTo(seg.to.x, seg.to.y);
+      c.lineTo(seg.to.x - head * Math.cos(angle - 0.45), seg.to.y - head * Math.sin(angle - 0.45));
+      c.lineTo(seg.to.x - head * Math.cos(angle + 0.45), seg.to.y - head * Math.sin(angle + 0.45));
+      c.closePath();
+      c.fill();
+    };
+    const outline = (r: { minX: number; minY: number; maxX: number; maxY: number }) => {
+      const pad = 3 / zoom;
+      c.strokeRect(
+        r.minX - pad,
+        r.minY - pad,
+        r.maxX - r.minX + 2 * pad,
+        r.maxY - r.minY + 2 * pad,
+      );
+    };
+    c.save();
+    c.font = `${11 / zoom}px ui-sans-serif, system-ui, sans-serif`;
+    c.textAlign = 'center';
+    c.textBaseline = 'bottom';
+    c.lineJoin = 'round';
+    for (const d of list) {
+      const hot = d.link.id === hoveredLink || d.link.id === selectedLink;
+      const broken = d.from.broken || d.to.broken;
+      const colour = hot ? theme.accent : broken ? theme.frame : theme.label;
+      c.strokeStyle = colour;
+      c.fillStyle = colour;
+      c.lineWidth = (d.link.id === selectedLink ? 2.5 : 1.5) / zoom;
+      c.setLineDash(broken ? [5 / zoom, 4 / zoom] : []);
+      arrow(d.segment);
+      if (!hot) continue;
+      c.setLineDash([]);
+      c.lineWidth = 1.5 / zoom;
+      outline(d.from.box);
+      outline(d.to.box);
+      const m = midpoint(d.segment);
+      const text = broken ? `broken · ${d.link.linkType}` : d.link.linkType;
+      c.strokeStyle = theme.ground;
+      c.lineWidth = 4 / zoom;
+      c.strokeText(text, m.x, m.y - 3 / zoom);
+      c.fillText(text, m.x, m.y - 3 / zoom);
+    }
+    // The link being dragged out, and what it would land on.
+    const draft = linkDraft.current;
+    const a = draft ? doc.item(draft.from.itemId) : undefined;
+    if (draft && a) {
+      const from = anchorBox(a, objects.view(a), draft.from.element, liveTransform(a));
+      const target = draft.target ? doc.item(draft.target.itemId) : undefined;
+      const to =
+        target && draft.target
+          ? anchorBox(target, objects.view(target), draft.target.element, liveTransform(target))
+          : undefined;
+      const end = to?.box ?? {
+        minX: draft.pointer.x,
+        minY: draft.pointer.y,
+        maxX: draft.pointer.x,
+        maxY: draft.pointer.y,
+      };
+      c.strokeStyle = theme.accent;
+      c.fillStyle = theme.accent;
+      c.lineWidth = 1.5 / zoom;
+      c.setLineDash([6 / zoom, 4 / zoom]);
+      arrow(segmentBetween(from.box, end, zoom));
+      c.setLineDash([]);
+      outline(from.box);
+      if (to) outline(to.box);
+    }
+    c.restore();
+  };
+
+  /** A click on an object: its checkboxes, task markers, links, task text and title. */
+  const onItemClick = (item: CanvasItem, e: Konva.KonvaEventObject<MouseEvent>) => {
+    const at = stageRef.current?.getRelativePointerPosition();
+    if (!at || !isObject(item) || tool !== 'select') return;
+    if (objectEditing.click(item, at, e.evt.shiftKey)) redraw();
+  };
+
+  /** Double-click: an image's crop, an object's in-place editor. */
+  const onItemDoubleClick = (item: CanvasItem) => {
+    if (item.content.kind === 'image') enterCrop(item);
+    else if (!readOnly && tool === 'select') objectEditing.doubleClick(item);
+  };
+
+  const onItemHover = (item: CanvasItem | null, e: Konva.KonvaEventObject<MouseEvent>) => {
+    const at = stageRef.current?.getRelativePointerPosition();
+    if (!at) return;
+    objectEditing.hover(item, at, pointerIn(containerRef.current, e.evt as PointerEvent));
+  };
+
   const enterCrop = (item: CanvasItem) => {
     if (readOnly || tool !== 'select' || item.content.kind !== 'image') return;
     if (realtimeRef.current?.heldByOther(item.id)) return;
@@ -1367,6 +1813,10 @@ export function CanvasSurface({
   };
 
   const onDragStart = (item: CanvasItem) => {
+    if (controlPress.current === item.id) {
+      stageRef.current?.findOne(`#${item.id}`)?.stopDrag();
+      return;
+    }
     if (cropping && cropTarget?.id === item.id) {
       const node = stageRef.current?.findOne(`#${item.id}`);
       if (!node) return;
@@ -1385,6 +1835,7 @@ export function CanvasSurface({
       return;
     }
     setGesturing(true);
+    draggingItem.current = item.id;
     dragOrigins.current.clear();
     for (const id of selection) {
       const node = stageRef.current?.findOne(`#${id}`);
@@ -1455,6 +1906,10 @@ export function CanvasSurface({
   };
 
   const onDragEnd = (item: CanvasItem) => {
+    draggingItem.current = null;
+    // A press that was for a control or a link: its drag was stopped at once,
+    // and there is nothing to commit.
+    if (controlPress.current === item.id) return;
     if (cropGesture.current?.kind === 'slide') {
       endCrop();
       return;
@@ -1658,231 +2113,292 @@ export function CanvasSurface({
   });
 
   return (
-    <div
-      ref={containerRef}
-      className="absolute inset-0 touch-none select-none"
-      // The ground grid sits beneath the Stage as the container's own background.
-      style={gridBackground(camera, size, theme.grid)}
-    >
-      <Stage
-        ref={stageRef}
-        width={width}
-        height={height}
-        x={stage.x}
-        y={stage.y}
-        scaleX={stage.scaleX}
-        scaleY={stage.scaleY}
-        onPointerDown={onPointerDown}
-        // macOS makes Ctrl+click a right-click, and Ctrl+Alt is the crop
-        // modifier. A plain right-click keeps the browser's menu.
-        onContextMenu={(e) => {
-          if (e.evt.ctrlKey) e.evt.preventDefault();
+    <>
+      <div
+        ref={containerRef}
+        className="absolute inset-0 touch-none select-none"
+        // The ground grid sits beneath the Stage as the container's own background.
+        style={{
+          ...gridBackground(camera, size, theme.grid),
+          ...(inspectorOpen ? { right: INSPECTOR_WIDTH } : {}),
         }}
       >
-        <Layer listening={false}>
-          <Shape
-            perfectDrawEnabled={false}
-            sceneFunc={(ctx) =>
-              paintAggregate(
-                ctx as unknown as AggregateContext,
-                { items: aggregated, groups: groupOutlines, zoom: camera.zoom },
-                { itemColor: theme.itemEdge, groupColor: theme.groupEdge },
-              )
-            }
-          />
-        </Layer>
+        <Stage
+          ref={stageRef}
+          width={width}
+          height={height}
+          x={stage.x}
+          y={stage.y}
+          scaleX={stage.scaleX}
+          scaleY={stage.scaleY}
+          onPointerDown={onPointerDown}
+          // macOS makes Ctrl+click a right-click, and Ctrl+Alt is the crop
+          // modifier. A plain right-click keeps the browser's menu.
+          onContextMenu={(e) => {
+            if (e.evt.ctrlKey) e.evt.preventDefault();
+          }}
+        >
+          <Layer listening={false}>
+            <Shape
+              perfectDrawEnabled={false}
+              sceneFunc={(ctx) =>
+                paintAggregate(
+                  ctx as unknown as AggregateContext,
+                  { items: aggregated, groups: groupOutlines, zoom: camera.zoom },
+                  { itemColor: theme.itemEdge, groupColor: theme.groupEdge },
+                )
+              }
+            />
+          </Layer>
 
-        {/*
+          {/*
           Group annotations, between the aggregate marks and the images so the
           references stay dominant: a frame reads around its members, and its
           label interrupts the line with a ground-coloured halo. Screen pixels
           divided by zoom, like every interface stroke.
         */}
-        <Layer listening={false}>
-          {drawnFrames.map((frame) => (
-            <KonvaLine
-              key={frame.groupId}
-              points={frame.points}
-              closed
-              stroke={theme.frame}
-              strokeWidth={FRAME_STROKE / camera.zoom}
-              perfectDrawEnabled={false}
-              hitStrokeWidth={0}
-            />
-          ))}
-          {groupLabels.map((group) => (
-            <KonvaText
-              key={group.groupId}
-              x={group.x}
-              y={group.y}
-              text={group.label}
-              fontSize={group.fontSize}
-              fontFamily={GROUP_LABEL_FAMILY}
-              letterSpacing={GROUP_LABEL_TRACKING / camera.zoom}
-              fill={theme.label}
-              stroke={theme.ground}
-              strokeWidth={GROUP_LABEL_HALO / camera.zoom}
-              fillAfterStrokeEnabled
-              listening={false}
-              perfectDrawEnabled={false}
-            />
-          ))}
-        </Layer>
-
-        <Layer>
-          {nodes.map((item) => {
-            const bitmap = bitmaps.bitmapFor(item);
-            const node = (
-              <ItemNode
-                key={item.id}
-                item={item}
-                lod={lodOf(active.visible, item.id)}
-                bitmap={bitmap}
-                opacity={
-                  opacityPreview !== null && selection.has(item.id)
-                    ? opacityPreview
-                    : item.appearance.opacity
-                }
-                selected={selection.has(item.id)}
-                draggable={tool === 'select' && !readOnly}
-                heldBy={holderColour(item.id)}
-                zoom={camera.zoom}
-                onPointerDown={onItemPointerDown}
-                onDragStart={onDragStart}
-                onDragMove={onDragMove}
-                onDragEnd={onDragEnd}
-                onDoubleClick={enterCrop}
-                cropping={cropping && cropTarget?.id === item.id}
+          <Layer listening={false}>
+            {drawnFrames.map((frame) => (
+              <KonvaLine
+                key={frame.groupId}
+                points={frame.points}
+                closed
+                stroke={theme.frame}
+                strokeWidth={FRAME_STROKE / camera.zoom}
+                perfectDrawEnabled={false}
+                hitStrokeWidth={0}
               />
-            );
-            // The whole original, faded, directly beneath the item it frames.
-            if (!cropping || cropTarget?.id !== item.id || !bitmap) return node;
-            return [
-              <CropGhost key={`${item.id}-ghost`} item={item} bitmap={bitmap} zoom={camera.zoom} />,
-              node,
-            ];
-          })}
-          {/*
+            ))}
+            {groupLabels.map((group) => (
+              <KonvaText
+                key={group.groupId}
+                x={group.x}
+                y={group.y}
+                text={group.label}
+                fontSize={group.fontSize}
+                fontFamily={GROUP_LABEL_FAMILY}
+                letterSpacing={GROUP_LABEL_TRACKING / camera.zoom}
+                fill={theme.label}
+                stroke={theme.ground}
+                strokeWidth={GROUP_LABEL_HALO / camera.zoom}
+                fillAfterStrokeEnabled
+                listening={false}
+                perfectDrawEnabled={false}
+              />
+            ))}
+          </Layer>
+
+          <Layer>
+            {nodes.map((item) => {
+              const bitmap = bitmaps.bitmapFor(item);
+              const node = (
+                <ItemNode
+                  key={item.id}
+                  item={item}
+                  lod={lodOf(active.visible, item.id)}
+                  bitmap={bitmap}
+                  view={isObject(item) ? objects.view(item) : undefined}
+                  opacity={
+                    opacityPreview !== null && selection.has(item.id)
+                      ? opacityPreview
+                      : item.appearance.opacity
+                  }
+                  selected={selection.has(item.id)}
+                  draggable={tool === 'select' && !readOnly}
+                  heldBy={holderColour(item.id)}
+                  zoom={camera.zoom}
+                  onPointerDown={onItemPointerDown}
+                  onDragStart={onDragStart}
+                  onDragMove={onDragMove}
+                  onDragEnd={onDragEnd}
+                  onDoubleClick={onItemDoubleClick}
+                  onClick={onItemClick}
+                  onHover={onItemHover}
+                  cropping={cropping && cropTarget?.id === item.id}
+                />
+              );
+              // The whole original, faded, directly beneath the item it frames.
+              if (!cropping || cropTarget?.id !== item.id || !bitmap) return node;
+              return [
+                <CropGhost
+                  key={`${item.id}-ghost`}
+                  item={item}
+                  bitmap={bitmap}
+                  zoom={camera.zoom}
+                />,
+                node,
+              ];
+            })}
+            {/*
             Another actor's selection: the same interface stroke as the local
             one, in their colour, specified in screen pixels and divided by zoom
             so it stays one thickness however far the camera is.
           */}
-          {remoteMarks.map((mark) => (
-            <KonvaRect
-              key={mark.key}
-              x={mark.rect.minX}
-              y={mark.rect.minY}
-              width={mark.rect.maxX - mark.rect.minX}
-              height={mark.rect.maxY - mark.rect.minY}
-              stroke={mark.colour}
-              strokeWidth={1.5 / camera.zoom}
-              dash={[6 / camera.zoom, 4 / camera.zoom]}
-              listening={false}
+            {/* Links over the items they join, under the selection chrome. */}
+            <Shape
+              ref={linkShape}
+              sceneFunc={paintLinks}
+              hitFunc={(ctx, shape) => {
+                ctx.beginPath();
+                for (const d of drawnLinks.current) {
+                  ctx.moveTo(d.segment.from.x, d.segment.from.y);
+                  ctx.lineTo(d.segment.to.x, d.segment.to.y);
+                }
+                ctx.strokeShape(shape);
+                // The selected link's label is clickable too: it cycles the type.
+                const selected = drawnLinks.current.find((d) => d.link.id === selectedLink);
+                if (selected) {
+                  const r = labelBox(selected, camera.zoom);
+                  ctx.beginPath();
+                  ctx.rect(r.minX, r.minY, r.maxX - r.minX, r.maxY - r.minY);
+                  ctx.fillShape(shape);
+                }
+              }}
+              stroke={theme.label}
+              fill={theme.label}
+              hitStrokeWidth={12 / camera.zoom}
               perfectDrawEnabled={false}
+              onClick={onLinkClick}
+              onTap={onLinkClick}
+              onMouseMove={onLinkHover}
+              onMouseLeave={() => setHoveredLink(null)}
             />
-          ))}
-          {/*
+            {remoteMarks.map((mark) => (
+              <KonvaRect
+                key={mark.key}
+                x={mark.rect.minX}
+                y={mark.rect.minY}
+                width={mark.rect.maxX - mark.rect.minX}
+                height={mark.rect.maxY - mark.rect.minY}
+                stroke={mark.colour}
+                strokeWidth={1.5 / camera.zoom}
+                dash={[6 / camera.zoom, 4 / camera.zoom]}
+                listening={false}
+                perfectDrawEnabled={false}
+              />
+            ))}
+            {/*
             Konva's Transformer ships with its own blue and white anchors, which
             is a third palette nobody chose. It is the most visible thing on a
             selected item, so it wears the accent like everything else.
           */}
-          {/*
+            {/*
             Konva's Transformer ships with its own blue and white anchors, which
             is a third palette nobody chose. It is the most visible thing on a
             selected item, so it wears the accent like everything else.
           */}
-          {!readOnly && (
-            <Transformer
-              ref={transformerRef}
-              // Cropping: no rotation, free aspect (Shift keeps it, Konva's own
-              // rule), and the box run through cropBoundBox. The dash that says
-              // "crop" is on the item's own outline, which is drawn over this.
-              rotateEnabled={!cropping}
-              keepRatio={!cropping}
-              boundBoxFunc={cropBoundBox}
-              ignoreStroke
-              borderStroke={theme.accent}
-              borderStrokeWidth={1}
-              anchorStroke={theme.accent}
-              anchorFill={theme.surface}
-              anchorSize={8}
-              onTransformStart={onTransformStart}
-              onTransform={onTransform}
-              onTransformEnd={onTransformEnd}
-            />
-          )}
-        </Layer>
-
-        {marquee && (
-          <Layer listening={false}>
-            <KonvaRect
-              x={marquee.minX}
-              y={marquee.minY}
-              width={marquee.maxX - marquee.minX}
-              height={marquee.maxY - marquee.minY}
-              fill={theme.accentWash}
-              stroke={theme.accent}
-              strokeWidth={1 / camera.zoom}
-            />
+            {!readOnly && (
+              <Transformer
+                ref={transformerRef}
+                // Cropping: no rotation, free aspect (Shift keeps it, Konva's own
+                // rule), and the box run through cropBoundBox. The dash that says
+                // "crop" is on the item's own outline, which is drawn over this.
+                rotateEnabled={!cropping}
+                keepRatio={!cropping}
+                boundBoxFunc={cropBoundBox}
+                ignoreStroke
+                borderStroke={theme.accent}
+                borderStrokeWidth={1}
+                anchorStroke={theme.accent}
+                anchorFill={theme.surface}
+                anchorSize={8}
+                onTransformStart={onTransformStart}
+                onTransform={onTransform}
+                onTransformEnd={onTransformEnd}
+              />
+            )}
           </Layer>
-        )}
-      </Stage>
 
-      <RemoteCursors presence={presence} camera={camera} size={size} theme={theme} />
-      <PresenceRoster
-        presence={presence}
-        selfActorId={realtimeRef.current?.actorId}
-        theme={theme}
-      />
-      {!readOnly && <CanvasToolbar history={history} onHistory={redraw} onFrame={frameView} />}
-      {!readOnly && (
-        <SelectionToolbar
-          doc={doc}
-          camera={camera}
-          size={size}
-          selection={selection}
-          commit={commit}
-          setSelection={setSelection}
-          onOpacityPreview={setOpacityPreview}
-          hidden={gesturing}
-          labelSignal={labelSignal}
-          collapsed={toolbarCollapsed}
-          onToggleCollapsed={toggleToolbar}
-          cropping={cropSticky}
-          onToggleCrop={() => setCropItemId(cropSticky ? null : (cropTarget?.id ?? null))}
+          {marquee && (
+            <Layer listening={false}>
+              <KonvaRect
+                x={marquee.minX}
+                y={marquee.minY}
+                width={marquee.maxX - marquee.minX}
+                height={marquee.maxY - marquee.minY}
+                fill={theme.accentWash}
+                stroke={theme.accent}
+                strokeWidth={1 / camera.zoom}
+              />
+            </Layer>
+          )}
+        </Stage>
+
+        {/* In-place editors and the task hover, over the canvas while they last. */}
+        {objectEditing.overlays}
+
+        <RemoteCursors presence={presence} camera={camera} size={size} theme={theme} />
+        <PresenceRoster
+          presence={presence}
+          selfActorId={realtimeRef.current?.actorId}
+          theme={theme}
         />
-      )}
-
-      <div
-        className="pointer-events-none absolute bottom-2 left-2 rounded bg-surface/90 px-2 py-1 text-[11px] text-ink-dim tabular-nums"
-        data-testid="canvas-stats"
-      >
-        {/*
-         * The renderer's counters are for measuring it, not for the person — and
-         * a share link shows this to a client. Dev builds (which the e2e suite
-         * runs against) and `?debug` keep them.
-         */}
-        {SHOW_RENDER_COUNTERS ? (
-          <>
-            {doc.itemCount.toLocaleString()} items · {active.candidateCount.toLocaleString()}{' '}
-            candidates · {nodes.length} rendered · {aggregated.length.toLocaleString()} aggregated ·{' '}
-            {selection.size} selected · {(camera.zoom * 100).toFixed(0)}%
-            {active.truncated ? ' · truncated' : ''}
-          </>
-        ) : (
-          <>
-            {doc.itemCount.toLocaleString()} items
-            {selection.size > 0 ? ` · ${selection.size} selected` : ''} ·{' '}
-            {(camera.zoom * 100).toFixed(0)}%
-          </>
+        {!readOnly && <CanvasToolbar history={history} onHistory={redraw} onFrame={frameView} />}
+        {!readOnly && (
+          <SelectionToolbar
+            doc={doc}
+            camera={camera}
+            size={size}
+            selection={selection}
+            commit={commit}
+            setSelection={setSelection}
+            onOpacityPreview={setOpacityPreview}
+            hidden={gesturing}
+            labelSignal={labelSignal}
+            collapsed={toolbarCollapsed}
+            onToggleCollapsed={toggleToolbar}
+            cropping={cropSticky}
+            onToggleCrop={() => setCropItemId(cropSticky ? null : (cropTarget?.id ?? null))}
+          />
         )}
+
+        <div
+          className="pointer-events-none absolute bottom-2 left-2 rounded bg-surface/90 px-2 py-1 text-[11px] text-ink-dim tabular-nums"
+          data-testid="canvas-stats"
+        >
+          {/*
+           * The renderer's counters are for measuring it, not for the person — and
+           * a share link shows this to a client. Dev builds (which the e2e suite
+           * runs against) and `?debug` keep them.
+           */}
+          {SHOW_RENDER_COUNTERS ? (
+            <>
+              {doc.itemCount.toLocaleString()} items · {active.candidateCount.toLocaleString()}{' '}
+              candidates · {nodes.length} rendered · {aggregated.length.toLocaleString()} aggregated
+              · {selection.size} selected · {(camera.zoom * 100).toFixed(0)}%
+              {active.truncated ? ' · truncated' : ''}
+            </>
+          ) : (
+            <>
+              {doc.itemCount.toLocaleString()} items
+              {selection.size > 0 ? ` · ${selection.size} selected` : ''} ·{' '}
+              {(camera.zoom * 100).toFixed(0)}%
+            </>
+          )}
+        </div>
       </div>
-    </div>
+      {/* Dev builds only: beside the board, never over it (spec: canvas/inspector). */}
+      {Inspector && inspectorOpen ? (
+        <Suspense fallback={null}>
+          <Inspector
+            doc={doc}
+            objects={objects}
+            selection={selection}
+            selectedLink={selectedLink}
+            drawnLinks={() => drawnLinks.current}
+            log={opLog}
+            commit={commit}
+          />
+        </Suspense>
+      ) : null}
+    </>
   );
 }
 
+// Dev builds only: a production bundle has no switch for these, `?debug` included.
 const SHOW_RENDER_COUNTERS =
-  import.meta.env.DEV || new URLSearchParams(globalThis.location?.search).has('debug');
+  DEVTOOLS &&
+  (import.meta.env.DEV || new URLSearchParams(globalThis.location?.search).has('debug'));
 
 // --- pieces ----------------------------------------------------------------
 
@@ -2029,7 +2545,8 @@ export function gridBackground(
     cellPx >= GRID_FADE_BELOW
       ? 100
       : Math.round((100 * (cellPx - GRID_HIDE_BELOW)) / (GRID_FADE_BELOW - GRID_HIDE_BELOW));
-  const ink = strength === 100 ? colour : `color-mix(in oklch, ${colour} ${strength}%, transparent)`;
+  const ink =
+    strength === 100 ? colour : `color-mix(in oklch, ${colour} ${strength}%, transparent)`;
   const stage = toStageAttrs(camera, size);
   return {
     backgroundImage: `radial-gradient(circle, ${ink} ${GRID_DOT_RADIUS}px, transparent ${GRID_DOT_RADIUS + 0.5}px)`,
@@ -2054,11 +2571,16 @@ function ItemNode({
   onDragMove,
   onDragEnd,
   onDoubleClick,
+  onClick,
+  onHover,
   cropping,
+  view,
 }: {
   item: CanvasItem;
   lod: string;
   bitmap: ImageBitmap | undefined;
+  /** A note, diagram or checklist's layout; absent for images and before it lands. */
+  view?: ObjectView | undefined;
   /** The item's opacity, or the value under a slider that has not been released. */
   opacity: number;
   selected: boolean;
@@ -2071,16 +2593,21 @@ function ItemNode({
   onDragMove: (item: CanvasItem, e: Konva.KonvaEventObject<DragEvent>) => void;
   onDragEnd: (item: CanvasItem) => void;
   onDoubleClick: (item: CanvasItem) => void;
+  onClick: (item: CanvasItem, e: Konva.KonvaEventObject<MouseEvent>) => void;
+  onHover: (item: CanvasItem | null, e: Konva.KonvaEventObject<MouseEvent>) => void;
   /** Being cropped: the outline goes dashed, the one sign the cage changed job. */
   cropping: boolean;
 }) {
   const theme = canvasTheme();
-  const { form, outline: outlineAttrs } = itemNodeAttrs(
-    item,
-    opacity,
-    zoom,
-    selected || heldBy !== undefined,
-  );
+  const attrs = itemNodeAttrs(item, opacity, zoom, selected || heldBy !== undefined);
+  // An object's height follows its drawing with the top edge fixed (spec). The
+  // offset keeps the stored half-height, so a different drawn height grows or
+  // shrinks downward from the same top, rotation included. Until the author's
+  // height lands, every client draws the height it derives itself.
+  const derived = view ? drawnHeight(item, view.layout) : undefined;
+  const form = derived === undefined ? attrs.form : { ...attrs.form, height: derived };
+  const outlineAttrs =
+    derived === undefined || !attrs.outline ? attrs.outline : { ...attrs.outline, height: derived };
   const shared = {
     id: item.id,
     ...form,
@@ -2093,6 +2620,14 @@ function ItemNode({
     onDragEnd: () => onDragEnd(item),
     onDblClick: () => onDoubleClick(item),
     onDblTap: () => onDoubleClick(item),
+    onClick: (e: Konva.KonvaEventObject<MouseEvent>) => onClick(item, e),
+    // Only objects say anything on hover (who changed a task); images stay silent.
+    ...(isObject(item)
+      ? {
+          onMouseMove: (e: Konva.KonvaEventObject<MouseEvent>) => onHover(item, e),
+          onMouseLeave: (e: Konva.KonvaEventObject<MouseEvent>) => onHover(null, e),
+        }
+      : {}),
     perfectDrawEnabled: false,
     shadowForStrokeEnabled: false,
   };
@@ -2121,6 +2656,40 @@ function ItemNode({
 
   // MICRO is a colour blob by definition: decoding an image for a few pixels is
   // exactly the cost LOD exists to avoid.
+  if (isObject(item)) {
+    const mark = 6 / zoom;
+    return (
+      <>
+        {bitmap && IMAGE_LODS.has(lod) ? (
+          <KonvaImage {...shared} image={bitmap} />
+        ) : (
+          // Not yet drawn, or too small to be worth drawing: still something to
+          // select and drag, and nothing painted (objects have no background).
+          <KonvaRect {...shared} fill="transparent" />
+        )}
+        {view?.stale ? (
+          // The source no longer parses and this is its last good drawing: a
+          // small dim mark in the corner, not an alarm.
+          <KonvaRect
+            id={`stale-${item.id}`}
+            x={form.x}
+            y={form.y}
+            rotation={form.rotation}
+            width={mark}
+            height={mark}
+            cornerRadius={mark / 2}
+            offsetX={form.offsetX - (item.transform.width - mark * 1.5)}
+            offsetY={form.offsetY - mark / 2}
+            fill={theme.label}
+            listening={false}
+            perfectDrawEnabled={false}
+          />
+        ) : null}
+        {outline}
+      </>
+    );
+  }
+
   return (
     <>
       {bitmap && IMAGE_LODS.has(lod) ? (
@@ -2313,6 +2882,23 @@ export function selectionMode(event: PointerEvent | MouseEvent): SelectionMode {
   if (event.shiftKey) return 'add';
   if (event.ctrlKey || event.metaKey) return 'toggle';
   return 'replace';
+}
+
+/** Dropped files that are text Visarium turns into objects, by name. */
+function textFilesOf(transfer: DataTransfer | null): File[] {
+  return [...(transfer?.files ?? [])].filter((f) =>
+    /\.(md|markdown|txt|mmd|mermaid|puml|plantuml|pu)$/i.test(f.name),
+  );
+}
+
+/** A dropped file's text as content: its extension decides a diagram, otherwise `classifyText`. */
+async function readTextFile(file: File): Promise<CanvasItemContent> {
+  const text = await file.text();
+  if (/\.(mmd|mermaid)$/i.test(file.name))
+    return { kind: 'diagram', lang: 'mermaid', source: text.trim() };
+  if (/\.(puml|plantuml|pu)$/i.test(file.name))
+    return { kind: 'diagram', lang: 'plantuml', source: text.trim() };
+  return classifyText(text);
 }
 
 function pointerIn(element: HTMLElement | null, event: PointerEvent) {

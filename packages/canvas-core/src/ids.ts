@@ -16,6 +16,7 @@ export type AssetId = Branded<string, 'AssetId'>;
 export type GroupId = Branded<string, 'GroupId'>;
 export type ActorId = Branded<string, 'ActorId'>;
 export type OperationId = Branded<string, 'OperationId'>;
+export type LinkId = Branded<string, 'LinkId'>;
 
 export const asCanvasId = (v: string): CanvasId => v as CanvasId;
 export const asItemId = (v: string): ItemId => v as ItemId;
@@ -23,6 +24,7 @@ export const asAssetId = (v: string): AssetId => v as AssetId;
 export const asGroupId = (v: string): GroupId => v as GroupId;
 export const asActorId = (v: string): ActorId => v as ActorId;
 export const asOperationId = (v: string): OperationId => v as OperationId;
+export const asLinkId = (v: string): LinkId => v as LinkId;
 
 const HEX = '0123456789abcdef';
 
@@ -59,3 +61,4 @@ export function uuidv7(now: number = Date.now()): string {
 export const newItemId = (): ItemId => asItemId(uuidv7());
 export const newGroupId = (): GroupId => asGroupId(uuidv7());
 export const newOperationId = (): OperationId => asOperationId(uuidv7());
+export const newLinkId = (): LinkId => asLinkId(uuidv7());

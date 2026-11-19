@@ -352,3 +352,75 @@ describe('parseServerMessage', () => {
     expect(frame({ t: 'presence', left: 'everyone' })).toBeNull();
   });
 });
+
+describe('board objects and links arrive from other people', () => {
+  const op = (operations: unknown[]) =>
+    parseServerMessage(
+      JSON.stringify({ t: 'op', fromRevision: 1, toRevision: 1 + operations.length, operations }),
+    );
+  const create = (content: unknown) => ({
+    type: 'item.create',
+    itemId: 'i',
+    z: 1,
+    transform: { x: 0, y: 0, width: 320, height: 80, rotation: 0 },
+    content,
+  });
+
+  it('accepts every new operation and content kind, stamps and all', () => {
+    const frame = op([
+      create({ kind: 'note', source: '### Hi' }),
+      create({ kind: 'diagram', lang: 'plantuml', source: '@startuml' }),
+      create({
+        kind: 'checklist',
+        title: 'T',
+        tasks: [{ id: 't1', text: 'x', state: 'done', by: 'u', at: '2026-11-19T00:00:00Z' }],
+      }),
+      { type: 'item.source', itemId: 'i', source: 'x', baseRevision: 3 },
+      { type: 'checklist.title', itemId: 'i', title: 'T2' },
+      {
+        type: 'task.add',
+        itemId: 'i',
+        task: { id: 't2', text: 'y', state: 'todo', by: null },
+        index: 0,
+      },
+      { type: 'task.set', itemId: 'i', taskId: 't1', state: 'blocked', by: 'u', at: 'now' },
+      { type: 'task.remove', itemId: 'i', taskId: 't2' },
+      {
+        type: 'link.add',
+        linkId: 'l',
+        from: { itemId: 'i' },
+        to: { itemId: 'j', element: 'Pay' },
+        linkType: 'implements',
+        by: 'u',
+      },
+      { type: 'link.set', linkId: 'l', linkType: 'comments' },
+      { type: 'link.delete', linkId: 'l' },
+    ]);
+    expect(frame?.t).toBe('op');
+  });
+
+  it.each([
+    [
+      'a diagram in an unknown language',
+      create({ kind: 'diagram', lang: 'graphviz', source: 'x' }),
+    ],
+    ['a task in an unknown state', { type: 'task.set', itemId: 'i', taskId: 't', state: 'maybe' }],
+    [
+      'a link of an unknown type',
+      {
+        type: 'link.add',
+        linkId: 'l',
+        from: { itemId: 'i' },
+        to: { itemId: 'j' },
+        linkType: 'likes',
+      },
+    ],
+    [
+      'a link end that is not an anchor',
+      { type: 'link.add', linkId: 'l', from: 'i', to: { itemId: 'j' }, linkType: 'describes' },
+    ],
+    ['source that is not text', { type: 'item.source', itemId: 'i', source: 3 }],
+  ])('drops a frame carrying %s', (_, body) => {
+    expect(op([body])).toBeNull();
+  });
+});

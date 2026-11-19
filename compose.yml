@@ -11,6 +11,9 @@ services:
     build:
       context: .
       dockerfile: infra/docker/Dockerfile
+      args:
+        # `dev` bakes the inspector into the image (`just dev-image`).
+        WEB_BUILD: ${WEB_BUILD:-prod}
     image: visarium:local
     restart: unless-stopped
     networks:

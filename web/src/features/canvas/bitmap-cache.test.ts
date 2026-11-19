@@ -7,7 +7,15 @@ import {
   FULL_CROP,
 } from '@visarium/canvas-core';
 import { describe, expect, it, vi } from 'vitest';
-import { BitmapCache, bitmapKey, bitmapUrl, tierFor } from './bitmap-cache';
+import {
+  BitmapCache,
+  bitmapKey,
+  bitmapUrl,
+  objectBitmapKey,
+  objectScale,
+  tierFor,
+} from './bitmap-cache';
+import { layoutKey } from './objects/store';
 
 const MB = 1024 * 1024;
 
@@ -347,5 +355,57 @@ describe('notification', () => {
     await cache.request('k', '/u');
 
     expect(onLoad).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('objects: bitmaps made here, not fetched', () => {
+  const object = (over: { x?: number; width?: number; source?: string } = {}): CanvasItem => ({
+    id: asItemId('note-1'),
+    transform: { x: over.x ?? 0, y: 0, width: over.width ?? 320, height: 120, rotation: 0 },
+    z: 0,
+    content: { kind: 'note', source: over.source ?? '### Overview' },
+    appearance: DEFAULT_APPEARANCE,
+    crop: FULL_CROP,
+  });
+
+  it('makes each key once and counts it against the same budget as images', async () => {
+    const onLoad = vi.fn();
+    const { cache, fetched } = cacheOf(oneMegabyte, { onLoad });
+    const make = vi.fn(async () => oneMegabyte());
+    await Promise.all([cache.produce('obj:a@2', make), cache.produce('obj:a@2', make)]);
+    expect(make).toHaveBeenCalledTimes(1);
+    expect(fetched).toEqual([]);
+    expect(cache.bytes).toBe(MB);
+    expect(onLoad).toHaveBeenCalledTimes(1);
+  });
+
+  it('evicts a made bitmap like any other, closing it', async () => {
+    const { cache } = cacheOf(oneMegabyte, { budgetBytes: 1 * MB });
+    const first = oneMegabyte();
+    await cache.produce('obj:a@1', async () => first);
+    cache.pin(new Set());
+    await cache.produce('obj:b@1', async () => oneMegabyte());
+    cache.pin(new Set(['obj:b@1']));
+    expect(cache.has('obj:a@1')).toBe(false);
+    expect(first.close).toHaveBeenCalled();
+  });
+
+  it('re-renders when the drawing changes and reuses it when only the place does', () => {
+    const key = (item: CanvasItem, scale = 2) => objectBitmapKey(item.id, layoutKey(item), scale);
+    expect(key(object({ x: 500 }))).toBe(key(object()));
+    expect(key(object({ source: '### Overview v2' }))).not.toBe(key(object()));
+    expect(key(object({ width: 400 }))).not.toBe(key(object()));
+    expect(key(object(), 4)).not.toBe(key(object(), 2));
+  });
+
+  it('rasterises at a power-of-two scale, never above the pixel ceiling', () => {
+    const dpr = globalThis.devicePixelRatio;
+    Object.defineProperty(globalThis, 'devicePixelRatio', { value: 1, configurable: true });
+    expect(objectScale(1, 320 * 120)).toBe(1);
+    expect(objectScale(1.3, 320 * 120)).toBe(2);
+    expect(objectScale(0.1, 320 * 120)).toBe(0.5);
+    expect(objectScale(9, 320 * 120)).toBe(4);
+    expect(objectScale(4, 2000 * 2000), 'a huge drawing is held to 8M device pixels').toBe(1);
+    Object.defineProperty(globalThis, 'devicePixelRatio', { value: dpr, configurable: true });
   });
 });

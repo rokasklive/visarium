@@ -434,3 +434,90 @@ test('a revoked share link says so', async ({ page }) => {
   await page.goto('/s#gone');
   await expect(page.getByRole('alert')).toContainText('no longer active');
 });
+
+test('a share link shows the board’s links and their hover, and offers no way to change them', async ({
+  page,
+}) => {
+  const NOTE = '01a01640-6b72-7d60-968b-88be186f7101';
+  const FLOW = '01a01640-6b72-7d60-968b-88be186f7102';
+  const LINK = '01a01640-6b72-7d60-968b-88be186f7103';
+  await page.route('**/api/shared/session', (route) =>
+    route.fulfill({
+      json: { member: false, boardId: BOARD, title: 'Refs', sharedBy: 'Ada Lovelace' },
+    }),
+  );
+  const box = (id: string, x: number, content: unknown) => ({
+    id,
+    transform: { x, y: 0, width: 220, height: 100, rotation: 0 },
+    z: 1,
+    revision: 0,
+    content,
+  });
+  await page.route('**/api/shared/board', (route) =>
+    route.fulfill({
+      json: {
+        revision: 1,
+        items: [
+          box(NOTE, -200, { kind: 'note', source: '### Overview' }),
+          box(FLOW, 150, {
+            kind: 'diagram',
+            lang: 'mermaid',
+            source: 'flowchart LR\n  API --> Pay',
+          }),
+        ],
+        groups: [],
+        links: [
+          {
+            id: LINK,
+            from: { itemId: NOTE, element: null },
+            to: { itemId: FLOW, element: 'Pay' },
+            linkType: 'describes',
+          },
+        ],
+        id: BOARD,
+        title: 'Refs',
+        sharedBy: 'Ada Lovelace',
+        expiresAt: null,
+      },
+    }),
+  );
+  const writes: string[] = [];
+  page.on('request', (r) => {
+    if (r.method() !== 'GET') writes.push(new URL(r.url()).pathname);
+  });
+
+  await page.goto('/s#share-token');
+  await expect(page.getByText('Shared by Ada Lovelace · view only')).toBeVisible();
+  type Hook = {
+    links(): { from: { x: number; y: number }; to: { x: number; y: number } }[];
+    linkUi(): { hovered: string | null; selected: string | null };
+  };
+  const links = () =>
+    page.evaluate(() => (window as unknown as { __objects?: Hook }).__objects?.links() ?? []);
+  await expect.poll(async () => (await links()).length, { timeout: 20_000 }).toBe(1);
+
+  const canvas = await page.locator('canvas').first().boundingBox();
+  if (!canvas) throw new Error('no canvas');
+  const c = { x: canvas.x + canvas.width / 2, y: canvas.y + canvas.height / 2 };
+  const [line] = await links();
+  if (!line) throw new Error('no line');
+  await page.mouse.move(c.x + (line.from.x + line.to.x) / 2, c.y + (line.from.y + line.to.y) / 2);
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as unknown as { __objects: Hook }).__objects.linkUi().hovered),
+    )
+    .toBe(LINK);
+
+  // No gesture changes anything: Alt-drag, a click and Delete leave the board as it was.
+  await page.keyboard.down('Alt');
+  await page.mouse.move(c.x - 200, c.y);
+  await page.mouse.down();
+  await page.mouse.move(c.x + 150, c.y, { steps: 6 });
+  await page.mouse.up();
+  await page.keyboard.up('Alt');
+  await page.mouse.click(c.x + (line.from.x + line.to.x) / 2, c.y + (line.from.y + line.to.y) / 2);
+  await page.keyboard.press('Delete');
+  await page.waitForTimeout(500);
+  expect(await links()).toHaveLength(1);
+  expect(writes.filter((p) => p !== '/api/shared/session')).toEqual([]);
+});

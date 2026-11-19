@@ -15,8 +15,16 @@
  */
 
 import type { Transform } from './geometry';
-import type { ActorId, CanvasId, GroupId, ItemId, OperationId } from './ids';
-import type { Appearance, CanvasItemContent, Crop } from './model';
+import type { ActorId, CanvasId, GroupId, ItemId, LinkId, OperationId } from './ids';
+import type {
+  Anchor,
+  Appearance,
+  CanvasItemContent,
+  Crop,
+  LinkType,
+  Task,
+  TaskState,
+} from './model';
 
 export type CanvasOperationBody =
   | {
@@ -92,7 +100,54 @@ export type CanvasOperationBody =
    * member bounds. Absolute state, like every other body: the inverse of
    * "frame it" is "unframe it", never an omission.
    */
-  | { readonly type: 'group.frame'; readonly groupId: GroupId; readonly frame: boolean };
+  | { readonly type: 'group.frame'; readonly groupId: GroupId; readonly frame: boolean }
+  /**
+   * Replace a note's or diagram's source. `baseRevision` is the item revision
+   * the edit started from; the server refuses a mismatch (409) rather than let
+   * a stale editor overwrite newer text. Inverses never carry one: undo is
+   * deliberate.
+   */
+  | {
+      readonly type: 'item.source';
+      readonly itemId: ItemId;
+      readonly source: string;
+      readonly baseRevision?: number;
+    }
+  | { readonly type: 'checklist.title'; readonly itemId: ItemId; readonly title: string }
+  /** Insert a task at `index` (clamped), or append without one. */
+  | {
+      readonly type: 'task.add';
+      readonly itemId: ItemId;
+      readonly task: Task;
+      readonly index?: number;
+    }
+  /**
+   * Change one task. Absent fields are left alone, so marking a task done never
+   * rewrites its text, and undoing it never touches another task.
+   */
+  | {
+      readonly type: 'task.set';
+      readonly itemId: ItemId;
+      readonly taskId: string;
+      readonly text?: string;
+      readonly state?: TaskState;
+      /** Stamped by the server; whatever a client sends is replaced. */
+      readonly by?: string | null;
+      readonly at?: string | null;
+    }
+  | { readonly type: 'task.remove'; readonly itemId: ItemId; readonly taskId: string }
+  | {
+      readonly type: 'link.add';
+      readonly linkId: LinkId;
+      readonly from: Anchor;
+      readonly to: Anchor;
+      readonly linkType: LinkType;
+      /** Stamped by the server. */
+      readonly by?: string | null;
+      readonly at?: string | null;
+    }
+  | { readonly type: 'link.set'; readonly linkId: LinkId; readonly linkType: LinkType }
+  | { readonly type: 'link.delete'; readonly linkId: LinkId };
 
 export type CanvasOperationType = CanvasOperationBody['type'];
 

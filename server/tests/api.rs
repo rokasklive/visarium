@@ -284,7 +284,8 @@ async fn assets_boards_library_and_lifecycle() {
         { "operationId": uuid::Uuid::now_v7(), "baseRevision": 0, "body": { "type": "item.appearance", "itemId": item, "appearance": { "opacity": 0.5, "flipX": true, "flipY": false } } },
     ]});
     let applied = c.json("POST", &format!("/api/boards/{b}/operations"), ops).await;
-    assert_eq!(applied.json(), json!({ "revision": 3 }));
+    assert_eq!(applied.json()["revision"], 3);
+    assert_eq!(applied.json()["operations"].as_array().unwrap().len(), 3, "the applied bodies come back");
     let snap = c.get(&format!("/api/boards/{b}/snapshot")).await.json();
     assert_eq!(snap["revision"], 3);
     assert_eq!(snap["items"][0]["groupId"], group.as_str());
@@ -452,6 +453,24 @@ async fn realtime_presence_previews_and_announced_ops() {
     assert_eq!((op["t"].as_str(), op["fromRevision"].as_i64(), op["toRevision"].as_i64()), (Some("op"), Some(0), Some(1)));
     assert_eq!(op["operations"][0], json!({ "type": "group.create", "groupId": group, "memberIds": null, "label": "x", "frame": null }));
 
+    // Attribution is the server's: a peer hears the stamped body, whatever the author claimed.
+    let me = c.get("/api/session").await.json()["user"]["id"].as_str().unwrap().to_string();
+    let list = json!({ "type": "item.create", "itemId": uuid::Uuid::now_v7(), "transform": { "x": 0.0, "y": 0.0, "width": 300.0, "height": 100.0 },
+        "content": { "kind": "checklist", "title": "T", "tasks": [{ "id": "t1", "text": "One", "by": "mallory", "at": "1999" }] } });
+    let posted = c
+        .send(
+            "POST",
+            &format!("/api/boards/{b}/operations"),
+            Some("application/json"),
+            json!({ "operations": [{ "body": list }] }).to_string().into_bytes(),
+            &[("x-visarium-actor", &actor_a)],
+        )
+        .await;
+    assert_eq!(posted.json()["operations"][0]["content"]["tasks"][0]["by"], me.as_str(), "the author gets the stamp back");
+    let heard = next(&mut z).await;
+    assert_eq!(heard["operations"][0]["content"]["tasks"][0]["by"], me.as_str());
+    assert_ne!(heard["operations"][0]["content"]["tasks"][0]["at"], "1999");
+
     drop(a);
     let released = next(&mut z).await;
     assert_eq!(released, json!({ "t": "lock", "itemIds": [item], "heldBy": null, "expiresAt": 0 }));
@@ -459,6 +478,178 @@ async fn realtime_presence_previews_and_announced_ops() {
 
     z.send(json!({ "t": "cursor", "x": "nope", "y": 0 }).to_string().into()).await.unwrap();
     assert_eq!(next(&mut z).await, json!({ "closed": 1007 }));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// --- board objects and links (canvas/notes, diagrams, checklists, links) -----
+
+async fn post_ops(c: &mut Client, board: &str, bodies: Vec<Value>) -> Reply {
+    let ops: Vec<Value> = bodies.into_iter().map(|b| json!({ "body": b })).collect();
+    c.json("POST", &format!("/api/boards/{board}/operations"), json!({ "operations": ops })).await
+}
+
+fn create(item: &str, content: Value) -> Value {
+    json!({ "type": "item.create", "itemId": item, "transform": { "x": 0.0, "y": 0.0, "width": 320.0, "height": 120.0 }, "content": content })
+}
+
+#[tokio::test]
+async fn notes_diagrams_checklists_and_links() {
+    let (mut c, _app, dir) = signed_in().await;
+    let me = c.get("/api/session").await.json()["user"]["id"].as_str().unwrap().to_string();
+    let (b, image, _, _) = board_with_one_image(&mut c).await;
+    let id = || uuid::Uuid::now_v7().to_string();
+    let (note, flow, list) = (id(), id(), id());
+    let made = post_ops(&mut c, &b, vec![
+        create(&note, json!({ "kind": "note", "source": "### Overview\n\n- [ ] one" })),
+        create(&flow, json!({ "kind": "diagram", "lang": "mermaid", "source": "flowchart LR\n  API --> Pay" })),
+        create(&list, json!({ "kind": "checklist", "title": "Build", "tasks": [
+            { "id": "t1", "text": "Interface", "state": "done" }, { "id": "t2", "text": "Keys" }] })),
+    ]).await;
+    assert_eq!(made.status, StatusCode::OK, "{}", made.json());
+    let snap = c.get(&format!("/api/boards/{b}/snapshot")).await.json();
+    let by_id = |snap: &Value, i: &str| snap["items"].as_array().unwrap().iter().find(|x| x["id"] == i).cloned().unwrap();
+    assert_eq!(by_id(&snap, &note)["content"], json!({ "kind": "note", "source": "### Overview\n\n- [ ] one" }));
+    assert_eq!(by_id(&snap, &flow)["content"]["lang"], "mermaid");
+    assert_eq!(by_id(&snap, &list)["content"]["tasks"][1]["state"], "todo", "state defaults to todo");
+    assert_eq!(by_id(&snap, &list)["content"]["tasks"][0]["by"], me.as_str());
+    assert_eq!(snap["people"][&me], "Ada");
+    assert_eq!(by_id(&snap, &image)["content"]["kind"], "image", "images are untouched");
+
+    // Every refusal names the problem and commits nothing.
+    let revision = |snap: &Value| snap["revision"].as_i64().unwrap();
+    let before = revision(&c.get(&format!("/api/boards/{b}/snapshot")).await.json());
+    let too_many: Vec<Value> = (0..201).map(|n| json!({ "id": format!("t{n}"), "text": "x" })).collect();
+    let refused = [
+        (create(&id(), json!({ "kind": "sticker", "source": "x" })), "unknown item kind"),
+        (create(&id(), json!({ "kind": "diagram", "lang": "graphviz", "source": "x" })), "lang must be one of"),
+        (create(&id(), json!({ "kind": "note" })), "needs its source"),
+        (create(&id(), json!({ "kind": "note", "source": "x".repeat(65 * 1024) })), "limited to 65536 bytes"),
+        (create(&id(), json!({ "kind": "checklist", "title": "T", "tasks": too_many })), "at most 200 tasks"),
+        (create(&id(), json!({ "kind": "checklist", "title": "T", "tasks": [{ "id": "a", "text": "x".repeat(501) }] })), "1-500 characters"),
+        (create(&id(), json!({ "kind": "checklist", "title": "T", "tasks": [{ "id": "a", "text": "x" }, { "id": "a", "text": "y" }] })), "used twice"),
+        (create(&id(), json!({ "kind": "checklist", "title": "T", "tasks": [{ "id": "a", "text": "x", "state": "maybe" }] })), "state must be one of"),
+        (json!({ "type": "item.source", "itemId": list, "source": "x" }), "only notes and diagrams have source"),
+        (json!({ "type": "task.add", "itemId": note, "task": { "id": "t9", "text": "x" } }), "not a checklist"),
+        (json!({ "type": "task.add", "itemId": list, "task": { "id": "t1", "text": "x" } }), "already in this checklist"),
+        (json!({ "type": "link.add", "linkId": id(), "from": { "itemId": note }, "to": { "itemId": note }, "linkType": "describes" }), "two different ends"),
+        (json!({ "type": "link.add", "linkId": id(), "from": { "itemId": note, "element": "Pay" }, "to": { "itemId": flow }, "linkType": "describes" }), "only a diagram has named elements"),
+        (json!({ "type": "link.add", "linkId": id(), "from": { "itemId": note }, "to": { "itemId": flow, "element": "x".repeat(201) }, "linkType": "describes" }), "element name is 1-200"),
+        (json!({ "type": "link.add", "linkId": id(), "from": { "itemId": note }, "to": { "itemId": flow }, "linkType": "likes" }), "link type must be one of"),
+        (json!({ "type": "link.add", "linkId": id(), "from": { "itemId": note }, "to": { "itemId": id() }, "linkType": "describes" }), "no item"),
+    ];
+    for (body, why) in refused {
+        let r = post_ops(&mut c, &b, vec![body.clone()]).await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(r.json()["detail"].as_str().unwrap_or_default().contains(why), "{why}: {}", r.json());
+    }
+    assert_eq!(revision(&c.get(&format!("/api/boards/{b}/snapshot")).await.json()), before, "refused batches commit nothing");
+
+    // A link on another board's item is not this board's to make.
+    let other = c.json("POST", "/api/boards", json!({ "title": "Other" })).await.json()["id"].as_str().unwrap().to_string();
+    let elsewhere = id();
+    assert_eq!(post_ops(&mut c, &other, vec![create(&elsewhere, json!({ "kind": "note", "source": "x" }))]).await.status, StatusCode::OK);
+    let cross = json!({ "type": "link.add", "linkId": id(), "from": { "itemId": note }, "to": { "itemId": elsewhere }, "linkType": "describes" });
+    assert_eq!(post_ops(&mut c, &b, vec![cross]).await.status, StatusCode::BAD_REQUEST);
+
+    // Tasks change one at a time; the stamp is the server's, not the client's.
+    let changed = post_ops(&mut c, &b, vec![
+        json!({ "type": "task.set", "itemId": list, "taskId": "t2", "state": "doing", "by": "mallory", "at": "1999" }),
+        json!({ "type": "task.add", "itemId": list, "task": { "id": "t3", "text": "Between" }, "index": 1 }),
+        json!({ "type": "task.remove", "itemId": list, "taskId": "t1" }),
+        json!({ "type": "checklist.title", "itemId": list, "title": "Build the adapter" }),
+    ]).await;
+    assert_eq!(changed.status, StatusCode::OK, "{}", changed.json());
+    assert_eq!(changed.json()["operations"][0]["by"], me.as_str());
+    let tasks = by_id(&c.get(&format!("/api/boards/{b}/snapshot")).await.json(), &list)["content"].clone();
+    assert_eq!(tasks["title"], "Build the adapter");
+    let summary: Vec<(String, String)> =
+        tasks["tasks"].as_array().unwrap().iter().map(|t| (t["id"].as_str().unwrap().into(), t["state"].as_str().unwrap().into())).collect();
+    assert_eq!(summary, [("t3".to_string(), "todo".to_string()), ("t2".into(), "doing".into())]);
+    assert_eq!(tasks["tasks"][1]["by"], me.as_str());
+    assert_ne!(tasks["tasks"][1]["at"], "1999");
+
+    // A stale source edit is refused with both revisions named; a current one lands.
+    let rev = by_id(&c.get(&format!("/api/boards/{b}/snapshot")).await.json(), &note)["revision"].as_i64().unwrap();
+    let stale = post_ops(&mut c, &b, vec![json!({ "type": "item.source", "itemId": note, "source": "late", "baseRevision": rev - 1 })]).await;
+    assert_eq!(stale.status, StatusCode::CONFLICT);
+    let detail = stale.json()["detail"].as_str().unwrap().to_string();
+    assert!(detail.contains(&format!("revision {}", rev - 1)) && detail.contains(&format!("revision {rev}")), "{detail}");
+    let fresh = post_ops(&mut c, &b, vec![json!({ "type": "item.source", "itemId": note, "source": "### Overview v2", "baseRevision": rev })]).await;
+    assert_eq!(fresh.status, StatusCode::OK);
+    assert_eq!(by_id(&c.get(&format!("/api/boards/{b}/snapshot")).await.json(), &note)["revision"], rev + 1);
+
+    // Links: add, retype, survive duplication remapped, and cascade with their items.
+    let (l1, l2) = (id(), id());
+    let linked = post_ops(&mut c, &b, vec![
+        json!({ "type": "link.add", "linkId": l1, "from": { "itemId": note }, "to": { "itemId": flow, "element": "Pay" }, "linkType": "describes" }),
+        json!({ "type": "link.add", "linkId": l2, "from": { "itemId": list }, "to": { "itemId": flow, "element": "Pay" }, "linkType": "implements" }),
+        json!({ "type": "link.set", "linkId": l1, "linkType": "comments" }),
+    ]).await;
+    assert_eq!(linked.status, StatusCode::OK, "{}", linked.json());
+    let snap = c.get(&format!("/api/boards/{b}/snapshot")).await.json();
+    let l = snap["links"].as_array().unwrap().iter().find(|l| l["id"] == l1.as_str()).unwrap().clone();
+    assert_eq!((l["linkType"].as_str(), l["to"]["element"].as_str(), l["by"].as_str()), (Some("comments"), Some("Pay"), Some(me.as_str())));
+    assert_eq!(l["from"], json!({ "itemId": note, "element": null }));
+
+    let copy = c.json("POST", &format!("/api/boards/{b}/duplicate"), json!(null)).await.json()["id"].as_str().unwrap().to_string();
+    let copied = c.get(&format!("/api/boards/{copy}/snapshot")).await.json();
+    assert_eq!(copied["links"].as_array().unwrap().len(), 2);
+    let ids: Vec<&str> = copied["items"].as_array().unwrap().iter().map(|i| i["id"].as_str().unwrap()).collect();
+    for l in copied["links"].as_array().unwrap() {
+        assert!(ids.contains(&l["from"]["itemId"].as_str().unwrap()) && ids.contains(&l["to"]["itemId"].as_str().unwrap()), "remapped: {l}");
+    }
+    let copied_list = copied["items"].as_array().unwrap().iter().find(|i| i["content"]["kind"] == "checklist").unwrap();
+    assert_eq!(copied_list["content"]["tasks"].as_array().unwrap().len(), 2);
+
+    assert_eq!(post_ops(&mut c, &b, vec![json!({ "type": "item.delete", "itemId": flow })]).await.status, StatusCode::OK);
+    assert_eq!(c.get(&format!("/api/boards/{b}/snapshot")).await.json()["links"], json!([]), "deleting an end deletes its links");
+    // Updates whose target is gone apply to nothing, as every other operation does.
+    for gone in [
+        json!({ "type": "link.delete", "linkId": id() }),
+        json!({ "type": "task.set", "itemId": list, "taskId": "nope", "state": "done" }),
+        json!({ "type": "task.remove", "itemId": list, "taskId": "nope" }),
+        json!({ "type": "item.source", "itemId": id(), "source": "x", "baseRevision": 3 }),
+        json!({ "type": "task.add", "itemId": id(), "task": { "id": "t1", "text": "x" } }),
+    ] {
+        assert_eq!(post_ops(&mut c, &b, vec![gone.clone()]).await.status, StatusCode::OK, "{gone}");
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn migration_0004_keeps_every_existing_image() {
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePool};
+    let (config, dir) = config(true);
+    std::fs::create_dir_all(&dir).unwrap();
+    // A database exactly as 0003 left it, with an image item that is grouped and cropped.
+    let pool = SqlitePool::connect_with(SqliteConnectOptions::new().filename(&config.database).create_if_missing(true).foreign_keys(true))
+        .await
+        .unwrap();
+    let mut before = sqlx::migrate!("./migrations");
+    before.migrations = before.migrations.iter().filter(|m| m.version < 4).cloned().collect::<Vec<_>>().into();
+    before.run(&pool).await.unwrap();
+    for sql in [
+        "INSERT INTO canvas (id, title) VALUES ('b1', 'Refs')",
+        "INSERT INTO asset (id, content_hash, storage_key, mime_type, byte_size, width, height) VALUES ('a1', 'h', 'k', 'image/png', 10, 600, 400)",
+        "INSERT INTO canvas_group (id, canvas_id, label) VALUES ('g1', 'b1', 'Sky')",
+        "INSERT INTO canvas_item (id, canvas_id, asset_id, group_id, x, y, width, height, z, opacity, revision, crop_x, crop_y, crop_w, crop_h)
+         VALUES ('i1', 'b1', 'a1', 'g1', 1, 2, 300, 200, 4, 0.5, 7, 0.25, 0, 0.5, 1)",
+    ] {
+        sqlx::query(sql).execute(&pool).await.unwrap();
+    }
+    pool.close().await;
+
+    let app = visarium::open(config).await.unwrap();
+    let row: (String, String, Option<String>, Option<String>, String, f64, i64, f64) =
+        sqlx::query_as("SELECT kind, asset_id, body, lang, group_id, opacity, revision, crop_x FROM canvas_item WHERE id = 'i1'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(row, ("image".into(), "a1".into(), None, None, "g1".into(), 0.5, 7, 0.25));
+    let snap = visarium::boards::snapshot_of(&app.db, "b1").await.unwrap();
+    assert_eq!(snap["items"][0]["content"]["asset"]["assetId"], "a1");
+    assert_eq!(snap["items"][0]["crop"]["x"], 0.25);
+    assert_eq!(snap["links"], json!([]));
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -860,6 +1051,8 @@ async fn share_links_show_one_board_and_nothing_else() {
     let board = v.get("/api/shared/board").await;
     assert_eq!(board.status, StatusCode::OK);
     assert_eq!((board.json()["title"].as_str(), board.json()["items"].as_array().unwrap().len()), (Some("Refs"), 1));
+    assert_eq!(board.json()["links"], json!([]), "a viewer sees the board's links");
+    assert!(board.json().get("people").is_none(), "but not collaborators' names");
     assert_eq!(board.headers["referrer-policy"], "no-referrer");
     assert_eq!(board.headers["x-robots-tag"], "noindex");
     assert_eq!(board.headers[header::CACHE_CONTROL], "private, no-store");

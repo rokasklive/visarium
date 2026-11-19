@@ -51,6 +51,20 @@ export class CanvasHistory {
     return true;
   }
 
+  /**
+   * Record, as ONE undo step, a change that was already applied piecemeal.
+   *
+   * An in-place editor saves its text every few hundred milliseconds so a
+   * closed tab loses nothing, and none of those saves is a step anyone wants
+   * to undo one by one. When editing ends, the inverse of the whole session
+   * (the text as it was when editing began) is recorded here instead.
+   */
+  record(...inverses: CanvasOperationBody[]): void {
+    if (inverses.length === 0) return;
+    this.#undo.push(inverses);
+    this.#redo.length = 0;
+  }
+
   undo(): boolean {
     const entry = this.#undo.pop();
     if (!entry) return false;

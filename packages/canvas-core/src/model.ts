@@ -8,7 +8,7 @@
  */
 
 import type { Transform } from './geometry';
-import type { AssetId, GroupId, ItemId } from './ids';
+import type { AssetId, GroupId, ItemId, LinkId } from './ids';
 
 /**
  * A reference to a stored asset.
@@ -25,6 +25,29 @@ export interface AssetRef {
   readonly intrinsicHeight: number;
 }
 
+export type TaskState = 'todo' | 'doing' | 'done' | 'blocked';
+export const TASK_STATES: readonly TaskState[] = ['todo', 'doing', 'done', 'blocked'];
+
+/**
+ * One task of a checklist. `id` is unique within its checklist and never
+ * changes, so a person and an agent can each change a different task without
+ * either overwriting the other. `by`/`at` are the server's stamp of who last
+ * changed it; a client never writes them.
+ */
+export interface Task {
+  readonly id: string;
+  readonly text: string;
+  readonly state: TaskState;
+  readonly by?: string | null;
+  readonly at?: string | null;
+}
+
+export type DiagramLang = 'mermaid' | 'plantuml';
+
+/**
+ * What an item shows. Notes and diagrams store their source and nothing
+ * rendered: the picture is derived wherever it is drawn.
+ */
 export type CanvasItemContent =
   | { readonly kind: 'image'; readonly asset: AssetRef }
   /** A local, not-yet-uploaded drop. Carries no asset id until the upload resolves. */
@@ -34,7 +57,79 @@ export type CanvasItemContent =
       readonly intrinsicHeight: number;
       /** Object URL or data URL for optimistic display. Never persisted. */
       readonly previewUrl?: string;
-    };
+    }
+  /** Markdown. Plain text is Markdown with no syntax, so there is no text kind. */
+  | { readonly kind: 'note'; readonly source: string }
+  | { readonly kind: 'diagram'; readonly lang: DiagramLang; readonly source: string }
+  | { readonly kind: 'checklist'; readonly title: string; readonly tasks: readonly Task[] }
+  /**
+   * A kind this client does not know: a newer server's. Kept so the item still
+   * occupies its place and can be moved or deleted, never edited or rendered.
+   */
+  | { readonly kind: 'unknown'; readonly original: string };
+
+/** Content whose source text the person or an agent edits. */
+export function hasSource(
+  content: CanvasItemContent,
+): content is Extract<CanvasItemContent, { kind: 'note' | 'diagram' }> {
+  return content.kind === 'note' || content.kind === 'diagram';
+}
+
+/**
+ * Wire content (a snapshot row or a remote operation) to a model value.
+ *
+ * Anything this client cannot model becomes `unknown` rather than being
+ * dropped or guessed at, so an older client on a newer server still shows the
+ * board's shape. Returns `undefined` only for content that cannot be an item at
+ * all (an image with no asset id: the contract broke).
+ */
+export function contentFrom(raw: unknown): CanvasItemContent | undefined {
+  const c = (raw ?? {}) as Record<string, unknown>;
+  const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
+  const kind = str(c.kind) ?? 'image';
+  switch (kind) {
+    case 'image': {
+      const a = (c.asset ?? {}) as Record<string, unknown>;
+      const assetId = str(a.assetId);
+      if (!assetId) return undefined;
+      return {
+        kind: 'image',
+        asset: {
+          assetId: assetId as AssetId,
+          intrinsicWidth: Number(a.intrinsicWidth) || 0,
+          intrinsicHeight: Number(a.intrinsicHeight) || 0,
+        },
+      };
+    }
+    case 'note':
+      return { kind: 'note', source: str(c.source) ?? '' };
+    case 'diagram': {
+      const lang = str(c.lang);
+      if (lang !== 'mermaid' && lang !== 'plantuml')
+        return { kind: 'unknown', original: `diagram:${lang}` };
+      return { kind: 'diagram', lang, source: str(c.source) ?? '' };
+    }
+    case 'checklist': {
+      const tasks = Array.isArray(c.tasks) ? c.tasks : [];
+      return {
+        kind: 'checklist',
+        title: str(c.title) ?? '',
+        tasks: tasks.flatMap((t: Record<string, unknown>) => {
+          const id = str(t?.id);
+          if (!id) return [];
+          const state = TASK_STATES.includes(t.state as TaskState)
+            ? (t.state as TaskState)
+            : 'todo';
+          return [
+            { id, text: str(t.text) ?? '', state, by: str(t.by) ?? null, at: str(t.at) ?? null },
+          ];
+        }),
+      };
+    }
+    default:
+      return { kind: 'unknown', original: kind };
+  }
+}
 
 /**
  * What an item looks like, as opposed to where it is or what it shows.
@@ -93,6 +188,47 @@ export interface CanvasItem {
   readonly content: CanvasItemContent;
   readonly appearance: Appearance;
   readonly crop: Crop;
+  /**
+   * The item's own server revision, mirrored locally: every operation the
+   * server counts against the item (transform, z, appearance, content, source,
+   * checklist changes) adds one here too. `item.source` sends it as
+   * `baseRevision` so a stale edit is refused, never silently applied.
+   * Absent until a snapshot says otherwise; an edit without one is unchecked.
+   */
+  readonly revision?: number;
+}
+
+/**
+ * One end of a link: a whole item, or one named element inside a diagram
+ * (a Mermaid node id, a PlantUML participant or class). The element is a name
+ * from the source, never a position, so a renamed element breaks its links
+ * visibly rather than re-pointing them.
+ */
+export interface Anchor {
+  readonly itemId: ItemId;
+  readonly element?: string | null;
+}
+
+export type LinkType = 'describes' | 'comments' | 'implements' | 'depends-on';
+export const LINK_TYPES: readonly LinkType[] = [
+  'describes',
+  'comments',
+  'implements',
+  'depends-on',
+];
+
+/** What relates to what. Its own record, not part of either item. */
+export interface Link {
+  readonly id: LinkId;
+  readonly from: Anchor;
+  readonly to: Anchor;
+  readonly linkType: LinkType;
+  readonly by?: string | null;
+  readonly at?: string | null;
+}
+
+export function sameAnchor(a: Anchor, b: Anchor): boolean {
+  return a.itemId === b.itemId && (a.element ?? null) === (b.element ?? null);
 }
 
 export interface CanvasGroup {
@@ -109,8 +245,21 @@ export interface CanvasGroup {
   readonly memberIds: readonly ItemId[];
 }
 
+/**
+ * The size at which an item's content is shown one-to-one. For an image that is
+ * the original's pixels; text and diagrams are laid out at their box, so their
+ * box IS their intrinsic size.
+ */
 export function itemIntrinsicSize(item: CanvasItem): { width: number; height: number } {
-  return item.content.kind === 'image'
-    ? { width: item.content.asset.intrinsicWidth, height: item.content.asset.intrinsicHeight }
-    : { width: item.content.intrinsicWidth, height: item.content.intrinsicHeight };
+  switch (item.content.kind) {
+    case 'image':
+      return {
+        width: item.content.asset.intrinsicWidth,
+        height: item.content.asset.intrinsicHeight,
+      };
+    case 'placeholder':
+      return { width: item.content.intrinsicWidth, height: item.content.intrinsicHeight };
+    default:
+      return { width: item.transform.width, height: item.transform.height };
+  }
 }

@@ -11,13 +11,18 @@
  */
 
 import { type Rect, transformBounds, unionRects } from './geometry';
-import type { CanvasId, GroupId, ItemId } from './ids';
+import type { CanvasId, GroupId, ItemId, LinkId } from './ids';
 import {
+  type Anchor,
   type CanvasGroup,
   type CanvasItem,
   DEFAULT_APPEARANCE,
   FULL_CROP,
+  hasSource,
   isFullCrop,
+  type Link,
+  sameAnchor,
+  type Task,
 } from './model';
 import type { CanvasOperationBody } from './operations';
 import { SpatialIndex } from './spatial-index';
@@ -37,6 +42,7 @@ export class CanvasDocument {
 
   #items = new Map<ItemId, CanvasItem>();
   #groups = new Map<GroupId, CanvasGroup>();
+  #links = new Map<LinkId, Link>();
   #revision = 0;
   #applied: ((body: CanvasOperationBody, origin: OperationOrigin) => void) | undefined;
 
@@ -73,6 +79,21 @@ export class CanvasDocument {
     return this.#groups.values();
   }
 
+  links(): IterableIterator<Link> {
+    return this.#links.values();
+  }
+
+  link(id: LinkId): Link | undefined {
+    return this.#links.get(id);
+  }
+
+  /** Every link with this item at either end. A board has tens of links, not thousands. */
+  linksOf(itemId: ItemId): Link[] {
+    return [...this.#links.values()].filter(
+      (l) => l.from.itemId === itemId || l.to.itemId === itemId,
+    );
+  }
+
   /**
    * Replace the whole document from a server snapshot.
    *
@@ -83,9 +104,11 @@ export class CanvasDocument {
     items: readonly CanvasItem[],
     groups: readonly CanvasGroup[],
     revision: number,
+    links: readonly Link[] = [],
   ): void {
     this.#items = new Map(items.map((i) => [i.id, i]));
     this.#groups = new Map(groups.map((g) => [g.id, g]));
+    this.#links = new Map(links.map((l) => [l.id, l]));
     this.index.clear();
     this.index.load(items.map((i) => [i.id, transformBounds(i.transform)] as const));
     this.#revision = revision;
@@ -146,6 +169,30 @@ export class CanvasDocument {
     this.index.remove(id);
   }
 
+  /** Mirrors the server's per-item revision bump. Unknown stays unknown. */
+  #bumped(item: CanvasItem, change: Partial<CanvasItem>): CanvasItem {
+    return {
+      ...item,
+      ...change,
+      ...(item.revision !== undefined ? { revision: item.revision + 1 } : {}),
+    };
+  }
+
+  /** A checklist's tasks replaced; the item's revision bumps once. */
+  #setTasks(item: CanvasItem, tasks: readonly Task[]): void {
+    if (item.content.kind !== 'checklist') return;
+    this.#items.set(item.id, this.#bumped(item, { content: { ...item.content, tasks } }));
+  }
+
+  #checklist(id: ItemId) {
+    const item = this.#items.get(id);
+    return item?.content.kind === 'checklist' ? { item, list: item.content } : undefined;
+  }
+
+  #anchorExists(a: Anchor): boolean {
+    return this.#items.has(a.itemId);
+  }
+
   /**
    * Apply one operation.
    *
@@ -177,6 +224,8 @@ export class CanvasDocument {
           content: body.content,
           appearance: body.appearance ?? DEFAULT_APPEARANCE,
           crop: body.crop ?? FULL_CROP,
+          // A created row starts at revision 0 on the server too.
+          revision: 0,
           ...(body.groupId !== undefined ? { groupId: body.groupId } : {}),
         });
         return { type: 'item.delete', itemId: body.itemId };
@@ -186,6 +235,10 @@ export class CanvasDocument {
         const existing = this.#items.get(body.itemId);
         if (!existing) return undefined;
         this.#drop(body.itemId);
+        // The server cascades links with their items; so does this. A client
+        // that wants links back on undo deletes them first, as their own
+        // operations (`deleteItemsBodies`), and there is nothing left here.
+        for (const l of this.linksOf(body.itemId)) this.#links.delete(l.id);
         return {
           type: 'item.create',
           itemId: existing.id,
@@ -204,7 +257,9 @@ export class CanvasDocument {
       case 'item.transform': {
         const existing = this.#items.get(body.itemId);
         if (!existing) return undefined;
-        this.#put({ ...existing, transform: body.transform, crop: body.crop ?? existing.crop });
+        this.#put(
+          this.#bumped(existing, { transform: body.transform, crop: body.crop ?? existing.crop }),
+        );
         // The inverse names the crop exactly when the body did: a plain move's
         // undo must not overwrite a crop someone else made in between.
         return {
@@ -218,14 +273,14 @@ export class CanvasDocument {
       case 'item.content': {
         const existing = this.#items.get(body.itemId);
         if (!existing) return undefined;
-        this.#put({ ...existing, content: body.content });
+        this.#put(this.#bumped(existing, { content: body.content }));
         return { type: 'item.content', itemId: body.itemId, content: existing.content };
       }
 
       case 'item.z': {
         const existing = this.#items.get(body.itemId);
         if (!existing) return undefined;
-        this.#put({ ...existing, z: body.z });
+        this.#put(this.#bumped(existing, { z: body.z }));
         return { type: 'item.z', itemId: body.itemId, z: existing.z };
       }
 
@@ -235,7 +290,7 @@ export class CanvasDocument {
         // Not `#put`: appearance never changes bounds, so the index has nothing
         // to hear. Keeping it out is the structural reason opacity and flip are
         // one operation rather than two.
-        this.#items.set(body.itemId, { ...existing, appearance: body.appearance });
+        this.#items.set(body.itemId, this.#bumped(existing, { appearance: body.appearance }));
         return {
           type: 'item.appearance',
           itemId: body.itemId,
@@ -315,6 +370,131 @@ export class CanvasDocument {
         // flag inverts to `false`, not to a field nobody set.
         return { type: 'group.frame', groupId: body.groupId, frame: existing.frame ?? false };
       }
+
+      case 'item.source': {
+        const existing = this.#items.get(body.itemId);
+        if (!existing || !hasSource(existing.content)) return undefined;
+        const previous = existing.content.source;
+        // Not `#put`: text never moves an item's box; height follows on the
+        // client that measured it, as its own transform.
+        this.#items.set(
+          body.itemId,
+          this.#bumped(existing, { content: { ...existing.content, source: body.source } }),
+        );
+        return { type: 'item.source', itemId: body.itemId, source: previous };
+      }
+
+      case 'checklist.title': {
+        const found = this.#checklist(body.itemId);
+        if (!found) return undefined;
+        this.#items.set(
+          body.itemId,
+          this.#bumped(found.item, { content: { ...found.list, title: body.title } }),
+        );
+        return { type: 'checklist.title', itemId: body.itemId, title: found.list.title };
+      }
+
+      case 'task.add': {
+        const found = this.#checklist(body.itemId);
+        if (!found || found.list.tasks.some((t) => t.id === body.task.id)) return undefined;
+        const tasks = [...found.list.tasks];
+        tasks.splice(Math.min(body.index ?? tasks.length, tasks.length), 0, body.task);
+        this.#setTasks(found.item, tasks);
+        return { type: 'task.remove', itemId: body.itemId, taskId: body.task.id };
+      }
+
+      case 'task.set': {
+        const found = this.#checklist(body.itemId);
+        const task = found?.list.tasks.find((t) => t.id === body.taskId);
+        if (!found || !task) return undefined;
+        const next: Task = {
+          ...task,
+          ...(body.text !== undefined ? { text: body.text } : {}),
+          ...(body.state !== undefined ? { state: body.state } : {}),
+          ...(body.by !== undefined ? { by: body.by } : {}),
+          ...(body.at !== undefined ? { at: body.at } : {}),
+        };
+        this.#setTasks(
+          found.item,
+          found.list.tasks.map((t) => (t.id === task.id ? next : t)),
+        );
+        // Only the fields this body named: undoing "done" restores the state
+        // and leaves the text, and anyone else's edit to it, alone.
+        return {
+          type: 'task.set',
+          itemId: body.itemId,
+          taskId: task.id,
+          ...(body.text !== undefined ? { text: task.text } : {}),
+          ...(body.state !== undefined ? { state: task.state } : {}),
+        };
+      }
+
+      case 'task.remove': {
+        const found = this.#checklist(body.itemId);
+        const index = found?.list.tasks.findIndex((t) => t.id === body.taskId) ?? -1;
+        if (!found || index < 0) return undefined;
+        const task = found.list.tasks[index] as Task;
+        this.#setTasks(
+          found.item,
+          found.list.tasks.filter((t) => t.id !== body.taskId),
+        );
+        return { type: 'task.add', itemId: body.itemId, task, index };
+      }
+
+      case 'link.add': {
+        if (this.#links.has(body.linkId) || sameAnchor(body.from, body.to)) return undefined;
+        if (!this.#anchorExists(body.from) || !this.#anchorExists(body.to)) return undefined;
+        this.#links.set(body.linkId, {
+          id: body.linkId,
+          from: body.from,
+          to: body.to,
+          linkType: body.linkType,
+          ...(body.by !== undefined ? { by: body.by } : {}),
+          ...(body.at !== undefined ? { at: body.at } : {}),
+        });
+        return { type: 'link.delete', linkId: body.linkId };
+      }
+
+      case 'link.set': {
+        const existing = this.#links.get(body.linkId);
+        if (!existing) return undefined;
+        this.#links.set(body.linkId, { ...existing, linkType: body.linkType });
+        return { type: 'link.set', linkId: body.linkId, linkType: existing.linkType };
+      }
+
+      case 'link.delete': {
+        const existing = this.#links.get(body.linkId);
+        if (!existing) return undefined;
+        this.#links.delete(body.linkId);
+        return {
+          type: 'link.add',
+          linkId: existing.id,
+          from: existing.from,
+          to: existing.to,
+          linkType: existing.linkType,
+          ...(existing.by !== undefined ? { by: existing.by } : {}),
+          ...(existing.at !== undefined ? { at: existing.at } : {}),
+        };
+      }
     }
   }
+}
+
+/**
+ * The bodies that delete items so that ONE undo brings them back with every
+ * link they had: each touching link is deleted as its own operation first (so
+ * its inverse restores it), then the items. Deleting the items alone would
+ * cascade the links away with no inverse to restore them.
+ */
+export function deleteItemsBodies(
+  doc: CanvasDocument,
+  itemIds: Iterable<ItemId>,
+): CanvasOperationBody[] {
+  const ids = [...itemIds];
+  const links = new Map<LinkId, true>();
+  for (const id of ids) for (const l of doc.linksOf(id)) links.set(l.id, true);
+  return [
+    ...[...links.keys()].map((linkId): CanvasOperationBody => ({ type: 'link.delete', linkId })),
+    ...ids.map((itemId): CanvasOperationBody => ({ type: 'item.delete', itemId })),
+  ];
 }

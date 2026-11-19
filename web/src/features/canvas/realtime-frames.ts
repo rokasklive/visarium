@@ -17,11 +17,15 @@
  */
 
 import {
+  LINK_TYPES,
+  type LinkType,
   MAX_FRAME_ITEMS,
   PRESENCE_COLOUR_SLOTS,
   type PresenceActor,
   type PreviewItem,
   type ServerMessage,
+  TASK_STATES,
+  type TaskState,
   type Transform,
 } from '@visarium/canvas-core';
 
@@ -168,19 +172,96 @@ function operation(value: unknown): unknown | null {
       return str(value.groupId) && str(value.label) ? value : null;
     case 'group.frame':
       return str(value.groupId) && typeof value.frame === 'boolean' ? value : null;
+    // Board objects and links: as small as what they change, and stamped by the
+    // server (`by`, `at`), which is why those two may be absent or null.
+    case 'item.source':
+      return str(value.itemId) &&
+        typeof value.source === 'string' &&
+        (value.baseRevision === undefined || int(value.baseRevision))
+        ? value
+        : null;
+    case 'checklist.title':
+      return str(value.itemId) && typeof value.title === 'string' ? value : null;
+    case 'task.add':
+      return str(value.itemId) &&
+        task(value.task) &&
+        (value.index === undefined || (int(value.index) && value.index >= 0))
+        ? value
+        : null;
+    case 'task.set':
+      return str(value.itemId) &&
+        str(value.taskId) &&
+        (value.text === undefined || typeof value.text === 'string') &&
+        (value.state === undefined || TASK_STATES.includes(value.state as TaskState)) &&
+        stamp(value)
+        ? value
+        : null;
+    case 'task.remove':
+      return str(value.itemId) && str(value.taskId) ? value : null;
+    case 'link.add':
+      return str(value.linkId) &&
+        anchor(value.from) &&
+        anchor(value.to) &&
+        LINK_TYPES.includes(value.linkType as LinkType) &&
+        stamp(value)
+        ? value
+        : null;
+    case 'link.set':
+      return str(value.linkId) && LINK_TYPES.includes(value.linkType as LinkType) ? value : null;
+    case 'link.delete':
+      return str(value.linkId) ? value : null;
     default:
       return null;
   }
 }
 
+const optionalString = (v: unknown) => v === undefined || v === null || typeof v === 'string';
+
+/** `by` and `at`: the server's stamp, absent on what a client has not had stamped yet. */
+function stamp(value: Record<string, unknown>): boolean {
+  return optionalString(value.by) && optionalString(value.at);
+}
+
+function task(value: unknown): boolean {
+  return (
+    isObject(value) &&
+    str(value.id) &&
+    typeof value.text === 'string' &&
+    TASK_STATES.includes(value.state as TaskState) &&
+    stamp(value)
+  );
+}
+
+function anchor(value: unknown): boolean {
+  return isObject(value) && str(value.itemId) && optionalString(value.element);
+}
+
 function content(value: unknown): boolean {
   if (!isObject(value) || !str(value.kind)) return false;
-  if (value.kind === 'placeholder') {
-    return num(value.intrinsicWidth) && num(value.intrinsicHeight);
+  switch (value.kind) {
+    case 'placeholder':
+      return num(value.intrinsicWidth) && num(value.intrinsicHeight);
+    case 'note':
+      return typeof value.source === 'string';
+    case 'diagram':
+      return (
+        (value.lang === 'mermaid' || value.lang === 'plantuml') && typeof value.source === 'string'
+      );
+    case 'checklist':
+      return (
+        typeof value.title === 'string' &&
+        Array.isArray(value.tasks) &&
+        value.tasks.length <= MAX_FRAME_ITEMS &&
+        value.tasks.every(task)
+      );
+    case 'image': {
+      if (!isObject(value.asset)) return false;
+      const { assetId, intrinsicWidth, intrinsicHeight } = value.asset;
+      return str(assetId) && num(intrinsicWidth) && num(intrinsicHeight);
+    }
+    default:
+      return false;
   }
-  if (value.kind !== 'image' || !isObject(value.asset)) return false;
-  const { assetId, intrinsicWidth, intrinsicHeight } = value.asset;
-  return str(assetId) && num(intrinsicWidth) && num(intrinsicHeight);
 }
 
 function operations(value: unknown): readonly unknown[] | null {

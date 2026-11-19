@@ -1,15 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type components } from '@visarium/api-client';
 import {
-  asAssetId,
   asCanvasId,
   asGroupId,
   asItemId,
+  asLinkId,
   CanvasDocument,
   type CanvasGroup,
   type CanvasItem,
+  contentFrom,
   DEFAULT_APPEARANCE,
   FULL_CROP,
+  LINK_TYPES,
+  type Link,
 } from '@visarium/canvas-core';
 
 export interface BoardSummary {
@@ -144,16 +147,43 @@ export async function loadSnapshotInto(doc: CanvasDocument, boardId: string): Pr
   snapshotInto(doc, data);
 }
 
+/**
+ * Display names of everyone a board credits (task and link authors), by account
+ * id, from the last snapshot. A hover says who finished a task without a second
+ * request. Absent for share viewers, who see the work and not who did it.
+ */
+const people = new Map<string, string>();
+export function personName(id: string | null | undefined): string | undefined {
+  return id ? people.get(id) : undefined;
+}
+
 /** A snapshot body into a document: a member's, or a share viewer's (ADR-0026). */
 export function snapshotInto(
   doc: CanvasDocument,
   data: components['schemas']['BoardSnapshot'],
 ): void {
+  for (const [id, name] of Object.entries(data.people ?? {})) people.set(id, name);
   doc.loadSnapshot(
     (data.items ?? []).flatMap(toItem),
     (data.groups ?? []).flatMap(toGroup),
     data.revision ?? 0,
+    (data.links ?? []).flatMap(toLink),
   );
+}
+
+function toLink(link: components['schemas']['Link']): Link[] {
+  if (!link.id || !link.from?.itemId || !link.to?.itemId || !LINK_TYPES.includes(link.linkType))
+    return [];
+  return [
+    {
+      id: asLinkId(link.id),
+      from: { itemId: asItemId(link.from.itemId), element: link.from.element ?? null },
+      to: { itemId: asItemId(link.to.itemId), element: link.to.element ?? null },
+      linkType: link.linkType,
+      by: link.by ?? null,
+      ...(link.at ? { at: link.at } : {}),
+    },
+  ];
 }
 
 /**
@@ -165,8 +195,10 @@ export function snapshotInto(
  */
 function toItem(item: components['schemas']['Item']): CanvasItem[] {
   const t = item.transform;
-  const asset = item.content?.asset;
-  if (!item.id || !t || !asset?.assetId) return [];
+  // A note, diagram or checklist has no asset; an image without one is a broken
+  // contract and `contentFrom` refuses it. An unrecognised kind is kept, inert.
+  const content = contentFrom(item.content);
+  if (!item.id || !t || !content) return [];
   return [
     {
       id: asItemId(item.id),
@@ -188,14 +220,8 @@ function toItem(item: components['schemas']['Item']): CanvasItem[] {
       },
       // Absent is the whole image: the server stores a full crop as NULL.
       crop: item.crop ?? FULL_CROP,
-      content: {
-        kind: 'image',
-        asset: {
-          assetId: asAssetId(asset.assetId),
-          intrinsicWidth: asset.intrinsicWidth ?? 0,
-          intrinsicHeight: asset.intrinsicHeight ?? 0,
-        },
-      },
+      content,
+      ...(item.revision !== undefined ? { revision: item.revision } : {}),
       ...(item.groupId ? { groupId: asGroupId(item.groupId) } : {}),
     },
   ];

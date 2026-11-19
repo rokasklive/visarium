@@ -511,9 +511,52 @@ export interface components {
         CanvasOperationBody: {
             type: string;
         };
+        /** @description What an item shows. `kind` picks the fields: `asset` (image), `source` (note), `lang` + `source` (diagram), `title` + `tasks` (checklist). Absent kind is an image. */
         Content: {
-            kind?: string;
+            /** @enum {string} */
+            kind?: "image" | "placeholder" | "note" | "diagram" | "checklist";
             asset?: components["schemas"]["AssetRef"];
+            /** @enum {string} */
+            lang?: "mermaid" | "plantuml";
+            /** @description Markdown for a note, Mermaid or PlantUML source for a diagram. At most 64 KiB. */
+            source?: string;
+            /** @description A checklist's title, at most 200 characters. */
+            title?: string;
+            /** @description A checklist's tasks, at most 200. */
+            tasks?: components["schemas"]["Task"][];
+        };
+        /** @description One task of a checklist. `by` and `at` are stamped by the server; a client's values are ignored. */
+        Task: {
+            /** @description Unique in its checklist; 1-40 letters, digits, '-' or '_'. Never changes. */
+            id: string;
+            /** @description 1-500 characters. */
+            text: string;
+            /** @enum {string} */
+            state?: "todo" | "doing" | "done" | "blocked";
+            /** Format: uuid */
+            by?: string | null;
+            /** Format: date-time */
+            at?: string | null;
+        };
+        /** @description One end of a link: a whole item, or a named element inside a diagram item. */
+        Anchor: {
+            /** Format: uuid */
+            itemId: string;
+            /** @description A Mermaid node id or PlantUML name, 1-200 characters. Only on a diagram. */
+            element?: string | null;
+        };
+        /** @enum {string} */
+        LinkType: "describes" | "comments" | "implements" | "depends-on";
+        Link: {
+            /** Format: uuid */
+            id: string;
+            from: components["schemas"]["Anchor"];
+            to: components["schemas"]["Anchor"];
+            linkType: components["schemas"]["LinkType"];
+            /** Format: uuid */
+            by?: string | null;
+            /** Format: date-time */
+            at?: string;
         };
         GroupCreate: Omit<components["schemas"]["CanvasOperationBody"], "type"> & {
             /** Format: uuid */
@@ -645,12 +688,119 @@ export interface components {
              */
             type: "item.z";
         };
+        ItemSource: Omit<components["schemas"]["CanvasOperationBody"], "type"> & {
+            /** Format: uuid */
+            itemId?: string;
+            source?: string;
+            /**
+             * Format: int64
+             * @description The item revision this edit is based on. A mismatch is refused with 409.
+             */
+            baseRevision?: number;
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "item.source";
+        };
+        ChecklistTitle: Omit<components["schemas"]["CanvasOperationBody"], "type"> & {
+            /** Format: uuid */
+            itemId?: string;
+            title?: string;
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "checklist.title";
+        };
+        TaskAdd: Omit<components["schemas"]["CanvasOperationBody"], "type"> & {
+            /** Format: uuid */
+            itemId?: string;
+            task?: components["schemas"]["Task"];
+            /** @description Insert position, clamped; absent appends. */
+            index?: number;
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.add";
+        };
+        TaskSet: Omit<components["schemas"]["CanvasOperationBody"], "type"> & {
+            /** Format: uuid */
+            itemId?: string;
+            taskId?: string;
+            text?: string;
+            /** @enum {string} */
+            state?: "todo" | "doing" | "done" | "blocked";
+            /** @description Stamped by the server. */
+            by?: string | null;
+            /** @description Stamped by the server. */
+            at?: string | null;
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.set";
+        };
+        TaskRemove: Omit<components["schemas"]["CanvasOperationBody"], "type"> & {
+            /** Format: uuid */
+            itemId?: string;
+            taskId?: string;
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.remove";
+        };
+        LinkAdd: Omit<components["schemas"]["CanvasOperationBody"], "type"> & {
+            /** Format: uuid */
+            linkId?: string;
+            from?: components["schemas"]["Anchor"];
+            to?: components["schemas"]["Anchor"];
+            linkType?: components["schemas"]["LinkType"];
+            /** @description Stamped by the server. */
+            by?: string | null;
+            /** @description Stamped by the server. */
+            at?: string | null;
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "link.add";
+        };
+        LinkSet: Omit<components["schemas"]["CanvasOperationBody"], "type"> & {
+            /** Format: uuid */
+            linkId?: string;
+            linkType?: components["schemas"]["LinkType"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "link.set";
+        };
+        LinkDelete: Omit<components["schemas"]["CanvasOperationBody"], "type"> & {
+            /** Format: uuid */
+            linkId?: string;
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "link.delete";
+        };
         PostedOperation: {
             /** Format: uuid */
             operationId?: string;
             /** Format: int64 */
             baseRevision?: number;
-            body?: components["schemas"]["GroupCreate"] | components["schemas"]["GroupDelete"] | components["schemas"]["GroupFrame"] | components["schemas"]["GroupLabel"] | components["schemas"]["GroupMembers"] | components["schemas"]["ItemAppearance"] | components["schemas"]["ItemContent"] | components["schemas"]["ItemCreate"] | components["schemas"]["ItemDelete"] | components["schemas"]["ItemTransform"] | components["schemas"]["ItemZ"];
+            body?: components["schemas"]["GroupCreate"] | components["schemas"]["GroupDelete"] | components["schemas"]["GroupFrame"] | components["schemas"]["GroupLabel"] | components["schemas"]["GroupMembers"] | components["schemas"]["ItemAppearance"] | components["schemas"]["ItemContent"] | components["schemas"]["ItemCreate"] | components["schemas"]["ItemDelete"] | components["schemas"]["ItemTransform"] | components["schemas"]["ItemZ"] | components["schemas"]["ItemSource"] | components["schemas"]["ChecklistTitle"] | components["schemas"]["TaskAdd"] | components["schemas"]["TaskSet"] | components["schemas"]["TaskRemove"] | components["schemas"]["LinkAdd"] | components["schemas"]["LinkSet"] | components["schemas"]["LinkDelete"];
         };
         Transform: {
             /** Format: double */
@@ -667,6 +817,8 @@ export interface components {
         Applied: {
             /** Format: int64 */
             revision?: number;
+            /** @description The applied bodies, in order, with server stamps (`by`, `at`) filled in. */
+            operations?: components["schemas"]["PostedOperation"]["body"][];
         };
         AssetView: {
             /** Format: uuid */
@@ -722,6 +874,9 @@ export interface components {
             revision?: number;
             items?: components["schemas"]["Item"][];
             groups?: components["schemas"]["Group"][];
+            links?: components["schemas"]["Link"][];
+            /** @description Display names of everyone a task or link credits, by account id. Absent for share-link viewers. */
+            people?: { [id: string]: string };
         };
         Group: {
             /** Format: uuid */
@@ -736,6 +891,11 @@ export interface components {
             transform?: components["schemas"]["Transform"];
             /** Format: double */
             z?: number;
+            /**
+             * Format: int64
+             * @description The item's own revision; `item.source` carries it as `baseRevision`.
+             */
+            revision?: number;
             /** Format: uuid */
             groupId?: string;
             content?: components["schemas"]["Content"];

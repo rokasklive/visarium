@@ -21,6 +21,39 @@ import {
   type VisibleItem,
 } from '@visarium/canvas-core';
 import { useEffect, useMemo, useReducer, useState } from 'react';
+import { isObject, type ObjectLayouts } from './objects/store';
+
+/**
+ * Device pixels per world unit an object is rasterised at: the camera's,
+ * rounded UP to a power of two so a zoom gesture re-renders a few times, not
+ * every frame, and never draws text blurrier than the screen.
+ */
+export function objectScale(zoom: number, area: number): number {
+  const wanted = zoom * (globalThis.devicePixelRatio ?? 1);
+  const bucket = 2 ** Math.ceil(Math.log2(Math.max(wanted, 1e-3)));
+  // ponytail: a ceiling of 8M device pixels per object (32 MB decoded) keeps a
+  // huge diagram at high zoom from eating the budget alone. Tile it if that
+  // ever shows as blur on giant diagrams.
+  const ceiling = Math.sqrt(8_000_000 / Math.max(area, 1));
+  return Math.min(Math.max(bucket, 0.5), 4, 2 ** Math.floor(Math.log2(ceiling)));
+}
+
+const OBJECT_SCALES = [4, 2, 1, 0.5] as const;
+
+/** One string per (item, drawing, scale). A move keeps the drawing; an edit does not. */
+export function objectBitmapKey(itemId: string, layoutKey: string, scale: number): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < layoutKey.length; i++) h = Math.imul(h ^ layoutKey.charCodeAt(i), 0x01000193);
+  return `obj:${itemId}:${(h >>> 0).toString(36)}:${layoutKey.length}@${scale}`;
+}
+
+/** An SVG document into pixels. The image is decoded off the main thread where the engine can. */
+async function rasterise(svg: string): Promise<ImageBitmap> {
+  const img = new Image();
+  img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  await img.decode();
+  return createImageBitmap(img);
+}
 
 /** A decoded pixel is four bytes, in every browser, regardless of source format. */
 const BYTES_PER_PIXEL = 4;
@@ -74,7 +107,10 @@ export function bitmapSourceOf(item: CanvasItem): BitmapSource | undefined {
   if (item.content.kind === 'image') {
     return { kind: 'asset', assetId: item.content.asset.assetId };
   }
-  return item.content.previewUrl ? { kind: 'preview', url: item.content.previewUrl } : undefined;
+  // Notes, diagrams and checklists are rendered locally, not fetched (design D2).
+  return item.content.kind === 'placeholder' && item.content.previewUrl
+    ? { kind: 'preview', url: item.content.previewUrl }
+    : undefined;
 }
 
 /** The tier this item would render at, given the zoom tiers are being chosen for. */
@@ -194,6 +230,34 @@ export class BitmapCache {
     url: string,
     options: { resizeWidth?: number | undefined; low?: boolean | undefined } = {},
   ): Promise<void> {
+    return this.#load(key, async (signal) => {
+      const response = await this.#fetch(url, {
+        signal,
+        // Prefetch must not compete with what is on screen right now.
+        priority: options.low ? 'low' : 'auto',
+      } as RequestInit);
+      if (!response.ok) throw new Error(`${response.status} for ${url}`);
+
+      const blob = await response.blob();
+      return this.#decode(
+        blob,
+        options.resizeWidth
+          ? { resizeWidth: options.resizeWidth, resizeQuality: 'high' }
+          : undefined,
+      );
+    });
+  }
+
+  /**
+   * Like {@link request}, for a bitmap made here rather than fetched: a note,
+   * checklist or diagram rasterised from its layout (design D2). Same one
+   * promise per key, same budget, same eviction, same abort.
+   */
+  produce(key: string, make: (signal: AbortSignal) => Promise<ImageBitmap>): Promise<void> {
+    return this.#load(key, make);
+  }
+
+  #load(key: string, make: (signal: AbortSignal) => Promise<ImageBitmap>): Promise<void> {
     if (this.#entries.has(key) || this.#inflight.has(key)) return Promise.resolve();
 
     const controller = new AbortController();
@@ -201,20 +265,7 @@ export class BitmapCache {
 
     return (async () => {
       try {
-        const response = await this.#fetch(url, {
-          signal: controller.signal,
-          // Prefetch must not compete with what is on screen right now.
-          priority: options.low ? 'low' : 'auto',
-        } as RequestInit);
-        if (!response.ok) throw new Error(`${response.status} for ${url}`);
-
-        const blob = await response.blob();
-        const bitmap = await this.#decode(
-          blob,
-          options.resizeWidth
-            ? { resizeWidth: options.resizeWidth, resizeQuality: 'high' }
-            : undefined,
-        );
+        const bitmap = await make(controller.signal);
 
         if (controller.signal.aborted) {
           // The camera left while this was decoding. Keeping it would spend the
@@ -346,6 +397,7 @@ export function useBitmaps(
   visible: readonly VisibleItem[],
   zoom: number,
   budgetBytes: number = DEFAULT_BITMAP_BUDGET_BYTES,
+  objects?: ObjectLayouts,
 ) {
   const [, redraw] = useReducer((n: number) => n + 1, 0);
   const cache = useMemo(
@@ -358,7 +410,19 @@ export function useBitmaps(
 
   useEffect(() => {
     const wanted: { key: string; url: string; resizeWidth?: number | undefined }[] = [];
+    const made: { key: string; svg: () => string }[] = [];
     for (const { item } of visible) {
+      if (objects && isObject(item)) {
+        // Laid out first (async, once per content and width), then rasterised
+        // at the scale the camera needs, through the same budget as images.
+        objects.request(item);
+        const view = objects.view(item);
+        if (!view) continue;
+        const { layout } = view;
+        const scale = objectScale(tierZoom, layout.width * layout.height);
+        made.push({ key: objectBitmapKey(item.id, view.key, scale), svg: () => layout.svg(scale) });
+        continue;
+      }
       const source = bitmapSourceOf(item);
       if (!source) continue;
       const tier = tierFor(item, tierZoom);
@@ -372,13 +436,14 @@ export function useBitmaps(
 
     // Pin before requesting: eviction must never run against a stale idea of
     // what is on screen, and a request that lands early would do exactly that.
-    const keys = new Set(wanted.map((entry) => entry.key));
+    const keys = new Set([...wanted, ...made].map((entry) => entry.key));
     cache.pin(keys);
     cache.abortOutside(keys);
     for (const entry of wanted) {
       cache.request(entry.key, entry.url, { resizeWidth: entry.resizeWidth });
     }
-  }, [visible, tierZoom, cache]);
+    for (const entry of made) cache.produce(entry.key, () => rasterise(entry.svg()));
+  }, [visible, tierZoom, cache, objects]);
 
   return {
     cache,
@@ -388,6 +453,18 @@ export function useBitmaps(
      * bitmap into a 512 px box for one frame beats drawing a grey rectangle.
      */
     bitmapFor(item: CanvasItem): ImageBitmap | undefined {
+      if (objects && isObject(item)) {
+        const view = objects.view(item);
+        if (!view) return undefined;
+        const { layout } = view;
+        const exact = objectScale(tierZoom, layout.width * layout.height);
+        // Its own scale, else any scale of the SAME drawing already in memory.
+        for (const scale of [exact, ...OBJECT_SCALES]) {
+          const bitmap = cache.get(objectBitmapKey(item.id, view.key, scale));
+          if (bitmap) return bitmap;
+        }
+        return undefined;
+      }
       const source = bitmapSourceOf(item);
       if (!source) return undefined;
 

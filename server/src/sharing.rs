@@ -297,6 +297,8 @@ pub async fn private_headers(req: Request, next: Next) -> Response {
 async fn board(State(app): State<AppState>, axum::Extension(link): axum::Extension<ShareLink>) -> ApiResult<Response> {
     let title: String = sqlx::query_scalar("SELECT title FROM canvas WHERE id = ?").bind(&link.canvas_id).fetch_one(&app.db).await?;
     let mut snapshot = crate::boards::snapshot_of(&app.db, &link.canvas_id).await?;
+    // Collaborators' names are for members; a link viewer sees the work, not who did it.
+    snapshot.as_object_mut().map(|s| s.remove("people"));
     snapshot["id"] = json!(link.canvas_id);
     snapshot["title"] = json!(title);
     snapshot["sharedBy"] = json!(link.created_by_name);
