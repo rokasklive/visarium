@@ -74,6 +74,10 @@ pub struct AssetRef {
     pub intrinsic_width: i64,
     #[serde(default)]
     pub intrinsic_height: i64,
+    /// Carried through to other clients so a GIF animates there too; the
+    /// snapshot reads it from the asset row instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
 }
 
 /// What an item shows. `kind` says which of the other fields apply: `asset`
@@ -999,6 +1003,7 @@ struct ItemRow {
     asset_id: Option<String>,
     intrinsic_width: Option<i64>,
     intrinsic_height: Option<i64>,
+    mime_type: Option<String>,
 }
 
 impl ItemRow {
@@ -1013,14 +1018,15 @@ impl ItemRow {
                 json!({ "kind": "checklist", "title": list.title, "tasks": list.tasks })
             }
             _ => json!({ "kind": "image", "asset": {
-                "assetId": self.asset_id, "intrinsicWidth": self.intrinsic_width, "intrinsicHeight": self.intrinsic_height } }),
+                "assetId": self.asset_id, "intrinsicWidth": self.intrinsic_width, "intrinsicHeight": self.intrinsic_height,
+                "mimeType": self.mime_type } }),
         }
     }
 }
 
 const ITEMS_SQL: &str = "SELECT i.id, i.kind, i.lang, i.body, i.revision, i.group_id, i.x, i.y, i.width, i.height, i.rotation, i.z,
                                 i.opacity, i.flip_x, i.flip_y, i.crop_x, i.crop_y, i.crop_w, i.crop_h,
-                                i.asset_id, a.width AS intrinsic_width, a.height AS intrinsic_height
+                                i.asset_id, a.width AS intrinsic_width, a.height AS intrinsic_height, a.mime_type
                            FROM canvas_item i LEFT JOIN asset a ON a.id = i.asset_id
                           WHERE i.canvas_id = ? ORDER BY i.z";
 

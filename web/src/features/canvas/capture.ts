@@ -43,6 +43,7 @@ export interface DraggedAsset {
   readonly assetId: string;
   readonly width: number;
   readonly height: number;
+  readonly mimeType?: string | undefined;
 }
 
 /** Assets in a drag, or none — a drag carrying files instead is not this. */
@@ -345,7 +346,12 @@ export function createItem(capture: Capture, transform: Transform, z: number): C
  * object URL and no upload: the item is complete the instant it exists.
  */
 export function createPlacement(
-  asset: { readonly assetId: AssetId; readonly width: number; readonly height: number },
+  asset: {
+    readonly assetId: AssetId;
+    readonly width: number;
+    readonly height: number;
+    readonly mimeType?: string | undefined;
+  },
   transform: Transform,
   z: number,
 ): CanvasOperationBody {
@@ -360,6 +366,7 @@ export function createPlacement(
         assetId: asset.assetId,
         intrinsicWidth: asset.width,
         intrinsicHeight: asset.height,
+        mimeType: asset.mimeType,
       },
     },
   };

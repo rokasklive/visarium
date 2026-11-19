@@ -185,6 +185,7 @@ function writeDrag(
     assetId: a.assetId,
     width: a.width,
     height: a.height,
+    mimeType: a.mimeType,
   }));
   transfer.setData(ASSET_DRAG_TYPE, JSON.stringify(payload));
   transfer.effectAllowed = 'copy';

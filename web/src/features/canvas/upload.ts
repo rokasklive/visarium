@@ -26,6 +26,7 @@ export interface UploadedAsset {
   readonly assetId: string;
   readonly width: number;
   readonly height: number;
+  readonly mimeType?: string | undefined;
 }
 
 export interface UploadFailure {
@@ -64,11 +65,11 @@ export const uploadAsset: Uploader = async (file) => {
   if (!result.data) throw new Error(`upload failed: ${result.response.status}`);
 
   // Asserted once here rather than at each use.
-  const { id, width, height } = result.data;
+  const { id, width, height, mimeType } = result.data;
   if (!id || !width || !height) {
     throw new Error('the server returned an asset with no identity or no size');
   }
-  return { assetId: id, width, height };
+  return { assetId: id, width, height, mimeType };
 };
 
 interface Job {

@@ -23,6 +23,8 @@ export interface AssetRef {
   readonly assetId: AssetId;
   readonly intrinsicWidth: number;
   readonly intrinsicHeight: number;
+  /** The original's type, when known. `image/gif` is what animates. */
+  readonly mimeType?: string | undefined;
 }
 
 export type TaskState = 'todo' | 'doing' | 'done' | 'blocked';
@@ -98,6 +100,7 @@ export function contentFrom(raw: unknown): CanvasItemContent | undefined {
           assetId: assetId as AssetId,
           intrinsicWidth: Number(a.intrinsicWidth) || 0,
           intrinsicHeight: Number(a.intrinsicHeight) || 0,
+          ...(str(a.mimeType) ? { mimeType: str(a.mimeType) } : {}),
         },
       };
     }

@@ -7,6 +7,7 @@ export interface LibraryAsset {
   readonly assetId: string;
   readonly width: number;
   readonly height: number;
+  readonly mimeType?: string | undefined;
   readonly filename: string;
   /**
    * How many boards currently show it. Zero is the interesting value: an unused
@@ -76,6 +77,7 @@ function toLibraryAsset(asset: {
   id?: string;
   width?: number;
   height?: number;
+  mimeType?: string;
   originalFilename?: string;
   boards?: number;
   deletedAt?: string;
@@ -86,6 +88,7 @@ function toLibraryAsset(asset: {
       assetId: asset.id,
       width: asset.width,
       height: asset.height,
+      mimeType: asset.mimeType,
       filename: asset.originalFilename ?? 'untitled',
       boards: asset.boards ?? 0,
       ...(asset.deletedAt ? { deletedAt: asset.deletedAt } : {}),

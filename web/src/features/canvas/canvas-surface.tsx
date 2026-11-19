@@ -96,6 +96,7 @@ import {
   readCapture,
   readTransfer,
 } from './capture';
+import { useGifs } from './gif';
 import { copySelection, NO_ORIGINALS, NOTICES } from './interchange';
 import {
   anchorAt,
@@ -288,6 +289,11 @@ export function CanvasSurface({
   const [gesturing, setGesturing] = useState(false);
   /** Ctrl+Alt is down: a handle drag now crops instead of resizing. */
   const [cropHeld, setCropHeld] = useState(false);
+  /** `P` stops and restarts every GIF. Off from the start for anyone who asked their OS for less motion. */
+  const [gifsPaused, setGifsPaused] = useState(
+    () => globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false,
+  );
+  const itemsLayer = useRef<Konva.Layer | null>(null);
   /** A crop gesture is running, which keeps the ghost up if the keys are let go. */
   const [cropLive, setCropLive] = useState(false);
   const cropGesture = useRef<CropGesture | null>(null);
@@ -419,6 +425,15 @@ export function CanvasSurface({
   // Bitmaps follow the active set: what is drawn is pinned, what has left is
   // aborted, and the tier each item wants comes from its size on screen.
   const bitmaps = useBitmaps(active.visible, camera.zoom, bitmapBudgetBytes, objects);
+  // Only what is on screen plays (the active set has no preload margin); a
+  // frame repaints the items layer without a React render.
+  const gifs = useGifs(
+    active.visible,
+    camera.zoom,
+    gifsPaused,
+    (lod) => IMAGE_LODS.has(lod),
+    () => itemsLayer.current?.batchDraw(),
+  );
 
   /** Split the active set: real nodes, and everything painted as aggregate. */
   const nodes: CanvasItem[] = [];
@@ -723,6 +738,7 @@ export function CanvasSurface({
                 assetId: asAssetId(asset.assetId),
                 intrinsicWidth: asset.width,
                 intrinsicHeight: asset.height,
+                mimeType: asset.mimeType,
               },
             },
           });
@@ -776,7 +792,12 @@ export function CanvasSurface({
       commit(
         ...assets.map((asset, index) =>
           createPlacement(
-            { assetId: asAssetId(asset.assetId), width: asset.width, height: asset.height },
+            {
+              assetId: asAssetId(asset.assetId),
+              width: asset.width,
+              height: asset.height,
+              mimeType: asset.mimeType,
+            },
             placeCapture(asset, at, start + index, world),
             top + index,
           ),
@@ -1235,6 +1256,11 @@ export function CanvasSurface({
         frameView();
         return;
       }
+      if (!mod && !event.altKey && event.key.toLowerCase() === 'p') {
+        event.preventDefault();
+        setGifsPaused((paused) => !paused);
+        return;
+      }
       if (event.key === 'Delete' || event.key === 'Backspace') {
         if (selectedLink && !readOnly) {
           event.preventDefault();
@@ -1462,7 +1488,8 @@ export function CanvasSurface({
     pressedAt.current = stageRef.current?.getRelativePointerPosition() ?? null;
     setSelectedLink(null);
     // Alt-drag from an item, or a node inside a diagram, draws a link (spec).
-    if (e.evt.altKey && !readOnly && tool === 'select' && pressedAt.current) {
+    // Ctrl+Alt is crop's chord — a drag under it slides the crop, never a link.
+    if (e.evt.altKey && !e.evt.ctrlKey && !readOnly && tool === 'select' && pressedAt.current) {
       controlPress.current = item.id;
       startLink(item, pressedAt.current, e.evt);
       return;
@@ -2190,9 +2217,9 @@ export function CanvasSurface({
             ))}
           </Layer>
 
-          <Layer>
+          <Layer ref={itemsLayer}>
             {nodes.map((item) => {
-              const bitmap = bitmaps.bitmapFor(item);
+              const bitmap = gifs.canvasFor(item) ?? bitmaps.bitmapFor(item);
               const node = (
                 <ItemNode
                   key={item.id}
@@ -2580,7 +2607,7 @@ function ItemNode({
 }: {
   item: CanvasItem;
   lod: string;
-  bitmap: ImageBitmap | undefined;
+  bitmap: ImageBitmap | HTMLCanvasElement | undefined;
   /** A note, diagram or checklist's layout; absent for images and before it lands. */
   view?: ObjectView | undefined;
   /** The item's opacity, or the value under a slider that has not been released. */
@@ -2847,7 +2874,7 @@ function CropGhost({
   zoom,
 }: {
   item: CanvasItem;
-  bitmap: ImageBitmap;
+  bitmap: ImageBitmap | HTMLCanvasElement;
   zoom: number;
 }) {
   const theme = canvasTheme();
