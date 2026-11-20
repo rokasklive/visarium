@@ -438,6 +438,14 @@ fn main() {
                         None => true,
                     }
                 })
+                // A link clicked in a note opens with `window.open`, which a
+                // webview drops unless told; it belongs in the system browser.
+                .on_new_window(|url, _| {
+                    if matches!(url.scheme(), "http" | "https" | "mailto") {
+                        let _ = open_in_browser(&url);
+                    }
+                    tauri::webview::NewWindowResponse::Deny
+                })
                 .title("Visarium")
                 .inner_size(1440.0, 900.0)
                 .min_inner_size(800.0, 500.0)
