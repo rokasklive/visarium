@@ -13,6 +13,7 @@ import {
   distanceToSegment,
   elementAt,
   linkNear,
+  nearestPoints,
   nextLinkType,
   segmentBetween,
 } from './links';
@@ -93,5 +94,36 @@ describe('links', () => {
     ];
     expect(linkNear(drawn, { x: 0, y: 5 }, 6)?.link.id).toBe('l');
     expect(linkNear(drawn, { x: 0, y: 9 }, 6)).toBeUndefined();
+  });
+
+  it('join the nearest points of their anchors (canvas/link-geometry)', () => {
+    const r = (minX: number, minY: number, maxX: number, maxY: number) => ({
+      minX,
+      minY,
+      maxX,
+      maxY,
+    });
+    // Overlapping x: a vertical line through the middle of the overlap.
+    expect(nearestPoints(r(0, 0, 100, 50), r(60, 200, 200, 300))).toEqual({
+      from: { x: 80, y: 50 },
+      to: { x: 80, y: 200 },
+    });
+    // Overlapping y: horizontal.
+    expect(nearestPoints(r(0, 0, 100, 100), r(300, 50, 400, 300))).toEqual({
+      from: { x: 100, y: 75 },
+      to: { x: 300, y: 75 },
+    });
+    // Neither: corner to corner.
+    expect(nearestPoints(r(0, 0, 100, 100), r(300, 300, 400, 400))).toEqual({
+      from: { x: 100, y: 100 },
+      to: { x: 300, y: 300 },
+    });
+    // A note above and left of a tall lifeline lands on the lifeline's head.
+    const note = r(100, -260, 500, -140);
+    const lifeline = r(410, 0, 430, 800);
+    const s = segmentBetween(note, lifeline, 1);
+    expect(s.to.x).toBe(420);
+    expect(s.to.y).toBeLessThan(0);
+    expect(s.to.y).toBeGreaterThan(-10);
   });
 });

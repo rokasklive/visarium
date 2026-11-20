@@ -44,7 +44,10 @@ import {
   screenToWorld,
   selectionState,
   slideCrop,
+  TEXT_SCALE_MAX,
+  TEXT_SCALE_MIN,
   type Transform,
+  textScaleOf,
   toFrame,
   toWorld,
   transformBounds,
@@ -65,6 +68,7 @@ import {
 } from '@visarium/canvas-renderer-konva';
 import Konva from 'konva';
 import {
+  Fragment,
   Suspense,
   useCallback,
   useEffect,
@@ -108,14 +112,18 @@ import {
 } from './capture';
 import { useGifs } from './gif';
 import { copySelection, NO_ORIGINALS, NOTICES } from './interchange';
-import type { Layout } from './objects/layout';
+import { nameBlock } from './objects/blocks';
+import type { Block, Layout } from './objects/layout';
 import {
   anchorAt,
   anchorBox,
+  blockAt,
   contains,
   type DrawnLink,
   defaultLinkType,
+  isTitle,
   labelBox,
+  layoutBox,
   linkNear,
   midpoint,
   nextLinkType,
@@ -132,7 +140,7 @@ import {
   RemoteCursors,
   remoteSelectionMarks,
 } from './presence-layer';
-import { BoardRealtime, EMPTY_PRESENCE, type RemotePresence } from './realtime';
+import { agentIsWorking, BoardRealtime, EMPTY_PRESENCE, type RemotePresence } from './realtime';
 import {
   cropTargetOf,
   duplicateSelection,
@@ -171,19 +179,36 @@ const MAX_NODES = 500;
 
 /**
  * A group's annotation, in screen pixels — divided by zoom at the point of
- * use, like every other interface stroke on the canvas, so it is one size at
- * every zoom.
+ * use, like every other interface stroke on the canvas (canvas/group-labels).
  *
- * The label is the annotation face (ADR-0022): uppercase Departure Mono, well
- * past the 11px body-label size it replaces — a group's name is wayfinding on
- * the board, not small print. `HALO` is the ground-coloured stroke under the
- * fill that breaks the frame's line beneath the text; interruption is the
- * association.
+ * The label is the annotation face (ADR-0022), uppercase Departure Mono, set
+ * only on the face's own 11 px grid: its pixels land on whole screen pixels
+ * there and blur anywhere between. 11 px up close; 22 px once the board is
+ * zoomed out past `FAR_BELOW`, where a group's name is wayfinding read from a
+ * distance. The face is already monospaced and spaced, so no tracking.
+ *
+ * A framed label sits on its contour over one ground-coloured patch (`PAD`
+ * around the text), which stops the line either side. A per-glyph halo left
+ * the line showing between the letters, which read as struck-through.
  */
-const GROUP_LABEL_SIZE = 15;
+/**
+ * How far a press travels before it is a drag, in screen pixels. Also what
+ * tells a click on a control inside a note or checklist from moving the object
+ * by it (canvas/object-gestures): a little more than a hand's tremor on a
+ * trackpad click, a lot less than any deliberate move.
+ */
+Konva.dragDistance = 4;
+
+/** How long a still press on a grouped item takes to pick it out (canvas/group-member-editing). */
+export const HOLD_TO_PICK_MS = 350;
+
+const GROUP_LABEL_SIZE = 11;
+const GROUP_LABEL_SIZE_FAR = 22;
+const GROUP_LABEL_FAR_BELOW = 0.5;
 const GROUP_LABEL_FAMILY = '"Departure Mono", ui-monospace, monospace';
-const GROUP_LABEL_TRACKING = 2;
-const GROUP_LABEL_HALO = 4;
+/** The face's advance: every glyph is 7 of the 11 px cell wide. */
+const GROUP_LABEL_ADVANCE = 7 / 11;
+const GROUP_LABEL_PAD = 4;
 const GROUP_LABEL_GAP = 6;
 /** A framed group's outline. Screen pixels, subordinate to every image. */
 const FRAME_STROKE = 1.5;
@@ -387,6 +412,8 @@ export function CanvasSurface({
     from: Anchor;
     pointer: { x: number; y: number };
     target: Anchor | null;
+    /** A note passage the link starts from, named only when the link lands. */
+    block?: Block;
   } | null>(null);
   const linkUi = useRef({ hovered: null as LinkId | null, selected: null as LinkId | null });
   linkUi.current = { hovered: hoveredLink, selected: selectedLink };
@@ -559,7 +586,7 @@ export function CanvasSurface({
   const frames = new Map(drawnFrames.map((f) => [f.groupId, f]));
 
   // A label that cannot be seen is not a label.
-  const groupLabels = groupLabelsFor(doc, activeGroups, camera.zoom, frames);
+  const groupLabels = groupLabelsFor(doc, activeGroups, camera.zoom, frames, stage);
 
   noteRender({
     activeSetMs,
@@ -631,6 +658,11 @@ export function CanvasSurface({
   const setSync = useUiStore((s) => s.setSync);
   const setConnection = useUiStore((s) => s.setConnection);
   const setLinkViewers = useUiStore((s) => s.setLinkViewers);
+  const setAgentWorking = useUiStore((s) => s.setAgentWorking);
+  // The wordmark lights while an agent works here (canvas/presence-indicators).
+  const working = agentIsWorking(presence);
+  useEffect(() => setAgentWorking(working), [working, setAgentWorking]);
+  useEffect(() => () => useUiStore.setState({ agentWorking: false }), []);
 
   /**
    * Persistence, attached to the one funnel every durable change goes through.
@@ -1302,10 +1334,25 @@ export function CanvasSurface({
               return bounds ? [bounds] : [];
             }),
           )
-        : doc.index.bounds();
+        : // Nothing selected: the board's centerpiece, when it has one (canvas/centerpiece).
+          (doc.centerpieceBounds() ?? doc.index.bounds());
     if (!target) return;
     setCamera(fitRect(view.current.size, target));
   }, [doc]);
+
+  /*
+   * Opening a board lands on its centerpiece, fitted to the canvas, once the
+   * canvas has a size (canvas/centerpiece). A board without one opens where it
+   * always has. Once per document: a resync or a centerpiece set later never
+   * moves the camera out from under someone.
+   */
+  const openedOn = useRef<CanvasDocument | null>(null);
+  useEffect(() => {
+    if (openedOn.current === doc || width === 0 || height === 0) return;
+    openedOn.current = doc;
+    const target = doc.centerpieceBounds();
+    if (target) setCamera(fitRect({ width, height }, target));
+  }, [doc, width, height]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1594,19 +1641,42 @@ export function CanvasSurface({
       startLink(item, pressedAt.current, e.evt);
       return;
     }
-    // A press on a checkbox, task marker or link inside an object is for that
-    // control: it must not start moving the object (onDragStart checks this).
-    controlPress.current =
-      isObject(item) && pressedAt.current && objectEditing.isControlAt(item, pressedAt.current)
-        ? item.id
-        : null;
+    // A press on a checkbox, task marker or link inside an object: released in
+    // place it is a click on that control; moved past the drag distance it
+    // moves the object like a press anywhere else (canvas/object-gestures).
+    // Konva fires no click after a drag, so the control never acts as well.
+    controlPress.current = null;
     if (tool === 'pan' || spaceHeld.current || e.evt.button === 1) return;
     // Selecting someone else's item is fine; manipulating it is not. `draggable`
     // already refuses the drag, and this keeps it out of a multi-item gesture.
     if (realtimeRef.current?.heldByOther(item.id)) return;
     const mode = selectionMode(e.evt);
+    if (mode === 'replace' && item.groupId && !readOnly && tool === 'select') holdToPick(item.id);
     if (mode === 'replace' && selection.has(item.id)) return; // keep the multi-selection
     select([item.id], mode);
+  };
+
+  /**
+   * Press and hold on a grouped item picks it out of its group
+   * (canvas/group-member-editing): it alone is selected, with its handles, so
+   * it can be moved, scaled and rotated while staying a member. A plain click
+   * still selects the group; any move before the hold fires is a group drag.
+   * The pick lasts as a selection does: clicking it again keeps it, clicking
+   * anything else or Escape ends it.
+   */
+  const holdTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const cancelHold = () => {
+    clearTimeout(holdTimer.current);
+    holdTimer.current = undefined;
+  };
+  const holdToPick = (id: ItemId) => {
+    cancelHold();
+    holdTimer.current = setTimeout(() => {
+      holdTimer.current = undefined;
+      setSelection([id]);
+    }, HOLD_TO_PICK_MS);
+    window.addEventListener('pointerup', cancelHold, { once: true });
+    window.addEventListener('pointercancel', cancelHold, { once: true });
   };
 
   /**
@@ -1633,8 +1703,12 @@ export function CanvasSurface({
     const stage = stageRef.current;
     const container = containerRef.current;
     if (!stage || !container) return;
-    const from = anchorAt(item, objects.view(item), world);
-    linkDraft.current = { from, pointer: world, target: null };
+    let from = anchorAt(item, objects.view(item), world);
+    // From a passage of a note with no name yet: it is named when the link
+    // lands, in the same act (canvas/text-anchors).
+    const under = from.element ? undefined : blockAt(item, objects.view(item), world);
+    const block = under && !isTitle(under) ? under : undefined;
+    linkDraft.current = { from, pointer: world, target: null, ...(block ? { block } : {}) };
     container.setPointerCapture(evt.pointerId);
     const move = (ev: PointerEvent) => {
       const draft = linkDraft.current;
@@ -1655,7 +1729,21 @@ export function CanvasSurface({
       // Released over empty board: nothing (spec).
       if (target) {
         const linkId = newLinkId();
-        commit({
+        const naming: CanvasOperationBody[] = [];
+        const current = doc.item(item.id);
+        if (block && current?.content.kind === 'note') {
+          const named = nameBlock(current.content.source, block.index, block.text);
+          if (named) {
+            naming.push({
+              type: 'item.source',
+              itemId: item.id,
+              source: named.source,
+              ...(current.revision !== undefined ? { baseRevision: current.revision } : {}),
+            });
+            from = { itemId: item.id, element: named.name };
+          }
+        }
+        commit(...naming, {
           type: 'link.add',
           linkId,
           from,
@@ -1785,7 +1873,11 @@ export function CanvasSurface({
     const draft = linkDraft.current;
     const a = draft ? doc.item(draft.from.itemId) : undefined;
     if (draft && a) {
-      const from = anchorBox(a, objects.view(a), draft.from.element, liveTransform(a));
+      const view = objects.view(a);
+      const from =
+        draft.block && view
+          ? { box: layoutBox(liveTransform(a), view, draft.block.rect), broken: false }
+          : anchorBox(a, view, draft.from.element, liveTransform(a));
       const target = draft.target ? doc.item(draft.target.itemId) : undefined;
       const to =
         target && draft.target
@@ -1940,6 +2032,8 @@ export function CanvasSurface({
   };
 
   const onDragStart = (item: CanvasItem) => {
+    // Moving before the hold fires is an ordinary drag of what is selected.
+    cancelHold();
     if (controlPress.current === item.id) {
       stageRef.current?.findOne(`#${item.id}`)?.stopDrag();
       return;
@@ -2107,9 +2201,12 @@ export function CanvasSurface({
     releaseWhenDurable();
   };
 
+  /** The handle a transform started from: a corner scales a note's text with it. */
+  const transformAnchor = useRef('');
   const onTransformStart = () => {
     setGesturing(true);
     const anchor = transformerRef.current?.getActiveAnchor() ?? '';
+    transformAnchor.current = anchor;
     if (!cropping || !cropTarget || anchor.startsWith('rotater')) return;
     const frame = cropFrame(cropTarget);
     cropGesture.current = {
@@ -2212,7 +2309,12 @@ export function CanvasSurface({
       // Scale lives in width/height from here on, so the node must not keep it.
       node.scaleX(1);
       node.scaleY(1);
-      bodies.push({ type: 'item.transform', itemId: id, transform });
+      bodies.push({
+        type: 'item.transform',
+        itemId: id,
+        transform,
+        ...textScaleFor(doc.item(id), transform, transformAnchor.current),
+      });
     }
     commit(...bodies);
     releaseWhenDurable();
@@ -2296,23 +2398,6 @@ export function CanvasSurface({
                 strokeWidth={FRAME_STROKE / camera.zoom}
                 perfectDrawEnabled={false}
                 hitStrokeWidth={0}
-              />
-            ))}
-            {groupLabels.map((group) => (
-              <KonvaText
-                key={group.groupId}
-                x={group.x}
-                y={group.y}
-                text={group.label}
-                fontSize={group.fontSize}
-                fontFamily={GROUP_LABEL_FAMILY}
-                letterSpacing={GROUP_LABEL_TRACKING / camera.zoom}
-                fill={theme.label}
-                stroke={theme.ground}
-                strokeWidth={GROUP_LABEL_HALO / camera.zoom}
-                fillAfterStrokeEnabled
-                listening={false}
-                perfectDrawEnabled={false}
               />
             ))}
           </Layer>
@@ -2452,6 +2537,36 @@ export function CanvasSurface({
             )}
           </Layer>
 
+          {/*
+            Group labels over the items (canvas/group-labels): far out a label is
+            larger than its group, and wayfinding is the one thing still legible
+            there, so nothing is drawn through it.
+          */}
+          <Layer listening={false}>
+            {groupLabels.map((group) => (
+              <Fragment key={group.groupId}>
+                <KonvaRect
+                  name="group-label-knockout"
+                  {...group.knockout}
+                  fill={theme.ground}
+                  listening={false}
+                  perfectDrawEnabled={false}
+                />
+                <KonvaText
+                  name="group-label"
+                  x={group.x}
+                  y={group.y}
+                  text={group.label}
+                  fontSize={group.fontSize}
+                  fontFamily={GROUP_LABEL_FAMILY}
+                  fill={theme.label}
+                  listening={false}
+                  perfectDrawEnabled={false}
+                />
+              </Fragment>
+            ))}
+          </Layer>
+
           {marquee && (
             <Layer listening={false}>
               <KonvaRect
@@ -2588,38 +2703,77 @@ export function itemNodeAttrs(
  * makes "this label describes these things" true at a glance. Everyone else
  * floats above their bounds as before.
  */
+export interface GroupLabel {
+  readonly groupId: GroupId;
+  readonly label: string;
+  /** The text's top-left and size, world units. */
+  readonly x: number;
+  readonly y: number;
+  readonly fontSize: number;
+  /** The text's box, world units: the knockout is this box padded. */
+  readonly width: number;
+  readonly height: number;
+  /** The ground-coloured patch behind it, world units. */
+  readonly knockout: {
+    readonly x: number;
+    readonly y: number;
+    readonly width: number;
+    readonly height: number;
+  };
+}
+
 export function groupLabelsFor(
   doc: CanvasDocument,
   groupIds: Iterable<GroupId>,
   zoom: number,
   anchors?: ReadonlyMap<GroupId, { minX: number; minY: number }>,
-): { groupId: GroupId; label: string; x: number; y: number; fontSize: number }[] {
-  const labels: { groupId: GroupId; label: string; x: number; y: number; fontSize: number }[] = [];
+  /** Where world (0, 0) is on screen, to put the text on whole screen pixels. */
+  origin: { readonly x: number; readonly y: number } = { x: 0, y: 0 },
+): GroupLabel[] {
+  const px = zoom < GROUP_LABEL_FAR_BELOW ? GROUP_LABEL_SIZE_FAR : GROUP_LABEL_SIZE;
+  const fontSize = px / zoom;
+  const snap = (v: number, o: number) => (Math.round(v * zoom + o) - o) / zoom;
+  const candidates: (GroupLabel & { area: number })[] = [];
   for (const groupId of groupIds) {
     const label = doc.group(groupId)?.label;
     if (!label) continue;
-    const anchor = anchors?.get(groupId);
-    if (anchor) {
-      labels.push({
-        groupId,
-        label: label.toUpperCase(),
-        x: anchor.minX,
-        y: anchor.minY - GROUP_LABEL_SIZE / 2 / zoom,
-        fontSize: GROUP_LABEL_SIZE / zoom,
-      });
-      continue;
-    }
     const bounds = doc.groupBounds(groupId);
     if (!bounds) continue;
-    labels.push({
+    const anchor = anchors?.get(groupId);
+    const text = label.toUpperCase();
+    const x = snap(anchor ? anchor.minX + (GROUP_LABEL_PAD * 2) / zoom : bounds.minX, origin.x);
+    const y = snap(
+      anchor ? anchor.minY - px / 2 / zoom : bounds.minY - (px + GROUP_LABEL_GAP) / zoom,
+      origin.y,
+    );
+    const width = (text.length * px * GROUP_LABEL_ADVANCE) / zoom;
+    const pad = GROUP_LABEL_PAD / zoom;
+    candidates.push({
       groupId,
-      label: label.toUpperCase(),
-      x: bounds.minX,
-      y: bounds.minY - (GROUP_LABEL_SIZE + GROUP_LABEL_GAP) / zoom,
-      fontSize: GROUP_LABEL_SIZE / zoom,
+      label: text,
+      x,
+      y,
+      fontSize,
+      width,
+      height: fontSize,
+      knockout: { x: x - pad, y: y - pad, width: width + 2 * pad, height: fontSize + 2 * pad },
+      area: (bounds.maxX - bounds.minX) * (bounds.maxY - bounds.minY),
     });
   }
-  return labels;
+  // Two labels never overlap: the larger group's is drawn, the other waits
+  // until zooming in separates them. Greedy, largest first.
+  // ponytail: O(n²) over the labels on screen — tens, not thousands.
+  candidates.sort((a, b) => b.area - a.area);
+  const kept: GroupLabel[] = [];
+  for (const { area: _, ...c } of candidates) {
+    const k = c.knockout;
+    const hit = kept.some(
+      ({ knockout: o }) =>
+        k.x < o.x + o.width && o.x < k.x + k.width && k.y < o.y + o.height && o.y < k.y + k.height,
+    );
+    if (!hit) kept.push(c);
+  }
+  return kept;
 }
 
 /**
@@ -2961,6 +3115,24 @@ function moveBy(
     bodies.push({ type: 'item.transform', itemId: id, transform });
   }
   return bodies;
+}
+
+/**
+ * A corner handle on a note or checklist scales its text with its box; a side
+ * handle only changes its width, and the text reflows (canvas/text-scaling).
+ * The text scale to send with the transform, or nothing.
+ */
+export function textScaleFor(
+  item: CanvasItem | undefined,
+  next: Transform,
+  anchor: string,
+): { textScale: number } | Record<string, never> {
+  if (!item || (item.content.kind !== 'note' && item.content.kind !== 'checklist')) return {};
+  if (!/^(top|bottom)-(left|right)$/.test(anchor)) return {};
+  const factor = next.width / item.transform.width;
+  if (!Number.isFinite(factor) || Math.abs(factor - 1) < 1e-6) return {};
+  const scaled = textScaleOf(item) * factor;
+  return { textScale: Math.min(TEXT_SCALE_MAX, Math.max(TEXT_SCALE_MIN, scaled)) };
 }
 
 /** A node's placement after a Transformer gesture, with Konva's scale baked into the size. */

@@ -214,7 +214,29 @@ export interface CanvasItem {
    * (canvas/collision). A group's setting wins for its members.
    */
   readonly collides?: boolean;
+  /**
+   * A note's or checklist's text scale (canvas/text-scaling): its content is
+   * laid out at `width / textScale` and drawn `textScale` times larger, so a
+   * corner resize scales the text while a side resize reflows it. Absent is 1.
+   */
+  readonly textScale?: number;
 }
+
+/** The bounds every boundary holds a text scale to, the schema's included. */
+export const TEXT_SCALE_MIN = 0.25;
+export const TEXT_SCALE_MAX = 8;
+
+/** An item's text scale, 1 when it has none; clamped like at every boundary. */
+export function textScaleOf(item: CanvasItem): number {
+  const s = item.textScale ?? 1;
+  return Math.min(TEXT_SCALE_MAX, Math.max(TEXT_SCALE_MIN, s));
+}
+
+/**
+ * The board's centerpiece (canvas/centerpiece): the item or group framed when
+ * the board opens, as the server stores it.
+ */
+export type Centerpiece = `item:${string}` | `group:${string}`;
 
 /**
  * One end of a link: a whole item, or one named element inside a diagram

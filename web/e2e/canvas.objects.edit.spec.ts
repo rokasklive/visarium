@@ -493,3 +493,153 @@ test('a note edited into diagram source becomes that diagram, keeping its id and
   });
   expect(ofType(posted, 'link.add')).toHaveLength(2);
 });
+
+async function dragFrom(page: Page, from: { x: number; y: number }, dx: number, dy: number) {
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(from.x + dx, from.y + dy, { steps: 8 });
+  await page.mouse.up();
+}
+
+test('a checklist is dragged by its task text without opening the task', async ({ page }) => {
+  const posted = await stubBoard(page, [checklist()]);
+  const centre = await open(page);
+  const text = await controlCentre(
+    page,
+    centre,
+    LIST,
+    (h) => h.kind === 'task-text' && h.taskId === 't1',
+  );
+  await dragFrom(page, text, 0, 140);
+  await expect
+    .poll(
+      () =>
+        ofType(posted, 'item.transform').filter((op) => (op.transform as { y: number }).y > 100)
+          .length,
+    )
+    .toBeGreaterThan(0);
+  await page.waitForTimeout(300);
+  await expect(page.getByRole('textbox', { name: /task/i })).toHaveCount(0); // no task opened
+  expect(ofType(posted, 'task.set')).toHaveLength(0);
+});
+
+test('a note is dragged by its checkbox, and the box keeps its state', async ({ page }) => {
+  const posted = await stubBoard(page, [note('### Shot list\n\n- [ ] Hero\n- [ ] Palette')]);
+  const centre = await open(page);
+  const box = await controlCentre(
+    page,
+    centre,
+    NOTE,
+    (h) => h.kind === 'checkbox' && h.index === 0,
+  );
+  await dragFrom(page, box, 160, 0);
+  await expect
+    .poll(
+      () =>
+        ofType(posted, 'item.transform').filter((op) => (op.transform as { x: number }).x > 100)
+          .length,
+    )
+    .toBeGreaterThan(0);
+  await page.waitForTimeout(300);
+  expect(ofType(posted, 'item.source')).toHaveLength(0);
+});
+
+/** The screen position of one of the Transformer's handles. */
+async function handle(page: Page, name: string) {
+  const canvas = await page.locator('canvas').first().boundingBox();
+  const p = await page.evaluate((n) => {
+    type Node = {
+      findOne(s: string): Node | undefined;
+      getAbsolutePosition(): { x: number; y: number };
+      width(): number;
+      height(): number;
+    };
+    const stage = (window as unknown as { Konva: { stages: Node[] } }).Konva.stages[0];
+    const a = stage?.findOne('Transformer')?.findOne(`.${n}`);
+    if (!a) return null;
+    const at = a.getAbsolutePosition();
+    // Anchors are offset by half their size: the absolute position is the centre.
+    return { x: at.x, y: at.y };
+  }, name);
+  if (!p || !canvas) throw new Error(`no ${name} handle`);
+  return { x: canvas.x + p.x, y: canvas.y + p.y };
+}
+
+test('a corner handle scales a note and its text together; a side handle then reflows it', async ({
+  page,
+}) => {
+  const posted = await stubBoard(page, [
+    note('A paragraph long enough to wrap onto a second line or third at this width.'),
+  ]);
+  const centre = await open(page);
+  const laid = () =>
+    page.evaluate(
+      (i) =>
+        (
+          window as unknown as {
+            __objects: { layout(id: string): { width: number; height: number } | undefined };
+          }
+        ).__objects.layout(i),
+      NOTE,
+    );
+  await expect.poll(laid).toBeTruthy();
+  const before = await laid();
+  await page.mouse.click(centre.x - 150, centre.y - 55); // the note's padding, not a control
+  const corner = await handle(page, 'bottom-right');
+  await page.mouse.move(corner.x, corner.y);
+  await page.mouse.down();
+  await page.mouse.move(corner.x + 320, corner.y + 200, { steps: 10 });
+  await page.mouse.up();
+  await expect.poll(() => ofType(posted, 'item.transform').length).toBeGreaterThan(0);
+  const scaled = ofType(posted, 'item.transform')[0] as unknown as {
+    textScale?: number;
+    transform: { width: number };
+  };
+  expect(scaled.textScale).toBeCloseTo(scaled.transform.width / 320, 3);
+  expect(scaled.textScale ?? 1).toBeGreaterThan(1.5);
+  // Same breaks: laid out at the same width, so the same drawing.
+  await expect.poll(async () => (await laid())?.width).toBe(before?.width);
+  expect((await laid())?.height).toBe(before?.height);
+
+  const side = await handle(page, 'middle-right');
+  await page.mouse.move(side.x, side.y);
+  await page.mouse.down();
+  await page.mouse.move(side.x - 200, side.y, { steps: 10 });
+  await page.mouse.up();
+  await expect
+    .poll(
+      () =>
+        ofType(posted, 'item.transform').filter(
+          (op) =>
+            op.textScale === undefined &&
+            (op.transform as { width: number }).width < scaled.transform.width,
+        ).length,
+    )
+    .toBeGreaterThan(0);
+  // The text kept its scale and reflowed narrower.
+  await expect.poll(async () => (await laid())?.width ?? 0).toBeLessThan(before?.width ?? 0);
+});
+
+test('a note scaled 2x is edited at 2x, the editor covering what is drawn', async ({ page }) => {
+  const scaled = {
+    ...note('Big words.'),
+    textScale: 2,
+    transform: { x: 0, y: 0, width: 640, height: 120, rotation: 0 },
+  };
+  await stubBoard(page, [scaled]);
+  const centre = await open(page);
+  await drawn(page, NOTE);
+  await page.mouse.dblclick(centre.x, centre.y - 40);
+  const editor = page.getByTestId('object-editor');
+  await expect(editor).toBeVisible();
+  const box = await editor.boundingBox();
+  // Laid out at 320, drawn at twice that: the editor is the note's full width on screen.
+  expect(box?.width).toBeGreaterThan(630);
+  expect(box?.width).toBeLessThan(650);
+  const size = await page
+    .getByRole('textbox', { name: 'Note text' })
+    .evaluate((el) => Number.parseFloat(getComputedStyle(el).fontSize));
+  const field = await page.getByRole('textbox', { name: 'Note text' }).boundingBox();
+  // The text renders at twice its CSS size: the field's on-screen height is at least one 2x line.
+  expect(field?.height ?? 0).toBeGreaterThan(size * 2);
+});

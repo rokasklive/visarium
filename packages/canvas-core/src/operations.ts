@@ -20,6 +20,7 @@ import type {
   Anchor,
   Appearance,
   CanvasItemContent,
+  Centerpiece,
   Crop,
   LinkType,
   Task,
@@ -48,6 +49,8 @@ export type CanvasOperationBody =
       readonly crop?: Crop;
       /** Absent is off: a person's creation, or one from an older client. */
       readonly collides?: boolean;
+      /** Absent is 1 (canvas/text-scaling). */
+      readonly textScale?: number;
     }
   | { readonly type: 'item.delete'; readonly itemId: ItemId }
   | {
@@ -61,6 +64,14 @@ export type CanvasOperationBody =
        * two must never be applied apart. ADR-0029.
        */
       readonly crop?: Crop;
+      /**
+       * Absent leaves the text scale alone; present (1 included) replaces it.
+       * With the transform for the same reason as crop: a corner resize of a
+       * note scales its box and its text together, never one without the other.
+       */
+      readonly textScale?: number;
+      /** Set only by the server on its own collision moves (canvas/layout-settling). */
+      readonly settled?: boolean;
     }
   /** Resolves a local placeholder into a persisted image once its upload lands. */
   | {
@@ -156,7 +167,9 @@ export type CanvasOperationBody =
       readonly at?: string | null;
     }
   | { readonly type: 'link.set'; readonly linkId: LinkId; readonly linkType: LinkType }
-  | { readonly type: 'link.delete'; readonly linkId: LinkId };
+  | { readonly type: 'link.delete'; readonly linkId: LinkId }
+  /** The board's centerpiece, or none (canvas/centerpiece). Absolute state. */
+  | { readonly type: 'board.centerpiece'; readonly target: Centerpiece | null };
 
 export type CanvasOperationType = CanvasOperationBody['type'];
 

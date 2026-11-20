@@ -60,13 +60,13 @@ async fn element_boxes(
         )));
     }
     let current: Option<(i64, Option<i64>)> =
-        sqlx::query_as("SELECT revision, element_rev FROM canvas_item WHERE id = ? AND canvas_id = ? AND kind = 'diagram'")
+        sqlx::query_as("SELECT revision, element_rev FROM canvas_item WHERE id = ? AND canvas_id = ? AND kind IN ('diagram', 'note')")
             .bind(item.to_string())
             .bind(id.to_string())
             .fetch_optional(&app.db)
             .await?;
     let Some((revision, stored)) = current else {
-        return Err(ApiError::not_found(format!("no diagram {item} on board {id}")));
+        return Err(ApiError::not_found(format!("no diagram or note {item} on board {id}")));
     };
     if report.revision != revision {
         return Err(ApiError::conflict(format!(
@@ -378,6 +378,9 @@ pub enum Op {
         /// Absent is off: a person's creation, or an older client's.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         collides: Option<bool>,
+        /// A note's or checklist's text scale (canvas/text-scaling); absent is 1.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text_scale: Option<f64>,
     },
     #[serde(rename = "item.delete", rename_all = "camelCase")]
     ItemDelete { item_id: Uuid },
@@ -388,6 +391,13 @@ pub enum Op {
         /// Absent leaves the stored crop alone; present replaces it.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         crop: Option<Crop>,
+        /// Absent leaves the text scale alone; present replaces it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text_scale: Option<f64>,
+        /// Set only on the server's own collision moves (canvas/layout-settling):
+        /// they keep the item's home, where every other move resets it.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        settled: bool,
     },
     #[serde(rename = "item.content", rename_all = "camelCase")]
     ItemContent { item_id: Uuid, content: Content },
@@ -479,6 +489,12 @@ pub enum Op {
     LinkSet { link_id: Uuid, link_type: String },
     #[serde(rename = "link.delete", rename_all = "camelCase")]
     LinkDelete { link_id: Uuid },
+    /// The board's centerpiece (canvas/centerpiece): `item:<id>`, `group:<id>`, or none.
+    #[serde(rename = "board.centerpiece", rename_all = "camelCase")]
+    BoardCenterpiece {
+        #[serde(default)]
+        target: Option<String>,
+    },
 }
 
 impl Op {
@@ -525,6 +541,15 @@ impl Op {
             Op::LinkAdd { from, .. } => Some(from.item_id),
             _ => None,
         }
+    }
+}
+
+fn check_text_scale(s: Option<f64>) -> ApiResult<Option<f64>> {
+    match s {
+        Some(v) if !(0.25..=8.0).contains(&v) => Err(ApiError::bad_request("textScale must be between 0.25 and 8")),
+        // 1 is the default, stored as NULL so the default stays the meaning.
+        Some(v) if (v - 1.0).abs() < 1e-9 => Ok(None),
+        s => Ok(s),
     }
 }
 
@@ -587,7 +612,8 @@ async fn join(tx: &mut Transaction<'_, Sqlite>, board: &str, group: &Uuid, membe
 async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> ApiResult<()> {
     let bump = format!("revision = revision + 1, updated_at = {NOW}");
     match op {
-        Op::ItemCreate { item_id, transform: t, z, content, group_id, appearance, crop, collides } => {
+        Op::ItemCreate { item_id, transform: t, z, content, group_id, appearance, crop, collides, text_scale } => {
+            let text_scale = check_text_scale(*text_scale)?;
             let a = appearance.clone().unwrap_or(Appearance { opacity: 1.0, flip_x: false, flip_y: false });
             check_appearance(&a)?;
             let c = crop.as_ref().map(check_crop).transpose()?.flatten();
@@ -598,8 +624,8 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
             let letter = ref_letter(kind);
             let inserted = sqlx::query(
                 "INSERT INTO canvas_item (id, canvas_id, kind, asset_id, lang, body, group_id, x, y, width, height, rotation, z,
-                                          opacity, flip_x, flip_y, crop_x, crop_y, crop_w, crop_h, collides, ref_no)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                                          opacity, flip_x, flip_y, crop_x, crop_y, crop_w, crop_h, collides, text_scale, ref_no)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                          (SELECT coalesce(json_extract(next_refs, '$.' || ?), 0) + 1 FROM canvas WHERE id = ?))
                  ON CONFLICT (id) DO NOTHING",
             )
@@ -624,6 +650,7 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
             .bind(c.map(|c| c.2))
             .bind(c.map(|c| c.3))
             .bind(collides.unwrap_or(false))
+            .bind(text_scale)
             .bind(letter)
             .bind(board)
             .execute(&mut **tx)
@@ -642,15 +669,43 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
                 .execute(&mut **tx)
                 .await?;
             sqlx::query("DELETE FROM item_text WHERE item_id = ?").bind(item_id.to_string()).execute(&mut **tx).await?;
+            unset_centerpiece(tx, board, &format!("item:{item_id}")).await?;
         }
-        Op::ItemTransform { item_id, transform: t, crop } => {
+        Op::ItemTransform { item_id, transform: t, crop, text_scale, settled } => {
             // Absent crop: the columns are not in the statement at all, so a
             // plain move can never undo someone else's crop.
             let c = crop.as_ref().map(check_crop).transpose()?;
-            let set_crop = if c.is_some() { "crop_x = ?, crop_y = ?, crop_w = ?, crop_h = ?," } else { "" };
+            // Every placeholder numbered: the home expressions reuse ?1–?4, and
+            // sqlx does not mix numbered and bare ones.
+            let mut n = 5;
+            let mut next = || {
+                n += 1;
+                n
+            };
+            let set_crop = if c.is_some() {
+                format!("crop_x = ?{}, crop_y = ?{}, crop_w = ?{}, crop_h = ?{},", next(), next(), next(), next())
+            } else {
+                String::new()
+            };
+            // Present (even 1, stored as NULL) replaces the scale; absent leaves it.
+            let s = text_scale.map(|s| check_text_scale(Some(s))).transpose()?;
+            let set_scale = if s.is_some() { format!("text_scale = ?{},", next()) } else { String::new() };
+            let (id_at, board_at) = (next(), next());
+            // Home (canvas/layout-settling), from the row's values before this
+            // update (SQLite evaluates every SET against the old row). A
+            // collision move keeps the first home, and clears it on arriving
+            // there. Any other move of the top-left corner resets it; a resize
+            // that keeps the corner (a height correction) does not.
+            let home = if *settled {
+                "home_x = CASE WHEN abs(coalesce(home_x, x) - ?1) < 0.5 AND abs(coalesce(home_y, y) - ?2) < 0.5 THEN NULL ELSE coalesce(home_x, x) END,
+                 home_y = CASE WHEN abs(coalesce(home_x, x) - ?1) < 0.5 AND abs(coalesce(home_y, y) - ?2) < 0.5 THEN NULL ELSE coalesce(home_y, y) END,"
+            } else {
+                "home_x = CASE WHEN abs((x - width / 2) - (?1 - ?3 / 2)) < 0.5 AND abs((y - height / 2) - (?2 - ?4 / 2)) < 0.5 THEN home_x END,
+                 home_y = CASE WHEN abs((x - width / 2) - (?1 - ?3 / 2)) < 0.5 AND abs((y - height / 2) - (?2 - ?4 / 2)) < 0.5 THEN home_y END,"
+            };
             let mut q = sqlx::query(sqlx::AssertSqlSafe(format!(
-                "UPDATE canvas_item SET x = ?, y = ?, width = ?, height = ?, rotation = ?, {set_crop} {bump}
-                  WHERE id = ? AND canvas_id = ?"
+                "UPDATE canvas_item SET {home} x = ?1, y = ?2, width = ?3, height = ?4, rotation = ?5, {set_crop} {set_scale} {bump}
+                  WHERE id = ?{id_at} AND canvas_id = ?{board_at}"
             )))
             .bind(t.x)
             .bind(t.y)
@@ -659,6 +714,9 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
             .bind(t.rotation);
             if let Some(c) = c {
                 q = q.bind(c.map(|c| c.0)).bind(c.map(|c| c.1)).bind(c.map(|c| c.2)).bind(c.map(|c| c.3));
+            }
+            if let Some(s) = s {
+                q = q.bind(s);
             }
             q.bind(item_id.to_string())
             .bind(board)
@@ -723,6 +781,7 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
                 .bind(board)
                 .execute(&mut **tx)
                 .await?;
+            unset_centerpiece(tx, board, &format!("group:{group_id}")).await?;
         }
         Op::GroupMembers { group_id, member_ids } => {
             sqlx::query("UPDATE canvas_item SET group_id = NULL WHERE group_id = ? AND canvas_id = ?")
@@ -834,9 +893,10 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
                 // item.create refuses a missing asset.
                 let (kind, _) = item_kind(tx, board, &a.item_id).await?.ok_or_else(|| no_item(&a.item_id))?;
                 if let Some(e) = &a.element {
-                    if kind != "diagram" {
+                    // A diagram's elements, or a note's passages (canvas/text-anchors).
+                    if kind != "diagram" && kind != "note" {
                         return Err(ApiError::bad_request(format!(
-                            "link {end}: only a diagram has named elements, and item {} is a {kind}",
+                            "link {end}: only a diagram or a note has named parts, and item {} is a {kind}",
                             a.item_id
                         )));
                     }
@@ -884,7 +944,33 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
                 .execute(&mut **tx)
                 .await?;
         }
+        Op::BoardCenterpiece { target } => {
+            if let Some(t) = target {
+                let (table, id) = match t.split_once(':') {
+                    Some(("item", id)) => ("canvas_item", id),
+                    Some(("group", id)) => ("canvas_group", id),
+                    _ => return Err(ApiError::bad_request("a centerpiece is `item:<id>` or `group:<id>`")),
+                };
+                let exists: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                    "SELECT EXISTS (SELECT 1 FROM {table} WHERE id = ? AND canvas_id = ?)"
+                )))
+                .bind(id)
+                .bind(board)
+                .fetch_one(&mut **tx)
+                .await?;
+                if !exists {
+                    return Err(ApiError::bad_request("the centerpiece is not on this board"));
+                }
+            }
+            sqlx::query("UPDATE canvas SET centerpiece = ? WHERE id = ?").bind(target).bind(board).execute(&mut **tx).await?;
+        }
     }
+    Ok(())
+}
+
+/// A deleted centerpiece leaves the board with none (canvas/centerpiece).
+async fn unset_centerpiece(tx: &mut Transaction<'_, Sqlite>, board: &str, target: &str) -> sqlx::Result<()> {
+    sqlx::query("UPDATE canvas SET centerpiece = NULL WHERE id = ? AND centerpiece = ?").bind(board).bind(target).execute(&mut **tx).await?;
     Ok(())
 }
 
@@ -1045,6 +1131,8 @@ pub async fn apply(app: &AppState, board: &Uuid, ops: &mut Vec<Op>, actor: &Acto
 /// if agent-made boards grow to thousands.
 async fn pushes(tx: &mut Transaction<'_, Sqlite>, board: &str, ops: &[Op]) -> ApiResult<Vec<Op>> {
     let mut causes = std::collections::HashSet::new();
+    // A deletion moves nothing but can free space a pushed item returns into.
+    let mut freed = false;
     for op in ops {
         match op {
             Op::ItemCreate { item_id, .. } | Op::ItemTransform { item_id, .. } | Op::ItemCollides { item_id, collides: true } => {
@@ -1053,10 +1141,13 @@ async fn pushes(tx: &mut Transaction<'_, Sqlite>, board: &str, ops: &[Op]) -> Ap
             Op::GroupCreate { group_id, .. } | Op::GroupMembers { group_id, .. } | Op::GroupCollides { group_id, collides: true } => {
                 causes.insert(group_id.to_string());
             }
+            Op::ItemDelete { .. } | Op::GroupDelete { .. } | Op::ItemCollides { collides: false, .. } | Op::GroupCollides { collides: false, .. } => {
+                freed = true;
+            }
             _ => {}
         }
     }
-    if causes.is_empty() {
+    if causes.is_empty() && !freed {
         return Ok(vec![]);
     }
     let any: bool = sqlx::query_scalar(
@@ -1069,12 +1160,13 @@ async fn pushes(tx: &mut Transaction<'_, Sqlite>, board: &str, ops: &[Op]) -> Ap
     if !any {
         return Ok(vec![]);
     }
-    type Geometry = (String, Option<String>, f64, f64, f64, f64, f64, bool);
-    let rows: Vec<Geometry> =
-        sqlx::query_as("SELECT id, group_id, x, y, width, height, rotation, collides FROM canvas_item WHERE canvas_id = ?")
-            .bind(board)
-            .fetch_all(&mut **tx)
-            .await?;
+    type Geometry = (String, Option<String>, f64, f64, f64, f64, f64, bool, Option<f64>, Option<f64>);
+    let rows: Vec<Geometry> = sqlx::query_as(
+        "SELECT id, group_id, x, y, width, height, rotation, collides, home_x, home_y FROM canvas_item WHERE canvas_id = ?",
+    )
+    .bind(board)
+    .fetch_all(&mut **tx)
+    .await?;
     let groups: std::collections::HashMap<String, bool> =
         sqlx::query_as::<_, (String, bool)>("SELECT id, collides FROM canvas_group WHERE canvas_id = ?")
             .bind(board)
@@ -1084,22 +1176,25 @@ async fn pushes(tx: &mut Transaction<'_, Sqlite>, board: &str, ops: &[Op]) -> Ap
             .collect();
     let pieces: Vec<crate::collision::Piece> = rows
         .iter()
-        .map(|(id, group, x, y, w, h, r, collides)| crate::collision::Piece {
+        .map(|(id, group, x, y, w, h, r, collides, hx, hy)| crate::collision::Piece {
             id: id.clone(),
             rect: crate::collision::bounds(*x, *y, *w, *h, *r),
             group: group.clone(),
             collides: *collides,
+            home: hx.zip(*hy),
         })
         .collect();
     let by_id: std::collections::HashMap<&str, &Geometry> = rows.iter().map(|r| (r.0.as_str(), r)).collect();
     Ok(crate::collision::settle(&pieces, &groups, &causes)
         .into_iter()
         .map(|(id, dx, dy)| {
-            let (_, _, x, y, width, height, rotation, _) = by_id[id.as_str()];
+            let (_, _, x, y, width, height, rotation, ..) = by_id[id.as_str()];
             Op::ItemTransform {
                 item_id: Uuid::parse_str(&id).unwrap(),
                 transform: Transform { x: x + dx, y: y + dy, width: *width, height: *height, rotation: *rotation },
                 crop: None,
+                text_scale: None,
+                settled: true,
             }
         })
         .collect())
@@ -1280,8 +1375,8 @@ pub async fn duplicate_board(app: &AppState, id: &Uuid, owner: &str, title: Opti
         item_map.insert(i.id.clone(), new.clone());
         sqlx::query(
             "INSERT INTO canvas_item (id, canvas_id, kind, asset_id, lang, body, group_id, x, y, width, height, rotation, z,
-                                      opacity, flip_x, flip_y, crop_x, crop_y, crop_w, crop_h, ref_no, collides)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                      opacity, flip_x, flip_y, crop_x, crop_y, crop_w, crop_h, ref_no, collides, text_scale)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&new)
         .bind(&copy)
@@ -1305,6 +1400,7 @@ pub async fn duplicate_board(app: &AppState, id: &Uuid, owner: &str, title: Opti
         .bind(i.crop_h)
         .bind(i.ref_no)
         .bind(i.collides)
+        .bind(i.text_scale)
         .execute(&mut *tx)
         .await?;
         reindex(&mut tx, &new).await?;
@@ -1384,6 +1480,9 @@ pub struct ItemRow {
     pub mime_type: Option<String>,
     pub ref_no: i64,
     pub collides: bool,
+    pub text_scale: Option<f64>,
+    pub home_x: Option<f64>,
+    pub home_y: Option<f64>,
     /// Where a diagram's elements were drawn, for revision `element_rev`.
     pub element_boxes: Option<String>,
     pub element_rev: Option<i64>,
@@ -1415,7 +1514,7 @@ impl ItemRow {
 pub const ITEMS_SQL: &str = "SELECT i.id, i.kind, i.lang, i.body, i.revision, i.group_id, i.x, i.y, i.width, i.height, i.rotation, i.z,
                                 i.opacity, i.flip_x, i.flip_y, i.crop_x, i.crop_y, i.crop_w, i.crop_h,
                                 i.asset_id, a.width AS intrinsic_width, a.height AS intrinsic_height, a.mime_type, i.ref_no,
-                                i.collides, i.element_boxes, i.element_rev
+                                i.collides, i.text_scale, i.home_x, i.home_y, i.element_boxes, i.element_rev
                            FROM canvas_item i LEFT JOIN asset a ON a.id = i.asset_id
                           WHERE i.canvas_id = ? ORDER BY i.z";
 
@@ -1428,7 +1527,7 @@ async fn snapshot(State(app): State<AppState>, Path(id): Path<Uuid>) -> ApiResul
 /// The snapshot body, for members and for share-link viewers alike.
 pub async fn snapshot_of(db: &sqlx::SqlitePool, id: &str) -> ApiResult<serde_json::Value> {
     let mut tx = db.begin().await?;
-    let revision: i64 = sqlx::query_scalar("SELECT revision FROM canvas WHERE id = ?")
+    let (revision, centerpiece): (i64, Option<String>) = sqlx::query_as("SELECT revision, centerpiece FROM canvas WHERE id = ?")
         .bind(id)
         .fetch_optional(&mut *tx)
         .await?
@@ -1483,6 +1582,9 @@ pub async fn snapshot_of(db: &sqlx::SqlitePool, id: &str) -> ApiResult<serde_jso
             if let (Some(x), Some(y), Some(w), Some(h)) = (r.crop_x, r.crop_y, r.crop_w, r.crop_h) {
                 item["crop"] = json!({ "x": x, "y": y, "width": w, "height": h });
             }
+            if let Some(s) = r.text_scale {
+                item["textScale"] = json!(s);
+            }
             item
         })
         .collect();
@@ -1498,7 +1600,7 @@ pub async fn snapshot_of(db: &sqlx::SqlitePool, id: &str) -> ApiResult<serde_jso
         })
         .collect();
     let people: serde_json::Map<String, serde_json::Value> = people.into_iter().map(|(id, name)| (id, json!(name))).collect();
-    Ok(json!({ "revision": revision, "items": items, "groups": groups, "links": links, "people": people }))
+    Ok(json!({ "revision": revision, "items": items, "groups": groups, "links": links, "people": people, "centerpiece": centerpiece }))
 }
 
 #[derive(Deserialize)]

@@ -1,10 +1,10 @@
 {
   "name": "small",
   "expectedItems": 1000,
-  "navMs": 327,
+  "navMs": 471,
   "stats": "1,000 items · 3 candidates · 3 rendered · 0 aggregated · 1 selected · 670%",
   "machine": {
-    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.7922.34 Safari/537.36",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/159.0.8154.6 Safari/537.36",
     "devicePixelRatio": 1,
     "hardwareConcurrency": 12,
     "viewport": {
@@ -18,28 +18,28 @@
   },
   "frameMsByPhase": {
     "idle": {
-      "count": 35,
+      "count": 39,
       "p50": 16.7,
-      "p95": 16.7,
+      "p95": 16.8,
       "max": 16.8
     },
     "pan": {
-      "count": 60,
+      "count": 63,
       "p50": 16.7,
-      "p95": 16.7,
+      "p95": 16.8,
       "max": 16.8
     },
     "zoom-out": {
-      "count": 84,
+      "count": 109,
       "p50": 16.7,
-      "p95": 16.7,
+      "p95": 16.8,
       "max": 16.8
     },
     "zoom-in": {
-      "count": 84,
+      "count": 110,
       "p50": 16.7,
       "p95": 16.8,
-      "max": 66.7
+      "max": 83.4
     },
     "drag": {
       "count": 40,
@@ -49,35 +49,35 @@
     }
   },
   "activeSetMs": {
-    "count": 272,
+    "count": 292,
     "p50": 0,
-    "p95": 0.3,
-    "max": 0.5
+    "p95": 0.2,
+    "max": 0.3
   },
   "nodes": {
-    "count": 272,
+    "count": 292,
     "p50": 23,
-    "p95": 364,
+    "p95": 338,
     "max": 500
   },
   "aggregated": {
-    "count": 272,
+    "count": 292,
     "p50": 0,
     "p95": 1000,
     "max": 1000
   },
   "decodedMb": {
-    "count": 272,
-    "p50": 12.83,
-    "p95": 14.17,
-    "max": 14.17
+    "count": 292,
+    "p50": 14.57,
+    "p95": 16.7,
+    "max": 16.7
   },
   "bitmaps": {
-    "count": 272,
-    "p50": 13,
+    "count": 292,
+    "p50": 8,
     "p95": 24,
     "max": 24
   },
   "bitmapFailures": 0,
-  "loadMs": 220.1
+  "loadMs": 430.9
 }

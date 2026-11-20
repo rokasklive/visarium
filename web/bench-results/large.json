@@ -1,10 +1,10 @@
 {
   "name": "large",
   "expectedItems": 100000,
-  "navMs": 725,
+  "navMs": 933,
   "stats": "100,000 items · 36 candidates · 36 rendered · 0 aggregated · 6 selected · 670%",
   "machine": {
-    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.7922.34 Safari/537.36",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/159.0.8154.6 Safari/537.36",
     "devicePixelRatio": 1,
     "hardwareConcurrency": 12,
     "viewport": {
@@ -20,64 +20,64 @@
     "idle": {
       "count": 35,
       "p50": 16.7,
-      "p95": 16.8,
-      "max": 16.8
-    },
-    "pan": {
-      "count": 192,
-      "p50": 33.3,
-      "p95": 66.6,
-      "max": 66.7
-    },
-    "zoom-out": {
-      "count": 86,
-      "p50": 16.7,
-      "p95": 66.6,
+      "p95": 83.4,
       "max": 100
     },
-    "zoom-in": {
-      "count": 84,
+    "pan": {
+      "count": 191,
+      "p50": 33.3,
+      "p95": 83.4,
+      "max": 83.5
+    },
+    "zoom-out": {
+      "count": 104,
       "p50": 16.7,
-      "p95": 33.3,
-      "max": 66.7
+      "p95": 33.4,
+      "max": 100.1
+    },
+    "zoom-in": {
+      "count": 100,
+      "p50": 16.7,
+      "p95": 66.6,
+      "max": 83.3
     },
     "drag": {
-      "count": 44,
+      "count": 82,
       "p50": 16.7,
       "p95": 16.8,
-      "max": 16.8
+      "max": 33.4
     }
   },
   "activeSetMs": {
-    "count": 264,
+    "count": 266,
     "p50": 0.2,
-    "p95": 1,
-    "max": 2.3
+    "p95": 0.9,
+    "max": 2.2
   },
   "nodes": {
-    "count": 264,
-    "p50": 293,
+    "count": 266,
+    "p50": 292,
     "p95": 500,
     "max": 500
   },
   "aggregated": {
-    "count": 264,
+    "count": 266,
     "p50": 0,
     "p95": 7000,
     "max": 7000
   },
   "decodedMb": {
-    "count": 264,
-    "p50": 13.57,
-    "p95": 15.7,
-    "max": 15.7
+    "count": 266,
+    "p50": 14.57,
+    "p95": 16.7,
+    "max": 16.7
   },
   "bitmaps": {
-    "count": 264,
+    "count": 266,
     "p50": 8,
     "p95": 24,
     "max": 24
   },
   "bitmapFailures": 0,
-  "loadMs": 534.9
+  "loadMs": 712.5
 }

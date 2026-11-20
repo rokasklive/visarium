@@ -25,7 +25,7 @@ import type {
   OperationOrigin,
   Transform,
 } from '@visarium/canvas-core';
-import { type Layout, layoutItem, layoutSource, SourceError } from './layout';
+import { type Layout, laidWidth, layoutItem, layoutSource, SourceError } from './layout';
 
 export function isObject(item: CanvasItem): boolean {
   const k = item.content.kind;
@@ -35,7 +35,9 @@ export function isObject(item: CanvasItem): boolean {
 /** What decides an object's layout. Identical keys mean an identical drawing. */
 export function layoutKey(item: CanvasItem): string {
   const c = item.content;
-  const w = Math.round(item.transform.width * 100) / 100;
+  // The width it is laid out at: a corner resize that scales the text keeps
+  // it, and with it the drawing (canvas/text-scaling).
+  const w = Math.round(laidWidth(item) * 100) / 100;
   switch (c.kind) {
     case 'note':
       return `${w}|n|${c.source}`;
@@ -120,7 +122,7 @@ export class ObjectLayouts {
         : {
             layout: await layoutSource(
               item.content.kind === 'diagram' ? item.content.source : '',
-              item.transform.width,
+              laidWidth(item),
             ),
             key,
             stale: true,
@@ -131,7 +133,11 @@ export class ObjectLayouts {
     delete entry.inflight;
     entry.view = view;
     this.#writeHeight(item.id, view);
-    if (!view.stale && item.content.kind === 'diagram' && view.layout.elements.size > 0)
+    if (
+      !view.stale &&
+      (item.content.kind === 'diagram' || item.content.kind === 'note') &&
+      view.layout.elements.size > 0
+    )
       this.#onElements(item.id, key, view.layout);
     this.#onReady();
   }
@@ -153,7 +159,15 @@ export class ObjectLayouts {
         return;
       case 'item.transform': {
         const view = this.#entries.get(body.itemId)?.view;
-        if (view && Math.abs(view.layout.width - body.transform.width) > RESIZED_EPSILON) {
+        const item = this.#doc.item(body.itemId);
+        // A width that reflows the text, or a scale that changes how tall it
+        // draws: either way this client writes the next height.
+        if (
+          view &&
+          item &&
+          (Math.abs(view.layout.width - laidWidth(item)) > RESIZED_EPSILON ||
+            body.textScale !== undefined)
+        ) {
           this.#authored.add(body.itemId);
         }
         return;
@@ -192,6 +206,7 @@ export class ObjectLayouts {
       error: view.error,
       hits: view.layout.hits,
       elements: Object.fromEntries(view.layout.elements),
+      blocks: view.layout.blocks ?? [],
     };
   }
 }

@@ -88,6 +88,14 @@ const EMPTY_PRESENCE: RemotePresence = {
 
 export { EMPTY_PRESENCE };
 
+/** Whether any agent on the board has a live focus: it just read or changed something. */
+export function agentIsWorking(presence: RemotePresence): boolean {
+  for (const id of presence.focus.keys()) {
+    if (presence.actors.get(id)?.kind === 'agent') return true;
+  }
+  return false;
+}
+
 /*
  * There is no display name in this file any more.
  *

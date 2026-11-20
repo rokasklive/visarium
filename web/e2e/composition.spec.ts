@@ -102,8 +102,11 @@ class StubBoard {
     }
   }
 
+  centerpiece: string | null = null;
+
   snapshot() {
     return {
+      centerpiece: this.centerpiece,
       revision: this.items.size,
       items: [...this.items.values()].sort((a, b) => Number(a.z) - Number(b.z)),
       groups: [...this.groups.values()],
@@ -363,6 +366,7 @@ test('the same slots in the same order, whatever is selected', async ({ page }) 
     'Label',
     'Frame',
     'Collision',
+    'Make centerpiece',
     'Flip H',
     'Flip V',
     'Crop',
@@ -511,4 +515,210 @@ test('ctrl and the wheel is still zoom, because that is what a pinch is', async 
   // The camera moved; the selection did not.
   await expect(page.getByTestId('canvas-stats')).not.toContainText('· 100%');
   expect(JSON.stringify(board.items.get(ITEM_A)?.transform)).toBe(before);
+});
+
+test('a framed group label interrupts its frame: no frame pixel runs through the text', async ({
+  page,
+}) => {
+  const { board } = await stubBoard(page, [item(ITEM_A, 0, 1), item(ITEM_B, 360, 2)]);
+  board.groups.set('g-1', {
+    id: 'g-1',
+    label: 'System map',
+    frame: true,
+    memberIds: [ITEM_A, ITEM_B],
+  } as never);
+  for (const id of [ITEM_A, ITEM_B])
+    (board.items.get(id) as Record<string, unknown>).groupId = 'g-1';
+  await openBoard(page);
+  const found = await page.evaluate(() => {
+    const s = (window as unknown as { Konva: { stages: unknown[] } }).Konva.stages[0] as {
+      findOne(sel: string):
+        | {
+            getClientRect(): { x: number; y: number; width: number; height: number };
+            getLayer(): { getCanvas(): { _canvas: HTMLCanvasElement; getPixelRatio(): number } };
+          }
+        | undefined;
+      find(sel: string): { stroke?(): string; className: string }[];
+      toCanvas(o: { pixelRatio: number }): HTMLCanvasElement;
+    };
+    const knock = s.findOne('.group-label-knockout');
+    const text = s.findOne('.group-label');
+    const line = s.find('Line').find((n) => typeof n.stroke === 'function' && n.stroke());
+    if (!knock || !text || !line) return null;
+    const k = knock.getClientRect();
+    const t = text.getClientRect();
+    // Every layer composited, as on screen: the frame and the label are on
+    // different layers, the label's over the frame's.
+    const r = knock.getLayer().getCanvas().getPixelRatio();
+    const ctx = s.toCanvas({ pixelRatio: r }).getContext('2d') as CanvasRenderingContext2D;
+    // Every pixel in the text's box: none is the frame's colour.
+    const probe = document.createElement('canvas').getContext('2d') as CanvasRenderingContext2D;
+    probe.fillStyle = line.stroke?.() ?? '';
+    probe.fillRect(0, 0, 1, 1);
+    const [fr, fg, fb] = probe.getImageData(0, 0, 1, 1).data;
+    const data = ctx.getImageData(t.x * r, t.y * r, t.width * r, t.height * r).data;
+    let framePixels = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      const near = (a: number | undefined, b: number | undefined) =>
+        Math.abs((a ?? 0) - (b ?? 0)) < 24;
+      if (
+        near(data[i], fr) &&
+        near(data[i + 1], fg) &&
+        near(data[i + 2], fb) &&
+        (data[i + 3] ?? 0) > 100
+      )
+        framePixels++;
+    }
+    const covers =
+      k.x <= t.x &&
+      k.y <= t.y &&
+      k.x + k.width >= t.x + t.width &&
+      k.y + k.height >= t.y + t.height;
+    return { framePixels, covers };
+  });
+  expect(found).not.toBeNull();
+  expect(found?.covers).toBe(true);
+  expect(found?.framePixels).toBe(0);
+});
+
+test('neighbouring group labels yield to each other far out and both show up close', async ({
+  page,
+}) => {
+  const { board } = await stubBoard(page, [item(ITEM_A, 0, 1), item(ITEM_B, 360, 2)]);
+  board.groups.set('g-1', {
+    id: 'g-1',
+    label: 'Startup & transport',
+    memberIds: [ITEM_A],
+  } as never);
+  board.groups.set('g-2', { id: 'g-2', label: 'Tool surfaces', memberIds: [ITEM_B] } as never);
+  (board.items.get(ITEM_A) as Record<string, unknown>).groupId = 'g-1';
+  (board.items.get(ITEM_B) as Record<string, unknown>).groupId = 'g-2';
+  const box = await openBoard(page);
+  const labels = () =>
+    page.evaluate(
+      () =>
+        (
+          window as unknown as { Konva: { stages: { find(s: string): unknown[] }[] } }
+        ).Konva.stages[0]?.find('.group-label').length ?? 0,
+    );
+  await expect.poll(labels).toBe(2);
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  for (let i = 0; i < 12; i++) await page.mouse.wheel(0, 400);
+  await expect.poll(labels).toBe(1);
+});
+
+test('press and hold picks one member out of its group to move and scale it in place', async ({
+  page,
+}) => {
+  test.slow();
+  const { board, posted } = await stubBoard(page, [item(ITEM_A, -260, 1), item(ITEM_B, 260, 2)]);
+  board.groups.set('g-1', { id: 'g-1', label: 'Pair', memberIds: [ITEM_A, ITEM_B] } as never);
+  for (const id of [ITEM_A, ITEM_B])
+    (board.items.get(id) as Record<string, unknown>).groupId = 'g-1';
+  const box = await openBoard(page);
+  const c = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  const a = { x: c.x - 260, y: c.y };
+  const transforms = (id: string) =>
+    posted.filter((b) => b.type === 'item.transform' && b.itemId === id) as unknown as {
+      transform: { x: number; width: number };
+    }[];
+
+  // A quick click selects the whole group.
+  await page.mouse.click(a.x, a.y);
+  await expect.poll(() => stats(page).then((s) => s.selected)).toBe(2);
+  await page.keyboard.press('Escape');
+
+  // Hold still: just that member, with its handles.
+  await page.mouse.move(a.x, a.y);
+  await page.mouse.down();
+  await page.waitForTimeout(500);
+  await page.mouse.up();
+  await expect.poll(() => stats(page).then((s) => s.selected)).toBe(1);
+
+  // Drag it: only it moves, and it is still in the group.
+  await page.mouse.move(a.x, a.y);
+  await page.mouse.down();
+  await page.mouse.move(a.x, a.y + 120, { steps: 8 });
+  await page.mouse.up();
+  await expect.poll(() => transforms(ITEM_A).length).toBe(1);
+  expect(transforms(ITEM_B)).toHaveLength(0);
+  expect((board.items.get(ITEM_A) as { groupId?: string }).groupId).toBe('g-1');
+
+  // Scale it by its corner handle (bottom-right of the moved image).
+  const corner = { x: a.x + 150, y: a.y + 120 + 112.5 };
+  await page.mouse.move(corner.x, corner.y);
+  await page.mouse.down();
+  await page.mouse.move(corner.x + 60, corner.y + 45, { steps: 8 });
+  await page.mouse.up();
+  await expect.poll(() => transforms(ITEM_A).at(-1)?.transform.width ?? 0).toBeGreaterThan(300);
+  expect(transforms(ITEM_B)).toHaveLength(0);
+
+  // One undo step undoes the scale alone.
+  await page.keyboard.press('Control+z');
+  await expect.poll(() => transforms(ITEM_A).at(-1)?.transform.width).toBe(300);
+
+  // Escape ends it: the next click is the group again.
+  await page.keyboard.press('Escape');
+  await page.mouse.click(c.x + 260, c.y);
+  await expect.poll(() => stats(page).then((s) => s.selected)).toBe(2);
+  await page.keyboard.press('Escape');
+
+  // Hold, then drag without letting go: that member alone moves.
+  const b = { x: c.x + 260, y: c.y };
+  await page.mouse.move(b.x, b.y);
+  await page.mouse.down();
+  await page.waitForTimeout(500);
+  await page.mouse.move(b.x + 80, b.y, { steps: 8 });
+  await page.mouse.up();
+  await expect.poll(() => transforms(ITEM_B).length).toBe(1);
+  expect(transforms(ITEM_A).length).toBe(3);
+});
+
+test('a board opens on its centerpiece, and Fit returns to it; without one it opens as before', async ({
+  page,
+}) => {
+  const { board } = await stubBoard(page, [item(ITEM_A, -260, 1), item(ITEM_B, 3000, 2)]);
+  board.centerpiece = `item:${ITEM_B}`;
+  const box = await openBoard(page);
+  const centreOf = (id: string) =>
+    page.evaluate((i) => {
+      const n = (
+        window as unknown as {
+          Konva: {
+            stages: {
+              findOne(
+                s: string,
+              ):
+                | { getClientRect(): { x: number; y: number; width: number; height: number } }
+                | undefined;
+            }[];
+          };
+        }
+      ).Konva.stages[0]?.findOne(`#${i}`);
+      const r = n?.getClientRect();
+      return r ? { x: r.x + r.width / 2, y: r.y + r.height / 2, width: r.width } : null;
+    }, id);
+  // Framed on B: centred, and filling the canvas more than at 100%.
+  await expect
+    .poll(async () => Math.abs(((await centreOf(ITEM_B))?.x ?? 1e9) - box.width / 2))
+    .toBeLessThan(2);
+  expect((await centreOf(ITEM_B))?.width ?? 0).toBeGreaterThan(300);
+  expect(Math.abs(((await centreOf(ITEM_B))?.y ?? 1e9) - box.height / 2)).toBeLessThan(2);
+
+  // Pan away, then Fit with nothing selected: back on the centerpiece.
+  await page.mouse.move(box.x + 50, box.y + box.height / 2);
+  await page.keyboard.down(' ');
+  await page.mouse.down();
+  await page.mouse.move(box.x + 400, box.y + box.height / 2, { steps: 5 });
+  await page.mouse.up();
+  await page.keyboard.up(' ');
+  await page.getByRole('button', { name: 'Fit' }).click();
+  await expect
+    .poll(async () => Math.abs(((await centreOf(ITEM_B))?.x ?? 1e9) - box.width / 2))
+    .toBeLessThan(2);
+
+  // A centerpiece that no longer exists: opens as a board without one (100%, origin).
+  board.centerpiece = 'item:01a01640-6b72-7d60-968b-88be186f3899';
+  await page.reload();
+  await expect(page.getByTestId('canvas-stats')).toContainText('100%');
 });

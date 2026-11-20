@@ -361,8 +361,12 @@ test('an agent at work is named in the roster and outlines what it touches', asy
   await expect(agent).toHaveAttribute('aria-label', 'Claude Code, an AI agent working for Ada');
   await expect(agent).toHaveAttribute('data-letter', 'C');
   await expect(page.getByTestId('remote-cursor')).toHaveCount(0);
+  const wordmark = page.getByTestId('wordmark-colour');
+  await expect(wordmark).not.toHaveAttribute('data-lit');
 
   await deliver(page, { t: 'focus', actorId: AGENT, itemId: ITEM, verb: 'editing' });
+  // The wordmark lights while the agent works (canvas/presence-indicators).
+  await expect(wordmark).toHaveAttribute('data-lit', 'true');
   await expect(agent).toHaveAttribute('aria-label', /· editing$/);
   await expect.poll(focusOutlines).toBe(1);
   await expect(page.getByTestId('agent-focus-label')).toContainText('editing');
@@ -370,6 +374,9 @@ test('an agent at work is named in the roster and outlines what it touches', asy
   await expect.poll(focusOutlines, { timeout: 8_000 }).toBe(0);
   await expect(agent).toHaveAttribute('aria-label', 'Claude Code, an AI agent working for Ada');
   await expect(page.getByTestId('agent-focus-label')).toHaveCount(0);
+  // Still lit a while after the focus ends, so it does not blink between calls; then dim.
+  await expect(wordmark).toHaveAttribute('data-lit', 'true');
+  await expect(wordmark).not.toHaveAttribute('data-lit', 'true', { timeout: 15_000 });
 
   await deliver(page, { t: 'presence', left: [AGENT] });
   await expect(page.getByTestId('presence-agent')).toHaveCount(0);

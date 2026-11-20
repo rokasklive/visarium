@@ -14,6 +14,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  centerpieceOf,
   collisionBodies,
   collisionState,
   duplicateSelection,
@@ -288,6 +289,7 @@ describe('the order of the tools', () => {
       'Label',
       'Frame',
       'Collision',
+      'Make centerpiece',
       'Flip H',
       'Flip V',
       'Crop',
@@ -436,5 +438,27 @@ describe('the collision toggle', () => {
         (b) => b.type === 'group.collides',
       ),
     ).toBe(false);
+  });
+});
+
+describe('centerpiece (canvas/centerpiece)', () => {
+  it('is one item or one whole group, and nothing else', () => {
+    const { doc, ids } = board(3);
+    const [a, b] = ids as [ItemId, ItemId];
+    expect(centerpieceOf(doc, new Set([a]))).toBe(`item:${a}`);
+    expect(centerpieceOf(doc, new Set([a, b]))).toBeUndefined();
+    const g = newGroupId();
+    doc.apply({ type: 'group.create', groupId: g, memberIds: [a, b] });
+    expect(centerpieceOf(doc, new Set([a, b]))).toBe(`group:${g}`);
+  });
+
+  it('is set and cleared as one undoable act', () => {
+    const { doc, ids } = board(1);
+    const history = new CanvasHistory(doc);
+    const target = centerpieceOf(doc, new Set(ids)) ?? null;
+    commit(history, [{ type: 'board.centerpiece', target }]);
+    expect(doc.centerpiece).toBe(target);
+    history.undo();
+    expect(doc.centerpiece).toBeNull();
   });
 });

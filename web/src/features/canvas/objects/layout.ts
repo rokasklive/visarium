@@ -11,7 +11,8 @@
  * here is drawn by the browser; the canvas draws the bitmap.
  */
 
-import type { CanvasItem, DiagramLang } from '@visarium/canvas-core';
+import { type CanvasItem, type DiagramLang, textScaleOf } from '@visarium/canvas-core';
+import { slug } from './blocks';
 import { loadMarkdown, loadMermaid, loadPlantUml, type MermaidPalette } from './loaders';
 import { type ObjectPalette, objectCss } from './style';
 
@@ -38,6 +39,18 @@ export interface Layout {
   svg(scale: number): string;
   readonly hits: readonly (Hit & { readonly rect: LocalRect })[];
   readonly elements: ReadonlyMap<string, LocalRect>;
+  /** A note's passages in reading order, named or not (canvas/text-anchors). */
+  readonly blocks?: readonly Block[];
+}
+
+export interface Block {
+  /** Its place in reading order: the same as `sourceBlocks`. */
+  readonly index: number;
+  readonly name?: string;
+  readonly rect: LocalRect;
+  /** Its drawn text, to check the source block is the same one. */
+  readonly text: string;
+  readonly heading?: boolean;
 }
 
 /** A diagram whose source does not parse. The caller keeps the last good layout. */
@@ -99,7 +112,7 @@ function palette() {
 }
 
 export async function layoutItem(item: CanvasItem): Promise<Layout> {
-  const width = Math.max(1, item.transform.width);
+  const width = laidWidth(item);
   const c = item.content;
   switch (c.kind) {
     case 'note':
@@ -111,6 +124,17 @@ export async function layoutItem(item: CanvasItem): Promise<Layout> {
     default:
       throw new Error(`no layout for ${c.kind}`);
   }
+}
+
+/**
+ * The width an object is laid out at. A note or checklist with a text scale is
+ * laid out at its width divided by the scale and drawn at its width, so its text
+ * is that much larger with the same line breaks (canvas/text-scaling). A
+ * diagram already scales with its box.
+ */
+export function laidWidth(item: CanvasItem): number {
+  const scaled = item.content.kind === 'note' || item.content.kind === 'checklist';
+  return Math.max(1, item.transform.width / (scaled ? textScaleOf(item) : 1));
 }
 
 /** A diagram that has never rendered shows its source, so nothing is invisible. */
@@ -132,7 +156,55 @@ async function layoutNote(source: string, width: number): Promise<Layout> {
       input.closest('li')?.classList.add('vo-task');
       input.replaceWith(box);
     });
+    nameBlocks(root);
   });
+}
+
+/**
+ * Tag every block of a rendered note (canvas/text-anchors), in reading order:
+ * `data-block-index` for each, `data-block` with its name for a named one. A
+ * paragraph's or list item's ` ^id` is taken out of the drawing; a heading is
+ * named by its slug. Mirrors `sourceBlocks`, which reads the same from source.
+ */
+function nameBlocks(root: HTMLElement): void {
+  const slugs = new Map<string, number>();
+  const blocks = root.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6, li, p');
+  let index = 0;
+  for (const el of blocks) {
+    // A loose list item's paragraphs are the item; a quote's are paragraphs.
+    if (el.tagName === 'P' && el.parentElement?.closest('li')) continue;
+    el.dataset.blockIndex = String(index++);
+    const own = ownTextNodes(el);
+    const last = own.at(-1);
+    const marker = last && /[ \t]\^([A-Za-z0-9-]+)[ \t]*$/.exec(last.data);
+    if (last && marker) {
+      last.data = last.data.slice(0, marker.index);
+      el.dataset.block = `^${marker[1]}`;
+      continue;
+    }
+    if (/^H[1-6]$/.test(el.tagName)) {
+      let name = slug(el.textContent ?? '');
+      const seen = slugs.get(name) ?? 0;
+      slugs.set(name, seen + 1);
+      if (seen > 0) name = `${name}-${seen}`;
+      if (name) el.dataset.block = name;
+    }
+  }
+}
+
+/** A block's own text, not that of the lists or paragraphs nested in it. */
+function ownTextNodes(el: HTMLElement): Text[] {
+  const out: Text[] = [];
+  const walk = (node: Node) => {
+    for (const child of node.childNodes) {
+      if (child.nodeType === Node.TEXT_NODE) out.push(child as Text);
+      else if (child instanceof HTMLElement && !/^(UL|OL|P)$/.test(child.tagName)) walk(child);
+      else if (child instanceof HTMLElement && child.tagName === 'P' && el.tagName === 'LI')
+        walk(child);
+    }
+  };
+  walk(el);
+  return out.filter((t) => t.data.trim() !== '');
 }
 
 function checklistHtml(
@@ -192,6 +264,21 @@ async function layoutHtml(
     });
     const title = root.querySelector('[data-title]');
     if (title) hits.push({ kind: 'title', rect: local(title) });
+    // A note's passages: named ones are link anchors, like a diagram's
+    // elements; every one is a place a link can start from (canvas/text-anchors).
+    const elements = new Map<string, LocalRect>();
+    const blocks: Block[] = [];
+    for (const el of root.querySelectorAll<HTMLElement>('[data-block-index]')) {
+      const rect = local(el);
+      if (el.dataset.block && !elements.has(el.dataset.block)) elements.set(el.dataset.block, rect);
+      blocks.push({
+        index: Number(el.dataset.blockIndex),
+        rect,
+        text: el.textContent ?? '',
+        ...(el.dataset.block ? { name: el.dataset.block } : {}),
+        ...(/^H[1-6]$/.test(el.tagName) ? { heading: true } : {}),
+      });
+    }
 
     const markup = new XMLSerializer().serializeToString(root);
     const body = `<foreignObject x="0" y="0" width="${width}" height="${height}"><div xmlns="${XHTML}"><style>${escapeXml(css)}</style>${markup}</div></foreignObject>`;
@@ -199,7 +286,8 @@ async function layoutHtml(
       width,
       height,
       hits,
-      elements: new Map(),
+      elements,
+      blocks,
       svg: (scale) =>
         `<svg xmlns="${SVG}" width="${width * scale}" height="${height * scale}" viewBox="0 0 ${width} ${height}">${body}</svg>`,
     };
@@ -237,13 +325,19 @@ async function layoutDiagram(lang: DiagramLang, source: string, width: number): 
   const elements = new Map<string, LocalRect>();
   try {
     const origin = live.getBoundingClientRect();
-    for (const [name, el] of elementsOf(live, lang)) {
-      const r = el.getBoundingClientRect();
+    for (const [name, els] of elementsOf(live, lang)) {
+      // An element drawn in parts (a sequence participant's head, lifeline and
+      // foot) is the box around all of them.
+      const rs = els.map((el) => el.getBoundingClientRect());
+      const left = Math.min(...rs.map((r) => r.left));
+      const top = Math.min(...rs.map((r) => r.top));
+      const right = Math.max(...rs.map((r) => r.right));
+      const bottom = Math.max(...rs.map((r) => r.bottom));
       elements.set(name, {
-        x: r.left - origin.left,
-        y: r.top - origin.top,
-        width: r.width,
-        height: r.height,
+        x: left - origin.left,
+        y: top - origin.top,
+        width: right - left,
+        height: bottom - top,
       });
     }
   } finally {
@@ -340,10 +434,14 @@ async function sanitizeSvg(svg: string): Promise<string> {
  * Mermaid's DOM ids are not a public API; `objects.spec.ts` pins what this
  * reads against the installed Mermaid and PlantUML versions.
  */
-export function elementsOf(svg: Element, lang: DiagramLang): Map<string, Element> {
-  const found = new Map<string, Element>();
+export function elementsOf(svg: Element, lang: DiagramLang): Map<string, Element[]> {
+  const found = new Map<string, Element[]>();
   const add = (name: string | null | undefined, el: Element) => {
-    if (name && !found.has(name)) found.set(name, el);
+    if (name && !found.has(name)) found.set(name, [el]);
+  };
+  /** Another part of an element already found. */
+  const extend = (name: string | null | undefined, el: Element) => {
+    if (name) found.get(name)?.push(el);
   };
   if (lang === 'plantuml') {
     for (const el of svg.querySelectorAll(
@@ -370,9 +468,13 @@ export function elementsOf(svg: Element, lang: DiagramLang): Map<string, Element
       el,
     );
   });
-  // Sequence diagrams draw each participant twice; the anchor is the top box.
+  // A sequence participant is its head box, its lifeline and its foot box, as
+  // PlantUML's participant group is (canvas/link-geometry): the whole column
+  // highlights, and a link lands on its nearest point.
   for (const el of svg.querySelectorAll('rect.actor-top[name]')) add(el.getAttribute('name'), el);
   for (const el of svg.querySelectorAll('rect.actor[name]')) add(el.getAttribute('name'), el);
+  for (const el of svg.querySelectorAll('line.actor-line[name], rect.actor-bottom[name]'))
+    extend(el.getAttribute('name'), el);
   return found;
 }
 

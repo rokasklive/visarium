@@ -127,12 +127,33 @@ describe('group labels', () => {
     return { doc, groupIds };
   }
 
-  it('is one size at every zoom', () => {
+  it('is set on the face grid: 11 screen px up close, 22 far out', () => {
     const { doc, groupIds } = board(['corner']);
-    expect(groupLabelsFor(doc, groupIds, 1)[0]?.fontSize).toBe(15);
-    expect(groupLabelsFor(doc, groupIds, 4)[0]?.fontSize).toBe(15 / 4);
-    // Multiplied by the zoom the stage is drawn at, both are 15 screen pixels.
-    expect((groupLabelsFor(doc, groupIds, 0.25)[0]?.fontSize as number) * 0.25).toBe(15);
+    expect(groupLabelsFor(doc, groupIds, 1)[0]?.fontSize).toBe(11);
+    expect(groupLabelsFor(doc, groupIds, 4)[0]?.fontSize).toBe(11 / 4);
+    // Multiplied by the zoom the stage is drawn at: 22 screen pixels far out.
+    expect((groupLabelsFor(doc, groupIds, 0.25)[0]?.fontSize as number) * 0.25).toBe(22);
+  });
+
+  it('lands the text on whole screen pixels', () => {
+    const { doc, groupIds } = board(['corner']);
+    const [l] = groupLabelsFor(doc, groupIds, 0.37, undefined, { x: 13.3, y: 7.9 });
+    expect(Number.isInteger(Math.round(((l?.x as number) * 0.37 + 13.3) * 1e6) / 1e6)).toBe(true);
+    expect(Number.isInteger(Math.round(((l?.y as number) * 0.37 + 7.9) * 1e6) / 1e6)).toBe(true);
+  });
+
+  it('has a knockout covering the whole text', () => {
+    const { doc, groupIds } = board(['corner']);
+    const [l] = groupLabelsFor(doc, groupIds, 1);
+    const k = l?.knockout;
+    expect(
+      k &&
+        l &&
+        k.x < l.x &&
+        k.y < l.y &&
+        k.x + k.width > l.x + l.width &&
+        k.y + k.height > l.y + l.height,
+    ).toBe(true);
   });
 
   it('reads as an annotation — uppercase — not as body text', () => {
@@ -143,7 +164,7 @@ describe('group labels', () => {
   it('floats above an unframed group it names, by a gap that is also screen pixels', () => {
     const { doc, groupIds } = board(['corner']);
     const bounds = doc.groupBounds(groupIds[0] as GroupId);
-    expect(groupLabelsFor(doc, groupIds, 2)[0]?.y).toBe((bounds?.minY as number) - (15 + 6) / 2);
+    expect(groupLabelsFor(doc, groupIds, 2)[0]?.y).toBe((bounds?.minY as number) - (11 + 6) / 2);
     expect(groupLabelsFor(doc, groupIds, 2)[0]?.x).toBe(bounds?.minX);
   });
 
@@ -154,10 +175,34 @@ describe('group labels', () => {
     const frame = frameFor(doc, groupId, new Map());
     if (!frame) throw new Error('a framed group derives a contour');
     const [label] = groupLabelsFor(doc, [groupId], 2, new Map([[groupId, frame]]));
-    // The label's left edge is the contour's left edge; its middle rides the
-    // top edge, which is where the halo breaks the line beneath it.
-    expect(label?.x).toBe(frame.minX);
-    expect(label?.y).toBe(frame.minY - 15 / 2 / 2);
+    // The label sits just in from the contour's corner, its middle riding the
+    // top edge, where its knockout breaks the line (to within a screen pixel).
+    expect(Math.abs((label?.x as number) - (frame.minX + 8 / 2))).toBeLessThanOrEqual(0.5);
+    expect(Math.abs((label?.y as number) - (frame.minY - 11 / 2 / 2))).toBeLessThanOrEqual(0.5);
+    const k = label?.knockout;
+    expect(k && k.y < frame.minY && k.y + k.height > frame.minY).toBe(true);
+  });
+
+  it('draws only the larger of two labels that would overlap, both once apart', () => {
+    const doc = new CanvasDocument(canvas);
+    const make = (n: number, x: number, size: number, label: string) => {
+      const itemId = asItemId(`o-${n}`) as ItemId;
+      doc.apply({
+        type: 'item.create',
+        itemId,
+        transform: { x, y: 0, width: size, height: size, rotation: 0 },
+        z: n,
+        content: { kind: 'placeholder', intrinsicWidth: size, intrinsicHeight: size },
+      });
+      const groupId = newGroupId();
+      doc.apply({ type: 'group.create', groupId, memberIds: [itemId], label });
+      return groupId;
+    };
+    const small = make(1, 0, 400, 'STARTUP & TRANSPORT');
+    const big = make(2, 600, 1000, 'TOOL SURFACES');
+    // At 8%, the labels' screen boxes collide; zoomed in, they do not.
+    expect(groupLabelsFor(doc, [small, big], 0.08).map((l) => l.groupId)).toEqual([big]);
+    expect(groupLabelsFor(doc, [small, big], 1)).toHaveLength(2);
   });
 
   it('draws nothing for a group with no label', () => {

@@ -19,7 +19,7 @@ import {
   type Vec2,
 } from '@visarium/canvas-core';
 import { localToWorld, toLayout, worldToLocal } from './interact';
-import type { Layout, LocalRect } from './layout';
+import type { Block, Layout, LocalRect } from './layout';
 import { drawnHeight, type ObjectView } from './store';
 
 /** The type a dragged link starts with, from what it is dragged from (spec). */
@@ -48,12 +48,44 @@ export function elementAt(layout: Layout, point: Vec2): string | undefined {
 
 /** The anchor at a world point on an item: one of its elements, or the whole item. */
 export function anchorAt(item: CanvasItem, view: ObjectView | undefined, world: Vec2): Anchor {
-  if (item.content.kind !== 'diagram' || !view) return { itemId: item.id, element: null };
+  // A diagram's elements, a note's named passages (canvas/text-anchors).
+  if ((item.content.kind !== 'diagram' && item.content.kind !== 'note') || !view)
+    return { itemId: item.id, element: null };
+  if (item.content.kind === 'note') {
+    // A passage, by name; the note's opening heading is its title, and a link
+    // from or to the title is a link to the whole note.
+    const block = blockAt(item, view, world);
+    return { itemId: item.id, element: block && !isTitle(block) ? (block.name ?? null) : null };
+  }
   const local = worldToLocal(item.transform, world);
   return {
     itemId: item.id,
     element: elementAt(view.layout, toLayout(item, view.layout, local)) ?? null,
   };
+}
+
+/** A note's opening heading: its title, which stands for the whole note. */
+export function isTitle(block: Block): boolean {
+  return block.index === 0 && block.heading === true;
+}
+
+/** The passage of a note under a world point, named or not (canvas/text-anchors). */
+export function blockAt(
+  item: CanvasItem,
+  view: ObjectView | undefined,
+  world: Vec2,
+): Block | undefined {
+  if (item.content.kind !== 'note' || !view?.layout.blocks) return undefined;
+  const p = toLayout(item, view.layout, worldToLocal(item.transform, world));
+  return view.layout.blocks.find(
+    ({ rect: r }) => p.x >= r.x && p.x <= r.x + r.width && p.y >= r.y && p.y <= r.y + r.height,
+  );
+}
+
+/** A layout-unit rectangle of an item, as world bounds where the item is now. */
+export function layoutBox(t: Transform, view: ObjectView, r: LocalRect): Rect {
+  const k = t.width / view.layout.width;
+  return boundsOf(t, { x: r.x * k, y: r.y * k, width: r.width * k, height: r.height * k });
 }
 
 /** Whether a world point is on an item as it is drawn (objects at their drawn height). */
@@ -110,18 +142,23 @@ function boundsOf(t: Transform, r: LocalRect): Rect {
   };
 }
 
-const centre = (r: Rect): Vec2 => ({ x: (r.minX + r.maxX) / 2, y: (r.minY + r.maxY) / 2 });
-
-/** Where the line from the box's centre towards `to` leaves the box, `pad` beyond its edge. */
-function edgePoint(r: Rect, to: Vec2, pad: number): Vec2 {
-  const c = centre(r);
-  const dx = to.x - c.x;
-  const dy = to.y - c.y;
-  if (!dx && !dy) return c;
-  const hw = (r.maxX - r.minX) / 2 + pad;
-  const hh = (r.maxY - r.minY) / 2 + pad;
-  const s = Math.min(Math.abs(hw / (dx || 1e-9)), Math.abs(hh / (dy || 1e-9)));
-  return { x: c.x + dx * s, y: c.y + dy * s };
+/**
+ * The two nearest points of two boxes (canvas/link-geometry). Per axis: where
+ * the boxes' extents overlap, both ends take the middle of the overlap, so the
+ * line runs straight across; otherwise each end takes its own facing edge. A
+ * note above a tall sequence-diagram lifeline so lands on the lifeline's head,
+ * not partway down it through the drawing.
+ */
+export function nearestPoints(a: Rect, b: Rect): Segment {
+  const axis = (a0: number, a1: number, b0: number, b1: number): [number, number] => {
+    const lo = Math.max(a0, b0);
+    const hi = Math.min(a1, b1);
+    if (lo <= hi) return [(lo + hi) / 2, (lo + hi) / 2];
+    return a1 < b0 ? [a1, b0] : [a0, b1];
+  };
+  const [ax, bx] = axis(a.minX, a.maxX, b.minX, b.maxX);
+  const [ay, by] = axis(a.minY, a.maxY, b.minY, b.maxY);
+  return { from: { x: ax, y: ay }, to: { x: bx, y: by } };
 }
 
 export interface Segment {
@@ -129,9 +166,20 @@ export interface Segment {
   readonly to: Vec2;
 }
 
-/** Edge to edge, between two anchor boxes, a few screen pixels off each. */
+/** Nearest point to nearest point, each end a few screen pixels off its box. */
 export function segmentBetween(from: Rect, to: Rect, zoom: number): Segment {
-  return { from: edgePoint(from, centre(to), 4 / zoom), to: edgePoint(to, centre(from), 6 / zoom) };
+  const s = nearestPoints(from, to);
+  const dx = s.to.x - s.from.x;
+  const dy = s.to.y - s.from.y;
+  const len = Math.hypot(dx, dy);
+  if (len === 0) return s;
+  const off = (pad: number) => Math.min(pad / zoom, len / 3) / len;
+  const a = off(4);
+  const b = off(6);
+  return {
+    from: { x: s.from.x + dx * a, y: s.from.y + dy * a },
+    to: { x: s.to.x - dx * b, y: s.to.y - dy * b },
+  };
 }
 
 export function distanceToSegment(p: Vec2, s: Segment): number {

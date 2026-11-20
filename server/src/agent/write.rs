@@ -625,6 +625,7 @@ async fn item_create(app: &AppState, caller: &Caller, args: &Value) -> Result<Ou
         crop: None,
         // An agent's items are pushed aside by default (canvas/collision).
         collides: Some(args.get("collides").and_then(Value::as_bool).unwrap_or(true)),
+        text_scale: None,
     }];
     if let Some(g) = &at.group {
         ops.push(Op::GroupMembers {
@@ -1216,6 +1217,8 @@ async fn packed(app: &AppState, b: &BoardData, items: &[&ItemRow], args: &Value,
             item_id: Uuid::parse_str(&i.id).unwrap(),
             transform: Transform { rotation: i.rotation, ..transform(Rect { x: block.left() + dx, y: block.top() + dy, w: i.width, h: i.height }) },
             crop: None,
+            text_scale: None,
+            settled: false,
         })
         .collect();
     Ok((ops, format!("laid out {shape} {said}"), group))
@@ -1308,7 +1311,14 @@ async fn arrange(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, F
         .and_then(Value::as_array)
         .map(|a| a.iter().filter_map(Value::as_str).collect())
         .unwrap_or_default();
-    if refs.is_empty() {
+    // The centerpiece (canvas/centerpiece): one item or group, or "" to clear.
+    let centerpiece = match args.get("centerpiece").and_then(Value::as_str).map(str::trim) {
+        None => None,
+        Some("") => Some(None),
+        Some(r) if r.trim().starts_with(['g', 'G']) => Some(Some(format!("group:{}", b.resolve_group(r)?.id))),
+        Some(r) => Some(Some(format!("item:{}", b.resolve_item(r)?.id))),
+    };
+    if refs.is_empty() && centerpiece.is_none() {
         return Err("refs is required: the items to move, e.g. [\"n3\", \"n4\"].".into());
     }
     let items: Vec<&ItemRow> = refs
@@ -1319,6 +1329,13 @@ async fn arrange(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, F
     let mut ops = vec![];
     let mut said = vec![];
     let mut placed: Vec<String> = vec![];
+    if let Some(target) = centerpiece {
+        said.push(match &target {
+            Some(_) => format!("{} is now the centerpiece: people open the board on it", opt_str(args, "centerpiece").unwrap_or("").trim()),
+            None => "the board has no centerpiece now".to_string(),
+        });
+        ops.push(Op::BoardCenterpiece { target });
+    }
     ops.extend(collision_ops(args, &items, &mut said));
     if args.get("out_of_group").and_then(Value::as_bool) == Some(true) {
         let mut groups: Vec<&str> = items.iter().filter_map(|i| i.group_id.as_deref()).collect();
@@ -1379,6 +1396,8 @@ async fn arrange(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, F
                     ..transform(spot)
                 },
                 crop,
+                text_scale: None,
+                settled: false,
             });
         }
         if let Some(g) = &at.group {
@@ -1395,7 +1414,11 @@ async fn arrange(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, F
     }
     let (revision, pushed) = commit_pushing(app, caller, b.id, ops).await?;
     let names: Vec<String> = items.iter().map(|i| i.short_ref()).collect();
-    let mut text = format!("{}: {}.", names.join(", "), said.join(", "));
+    let mut text = if names.is_empty() {
+        format!("{}.", said.join(", "))
+    } else {
+        format!("{}: {}.", names.join(", "), said.join(", "))
+    };
     for p in &placed {
         text.push_str(&format!(" {p}."));
     }

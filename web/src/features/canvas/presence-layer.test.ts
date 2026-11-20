@@ -228,7 +228,8 @@ describe('an agent on the board', () => {
     expect(html).toContain('data-testid="presence-agent"');
     expect(html).toContain('data-letter="C"');
     expect(html).toContain('aria-label="Claude Code, an AI agent working for Ada · editing"');
+    // Outlined in its own colour, its letter in the app icon's (canvas/presence-indicators).
     expect(html).toContain('stroke="violet-token"');
-    expect(html).not.toContain('wordmark');
+    expect(html).toContain('fill="var(--wordmark-turquoise)"');
   });
 });

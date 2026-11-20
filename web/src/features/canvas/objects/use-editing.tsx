@@ -39,7 +39,7 @@ import {
   toLayout,
   worldToLocal,
 } from './interact';
-import type { LocalRect } from './layout';
+import { type LocalRect, laidWidth } from './layout';
 import type { ObjectLayouts } from './store';
 
 /** How long typing pauses before the source is saved: a closed tab loses less than this. */
@@ -316,12 +316,15 @@ export function useObjectEditing(d: EditingDeps) {
 
   const placeAt = (item: CanvasItem, local: Vec2, width: number): Placement => {
     const at = worldToScreen(d.camera, d.size, localToWorld(item.transform, local));
+    // A note with a text scale is edited at that scale (canvas/text-scaling):
+    // the field is laid out at the width the text is, and drawn as large.
+    const k = item.transform.width / laidWidth(item);
     return {
       left: at.x,
       top: at.y,
       rotation: (item.transform.rotation * 180) / Math.PI,
-      zoom: d.camera.zoom,
-      width,
+      zoom: d.camera.zoom * k,
+      width: width / k,
     };
   };
 
@@ -485,7 +488,6 @@ export function useObjectEditing(d: EditingDeps) {
     /** The item being edited in place, which the resize frame leaves alone. */
     editingId: editing && 'itemId' in editing ? editing.itemId : null,
     click,
-    isControlAt: (item: CanvasItem, world: Vec2) => controlAt(item, world) !== undefined,
     doubleClick,
     startNewNote,
     place,

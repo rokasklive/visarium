@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import fixture from '../../../packages/canvas-core/fixtures/presence-letters.json';
 import { GLYPHS } from './letter-glyphs';
 import { LetterTile, letterOf, tileLayout } from './letter-tile';
-import { ROWS } from './wordmark';
+import { ROW_FILLS, ROWS } from './wordmark';
 
 describe('letter glyphs', () => {
   it('has A-Z, 0-9 and the ? fallback, each eight rows on the half-pitch grid', () => {
@@ -52,6 +52,15 @@ describe('LetterTile', () => {
     );
     expect(markup).toContain('stroke="teal"');
     expect(markup).toContain(`aria-label="${label}"`);
+  });
+
+  it("draws an agent's letter row by row in the wordmark colours, a person's in one", () => {
+    const agent = renderToStaticMarkup(<LetterTile name="Claude" colour="teal" agent />);
+    const fills = [...agent.matchAll(/<path[^>]*fill="([^"]+)"/g)].map((m) => m[1]);
+    expect(fills).toEqual([...ROW_FILLS]);
+    expect(fills).not.toContain('teal');
+    const person = renderToStaticMarkup(<LetterTile name="Ana" colour="teal" />);
+    expect([...person.matchAll(/<path[^>]*fill="([^"]+)"/g)].map((m) => m[1])).toEqual(['teal']);
   });
 
   it('never draws an empty tile', () => {

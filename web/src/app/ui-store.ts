@@ -59,6 +59,13 @@ interface UiState {
   /** People with the open board on screen through a read-only share link (ADR-0026). */
   linkViewers: number;
   /**
+   * An agent on the open board is working: it has a live focus, or had one
+   * moments ago (canvas/presence-indicators). Read by the wordmark in the shell,
+   * which is outside the canvas, so it lives here; the presence it is derived
+   * from stays in the canvas.
+   */
+  agentWorking: boolean;
+  /**
    * What the last outward gesture could not do, and what to do instead.
    *
    * Three outcomes have to be sayable — the clipboard changed the format to PNG,
@@ -120,6 +127,8 @@ interface UiState {
   setSync: (sync: SyncStatus) => void;
   setConnection: (connection: ConnectionState | 'idle') => void;
   setLinkViewers: (count: number) => void;
+  /** True lights the wordmark at once; false dims it after AGENT_LINGER_MS, unless work resumes. */
+  setAgentWorking: (working: boolean) => void;
   addUploadFailure: (failure: UploadFailure) => void;
   dismissUploadFailures: () => void;
   /** `null` is the dismiss, and also what a gesture that went as promised writes. */
@@ -127,6 +136,14 @@ interface UiState {
   setBoardNotice: (notice: string | null) => void;
   toggleToolbar: () => void;
 }
+
+/**
+ * How long the wordmark stays lit after an agent's last focus expires. An agent
+ * thinks between calls for longer than a focus lasts (FOCUS_MS), and a mark
+ * that blinks off between every call reads as broken rather than busy.
+ */
+export const AGENT_LINGER_MS = 10_000;
+let agentLinger: ReturnType<typeof setTimeout> | undefined;
 
 export const useUiStore = create<UiState>((set) => ({
   tool: 'select',
@@ -140,6 +157,7 @@ export const useUiStore = create<UiState>((set) => ({
   sync: SYNCED,
   connection: 'idle',
   linkViewers: 0,
+  agentWorking: false,
   interchangeNotice: null,
   boardNotice: null,
   toolbarCollapsed: false,
@@ -161,6 +179,11 @@ export const useUiStore = create<UiState>((set) => ({
   setSync: (sync) => set({ sync }),
   setConnection: (connection) => set({ connection }),
   setLinkViewers: (linkViewers) => set({ linkViewers }),
+  setAgentWorking: (working) => {
+    clearTimeout(agentLinger);
+    if (working) set({ agentWorking: true });
+    else agentLinger = setTimeout(() => set({ agentWorking: false }), AGENT_LINGER_MS);
+  },
   addUploadFailure: (failure) => set((s) => ({ uploadFailures: [...s.uploadFailures, failure] })),
   dismissUploadFailures: () => set({ uploadFailures: [] }),
   setInterchangeNotice: (interchangeNotice) => set({ interchangeNotice }),

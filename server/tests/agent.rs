@@ -552,6 +552,7 @@ async fn the_agent_is_told_how_to_work() {
         .await;
     let guide = guide["contents"][0]["text"].as_str().unwrap();
     assert!(guide.contains("## When a tool is missing") && guide.contains("For example:"));
+    assert!(guide.contains("\"centerpiece\": \"g1\""), "the guide shows setting a centerpiece");
     // Every tool, the granted ones included, has an example call.
     w.grant(true).await;
     for t in w.rpc("tools/list", json!({})).await["tools"]
@@ -2023,4 +2024,62 @@ async fn the_overview_names_layout_problems_but_not_a_persons_own_overlaps() {
     assert!(text.contains("d1 overlaps n6") || text.contains("n6 overlaps d1"), "{text}");
     assert!(text.contains("n6 → c1 crosses"), "{text}");
     assert!(!text.contains("n1 overlaps d1") && !text.contains("d1 overlaps n1"), "{text}");
+}
+
+// --- canvas-polish ------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_scaled_note_reads_with_its_text_scale() {
+    let w = world().await;
+    let id = uuid::Uuid::now_v7();
+    let mut op = note_op(id, 0.0, 9000.0, "Big words", None);
+    op["textScale"] = json!(2.5);
+    apply_as(&w.app, &w.board, &w.user, serde_json::from_value(json!([op])).unwrap()).await;
+    let read = w.ok("item_read", json!({ "board": "Offline sync", "ref": "n6" })).await;
+    assert!(read.contains("Text shown at 2.5× its normal size."), "{read}");
+    let plain = w.ok("item_read", json!({ "board": "Offline sync", "ref": "n1" })).await;
+    assert!(!plain.contains("Text shown at"), "{plain}");
+}
+
+#[tokio::test]
+async fn an_agent_sets_and_clears_the_centerpiece_and_reads_it_back() {
+    let w = world().await;
+    let set = w.ok("arrange", json!({ "board": "Offline sync", "centerpiece": "d2" })).await;
+    assert!(set.contains("d2 is now the centerpiece"), "{set}");
+    let o = w.ok("board_read", json!({ "board": "Offline sync" })).await;
+    assert!(o.contains("Centerpiece: d2"), "{o}");
+    let snap: Option<String> = sqlx::query_scalar("SELECT centerpiece FROM canvas WHERE id = ?")
+        .bind(&w.board)
+        .fetch_one(&w.app.db)
+        .await
+        .unwrap();
+    assert!(snap.is_some_and(|c| c.starts_with("item:")));
+    let cleared = w.ok("arrange", json!({ "board": "Offline sync", "centerpiece": "" })).await;
+    assert!(cleared.contains("no centerpiece"), "{cleared}");
+    let o = w.ok("board_read", json!({ "board": "Offline sync" })).await;
+    assert!(!o.contains("Centerpiece:"), "{o}");
+    let bad = w.fails("arrange", json!({ "board": "Offline sync", "centerpiece": "g99" })).await;
+    assert!(bad.contains("does not exist"), "{bad}");
+}
+
+#[tokio::test]
+async fn an_agent_links_a_passage_of_a_note_and_is_told_which_exist() {
+    let w = world().await;
+    let id = uuid::Uuid::now_v7();
+    let op = note_op(id, 0.0, 9000.0, "# Evidence\n\nHow a request becomes evidence. ^evidence\n\n## Fallbacks\n\nPlain.", None);
+    apply_as(&w.app, &w.board, &w.user, serde_json::from_value(json!([op])).unwrap()).await;
+    let read = w.ok("item_read", json!({ "board": "Offline sync", "ref": "n6" })).await;
+    assert!(read.contains("Passages (2): ^evidence, fallbacks"), "{read}");
+    let linked = w
+        .ok("link", json!({ "board": "Offline sync", "from": "n6#^evidence", "to": "d2#Server", "type": "describes" }))
+        .await;
+    assert!(linked.contains("n6#^evidence"), "{linked}");
+    let o = w.ok("board_read", json!({ "board": "Offline sync" })).await;
+    assert!(o.contains("7 links · 1 broken"), "the new passage link is whole, not broken: {o}");
+    let refused = w
+        .fails("link", json!({ "board": "Offline sync", "from": "n6#^nope", "to": "d2", "type": "describes" }))
+        .await;
+    assert!(refused.contains("Its passages: ^evidence, fallbacks"), "{refused}");
+    let unlinked = w.ok("unlink", json!({ "board": "Offline sync", "from": "n6#^evidence", "to": "d2#Server" })).await;
+    assert!(!unlinked.is_empty());
 }

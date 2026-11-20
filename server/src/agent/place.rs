@@ -228,20 +228,24 @@ pub struct Scene<'a> {
     pub group: Option<Rect>,
 }
 
-/// Where the line from `r`'s centre towards `to` leaves `r`: the browser's
-/// `edgePoint` without its few screen pixels of padding.
-fn edge_point(r: &Rect, to: Pt) -> Pt {
-    let (dx, dy) = (to.0 - r.x, to.1 - r.y);
-    if dx == 0.0 && dy == 0.0 {
-        return (r.x, r.y);
-    }
-    let s = ((r.w / 2.0) / dx.abs().max(1e-9)).min((r.h / 2.0) / dy.abs().max(1e-9));
-    (r.x + dx * s, r.y + dy * s)
-}
-
-/// A link as the browser draws it: edge to edge, between centres.
+/// A link as the browser draws it (canvas/link-geometry): between the two
+/// boxes' nearest points. Per axis, overlapping extents meet in the middle of
+/// the overlap; otherwise each end is its box's facing edge. The browser's
+/// `nearestPoints`, without its few screen pixels of padding.
 pub fn segment(a: &Rect, b: &Rect) -> Segment {
-    (edge_point(a, (b.x, b.y)), edge_point(b, (a.x, a.y)))
+    let axis = |a0: f64, a1: f64, b0: f64, b1: f64| {
+        let (lo, hi) = (a0.max(b0), a1.min(b1));
+        if lo <= hi {
+            ((lo + hi) / 2.0, (lo + hi) / 2.0)
+        } else if a1 < b0 {
+            (a1, b0)
+        } else {
+            (a0, b1)
+        }
+    };
+    let (ax, bx) = axis(a.left(), a.right(), b.left(), b.right());
+    let (ay, by) = axis(a.top(), a.bottom(), b.top(), b.bottom());
+    ((ax, ay), (bx, by))
 }
 
 pub fn length(s: &Segment) -> f64 {
@@ -434,6 +438,9 @@ mod tests {
             mime_type: None,
             ref_no: 1,
             collides: true,
+            text_scale: None,
+            home_x: None,
+            home_y: None,
             element_boxes: boxes.map(str::to_string),
             element_rev,
         }
@@ -489,7 +496,10 @@ mod tests {
         let end = LinkEnd { anchor: connect, owner: D };
         let r = place_linked(D, Side::Near, (320.0, 120.0), &scene(&[D], &[]), &[end]);
         assert!(r.left() >= D.right(), "right of d, where Connect is: {r:?}");
-        assert!((r.y - connect.y).abs() <= GRID, "level with Connect: {r:?}");
+        // Beside it: their extents overlap, so the link runs straight across.
+        assert!(r.top() < connect.bottom() && connect.top() < r.bottom(), "level with Connect: {r:?}");
+        let (from, to) = segment(&r, &connect);
+        assert_eq!(from.1, to.1, "a straight link: {from:?} {to:?}");
     }
 
     #[test]
@@ -563,6 +573,19 @@ mod tests {
         assert!(crosses(&s, &((150.0, -50.0), (150.0, 50.0))));
         assert!(!crosses(&s, &((150.0, 10.0), (150.0, 50.0))));
         assert_eq!(side_of(&b, &a), "right of");
+    }
+
+    #[test]
+    fn a_link_to_a_lifeline_lands_on_its_head() {
+        // A note up and to the left of a tall, thin lifeline whose x it overlaps.
+        let note = Rect { x: 300.0, y: -200.0, w: 400.0, h: 120.0 };
+        let lifeline = Rect { x: 420.0, y: 400.0, w: 20.0, h: 800.0 };
+        let (from, to) = segment(&note, &lifeline);
+        assert_eq!(to, (420.0, 0.0), "the top of the lifeline, straight below");
+        assert_eq!(from, (420.0, -140.0));
+        // Diagonal: corner to corner.
+        let far = Rect { x: 1000.0, y: 1000.0, w: 100.0, h: 100.0 };
+        assert_eq!(segment(&note, &far), ((500.0, -140.0), (950.0, 950.0)));
     }
 
     #[test]

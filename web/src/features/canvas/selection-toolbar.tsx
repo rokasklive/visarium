@@ -3,6 +3,7 @@ import {
   type CanvasDocument,
   type CanvasItem,
   type CanvasOperationBody,
+  type Centerpiece,
   type FlipAxis,
   flipSelection,
   type GroupId,
@@ -254,6 +255,8 @@ export function SelectionToolbar({
 
   const groupId = soleGroupId(doc, selection);
   const framed = groupId ? (doc.group(groupId)?.frame ?? false) : false;
+  const centerpiece = centerpieceOf(doc, selection);
+  const isCenterpiece = centerpiece !== undefined && doc.centerpiece === centerpiece;
   const collision = collisionState(doc, selection);
 
   useEffect(() => {
@@ -537,6 +540,29 @@ export function SelectionToolbar({
           >
             <CollisionIcon on={collision !== 'off'} />
           </Button>
+          {/*
+            Centerpiece (canvas/centerpiece): what the board opens on. For one
+            item or one whole group; pressed when that is the centerpiece now,
+            and pressing it then clears it.
+          */}
+          <Button
+            label={isCenterpiece ? 'Clear centerpiece' : 'Make centerpiece'}
+            hint={
+              centerpiece
+                ? isCenterpiece
+                  ? 'The board opens on this. Press to clear.'
+                  : 'Open the board on this'
+                : 'Select one item or one whole group to open the board on it'
+            }
+            dim={!centerpiece}
+            pressed={isCenterpiece || undefined}
+            onClick={() => {
+              if (!centerpiece) return;
+              commit({ type: 'board.centerpiece', target: isCenterpiece ? null : centerpiece });
+            }}
+          >
+            <CenterpieceIcon on={isCenterpiece} />
+          </Button>
           <Divider />
 
           {/*
@@ -690,6 +716,21 @@ export function soleGroupId(doc: CanvasDocument, ids: Iterable<ItemId>): GroupId
   }
   if (found === undefined) return undefined;
   return doc.group(found)?.memberIds.length === count ? found : undefined;
+}
+
+/**
+ * What the selection would make the centerpiece: its whole group, or its one
+ * item; nothing for anything else (canvas/centerpiece).
+ */
+export function centerpieceOf(
+  doc: CanvasDocument,
+  ids: ReadonlySet<ItemId>,
+): Centerpiece | undefined {
+  const groupId = soleGroupId(doc, ids);
+  if (groupId) return `group:${groupId}`;
+  if (ids.size !== 1) return undefined;
+  const [id] = ids;
+  return id && doc.item(id) ? `item:${id}` : undefined;
 }
 
 /** An item's collision as the board applies it: its group's setting wins. */
@@ -1033,6 +1074,23 @@ function FrameIcon({ framed }: { framed: boolean }) {
  * Two boxes side by side with a push mark between them: solid when items keep
  * each other apart, dashed when they do not.
  */
+/** A frame's corners around a dot: what the board opens framed on. */
+function CenterpieceIcon({ on }: { on: boolean }) {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 14 14"
+      fill="none"
+      stroke="currentColor"
+      aria-hidden="true"
+    >
+      <path d="M1.5 4.5v-3h3M9.5 1.5h3v3M12.5 9.5v3h-3M4.5 12.5h-3v-3" />
+      <rect x="5" y="5" width="4" height="4" fill={on ? 'currentColor' : 'none'} />
+    </svg>
+  );
+}
+
 function CollisionIcon({ on }: { on: boolean }) {
   return (
     <Glyph>

@@ -169,7 +169,12 @@
     }
   }
 
-  @media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  /* An agent at work on the open board lights it too (canvas/presence-indicators). */
+  .wordmark-hover-color[data-lit] {
+    opacity: 1;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
     .wordmark-hover-color {
       transition: opacity 160ms ease-out;
     }

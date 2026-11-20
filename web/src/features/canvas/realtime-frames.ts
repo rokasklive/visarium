@@ -26,6 +26,8 @@ import {
   type ServerMessage,
   TASK_STATES,
   type TaskState,
+  TEXT_SCALE_MAX,
+  TEXT_SCALE_MIN,
   type Transform,
 } from '@visarium/canvas-core';
 
@@ -150,12 +152,15 @@ function operation(value: unknown): unknown | null {
       if (value.groupId !== undefined && !str(value.groupId)) return null;
       // Optional, so an older client's creation is still a frame we accept.
       if (value.appearance !== undefined && !appearance(value.appearance)) return null;
-      return optionalCrop(value.crop) ? value : null;
+      return optionalCrop(value.crop) && optionalScale(value.textScale) ? value : null;
     }
     case 'item.delete':
       return str(value.itemId) ? value : null;
     case 'item.transform':
-      return str(value.itemId) && transform(value.transform) && optionalCrop(value.crop)
+      return str(value.itemId) &&
+        transform(value.transform) &&
+        optionalCrop(value.crop) &&
+        optionalScale(value.textScale)
         ? value
         : null;
     case 'item.content':
@@ -221,10 +226,19 @@ function operation(value: unknown): unknown | null {
       return str(value.linkId) && LINK_TYPES.includes(value.linkType as LinkType) ? value : null;
     case 'link.delete':
       return str(value.linkId) ? value : null;
+    case 'board.centerpiece':
+      return value.target === null ||
+        (typeof value.target === 'string' && /^(item|group):./.test(value.target))
+        ? value
+        : null;
     default:
       return null;
   }
 }
+
+/** A text scale, when present: finite and inside the bounds the schema holds. */
+const optionalScale = (v: unknown) =>
+  v === undefined || (num(v) && v >= TEXT_SCALE_MIN && v <= TEXT_SCALE_MAX);
 
 const optionalString = (v: unknown) => v === undefined || v === null || typeof v === 'string';
 

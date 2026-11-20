@@ -8,6 +8,7 @@ import {
   CanvasDocument,
   type CanvasGroup,
   type CanvasItem,
+  type Centerpiece,
   contentFrom,
   DEFAULT_APPEARANCE,
   FULL_CROP,
@@ -190,6 +191,9 @@ export function snapshotInto(
     (data.groups ?? []).flatMap(toGroup),
     data.revision ?? 0,
     (data.links ?? []).flatMap(toLink),
+    data.centerpiece && /^(item|group):./.test(data.centerpiece)
+      ? (data.centerpiece as Centerpiece)
+      : null,
   );
 }
 
@@ -247,6 +251,9 @@ function toItem(item: components['schemas']['Item']): CanvasItem[] {
       ...(item.revision !== undefined ? { revision: item.revision } : {}),
       ...(item.groupId ? { groupId: asGroupId(item.groupId) } : {}),
       ...(item.collides ? { collides: true } : {}),
+      ...(item.textScale !== undefined && item.textScale !== 1
+        ? { textScale: item.textScale }
+        : {}),
     },
   ];
 }

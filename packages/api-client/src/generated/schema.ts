@@ -672,6 +672,11 @@ export interface components {
             appearance?: components["schemas"]["Appearance"];
             crop?: components["schemas"]["Crop"];
             collides?: boolean;
+            /**
+             * Format: double
+             * @description A note's or checklist's text scale, 0.25-8. Absent is 1.
+             */
+            textScale?: number;
         } & {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -716,6 +721,13 @@ export interface components {
             itemId?: string;
             transform?: components["schemas"]["Transform"];
             crop?: components["schemas"]["Crop"];
+            /**
+             * Format: double
+             * @description Present replaces the text scale (0.25-8; 1 clears it). Absent leaves it.
+             */
+            textScale?: number;
+            /** @description Set only by the server on its own collision moves, which keep the item's home. */
+            settled?: boolean;
         } & {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -836,6 +848,16 @@ export interface components {
              */
             type: "link.set";
         };
+        BoardCenterpiece: Omit<components["schemas"]["CanvasOperationBody"], "type"> & {
+            /** @description `item:<id>` or `group:<id>`; null clears it. */
+            target?: string | null;
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "board.centerpiece";
+        };
         LinkDelete: Omit<components["schemas"]["CanvasOperationBody"], "type"> & {
             /** Format: uuid */
             linkId?: string;
@@ -851,7 +873,7 @@ export interface components {
             operationId?: string;
             /** Format: int64 */
             baseRevision?: number;
-            body?: components["schemas"]["GroupCreate"] | components["schemas"]["GroupDelete"] | components["schemas"]["GroupFrame"] | components["schemas"]["GroupCollides"] | components["schemas"]["ItemCollides"] | components["schemas"]["GroupLabel"] | components["schemas"]["GroupMembers"] | components["schemas"]["ItemAppearance"] | components["schemas"]["ItemContent"] | components["schemas"]["ItemCreate"] | components["schemas"]["ItemDelete"] | components["schemas"]["ItemTransform"] | components["schemas"]["ItemZ"] | components["schemas"]["ItemSource"] | components["schemas"]["ChecklistTitle"] | components["schemas"]["TaskAdd"] | components["schemas"]["TaskSet"] | components["schemas"]["TaskRemove"] | components["schemas"]["LinkAdd"] | components["schemas"]["LinkSet"] | components["schemas"]["LinkDelete"];
+            body?: components["schemas"]["GroupCreate"] | components["schemas"]["GroupDelete"] | components["schemas"]["GroupFrame"] | components["schemas"]["GroupCollides"] | components["schemas"]["ItemCollides"] | components["schemas"]["GroupLabel"] | components["schemas"]["GroupMembers"] | components["schemas"]["ItemAppearance"] | components["schemas"]["ItemContent"] | components["schemas"]["ItemCreate"] | components["schemas"]["ItemDelete"] | components["schemas"]["ItemTransform"] | components["schemas"]["ItemZ"] | components["schemas"]["ItemSource"] | components["schemas"]["ChecklistTitle"] | components["schemas"]["TaskAdd"] | components["schemas"]["TaskSet"] | components["schemas"]["TaskRemove"] | components["schemas"]["LinkAdd"] | components["schemas"]["LinkSet"] | components["schemas"]["LinkDelete"] | components["schemas"]["BoardCenterpiece"];
         };
         Transform: {
             /** Format: double */
@@ -928,6 +950,8 @@ export interface components {
             links?: components["schemas"]["Link"][];
             /** @description Display names of everyone a task or link credits, by account id. Absent for share-link viewers. */
             people?: { [id: string]: string };
+            /** @description The board's centerpiece, `item:<id>` or `group:<id>`, framed on open. */
+            centerpiece?: string | null;
         };
         Group: {
             /** Format: uuid */
@@ -960,6 +984,11 @@ export interface components {
             crop?: components["schemas"]["Crop"];
             /** @description Collision on: the board pushes the item aside when something overlaps it. */
             collides?: boolean;
+            /**
+             * Format: double
+             * @description A note's or checklist's text scale; absent is 1.
+             */
+            textScale?: number;
         };
         LibraryPage: {
             assets?: components["schemas"]["AssetView"][];

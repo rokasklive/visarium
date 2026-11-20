@@ -11,6 +11,7 @@
 //! resolves a bearer agent token on `/mcp` and nothing else, and
 //! `require_agent` admits that agent, or the local account in single-user mode.
 
+pub mod blocks;
 pub mod board;
 pub mod boards;
 pub mod diagram;
@@ -724,9 +725,10 @@ fn tools(manage_boards: bool) -> Value {
             "board": board, "refs": { "type": "array", "items": { "type": "string" }, "description": "Items to move, e.g. [\"n3\", \"n4\"]." },
             "out_of_group": { "type": "boolean", "description": "Take the items out of their group (they stay where they are)." },
             "collides": { "type": "boolean", "description": "Turn collision on (the board moves them aside when something lands on them) or off (they never move)." },
+            "centerpiece": { "type": "string", "description": "Make one item or group the board's centerpiece, e.g. \"g1\": people open the board framed on it. An empty string clears it. With this, refs may be omitted." },
             "request_id": request_id,
         },
-        "required": ["board", "refs"],
+        "required": ["board"],
     });
     placement(&mut arrange);
     layout(&mut arrange);
@@ -802,7 +804,7 @@ fn tools(manage_boards: bool) -> Value {
           "inputSchema": { "type": "object", "properties": { "board": board, "from": r("One end."), "to": r("The other end."), "request_id": request_id }, "required": ["board", "from", "to"] },
           "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false } },
         { "name": "arrange", "title": "Move items",
-          "description": "Moves items next to (near, below, right_of) or into (in) something else, without coordinates; lines them up as a row, column or grid (layout); turns their collision on or off; or takes them out of their group. Items with links are placed to keep those links short. The result says where each went, how long its links are and what they cross, and what was moved aside.",
+          "description": "Moves items next to (near, below, right_of) or into (in) something else, without coordinates; lines them up as a row, column or grid (layout); turns their collision on or off; or takes them out of their group. Also sets the board's centerpiece, what people open it on. Items with links are placed to keep those links short. The result says where each went, how long its links are and what they cross, and what was moved aside.",
           "inputSchema": arrange, "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false } },
         { "name": "group_create", "title": "Group or frame items",
           "description": "Puts items into a new group, framed and titled if you like, packed together in reading order (a grid by default, or layout: row or column). The group then moves as one; anything it now covers is moved aside. Returns the group's ref.",
@@ -857,6 +859,7 @@ fn guide() -> String {
 - arrange {{ \"board\": \"Offline sync\", \"refs\": [\"n3\", \"n4\"], \"in\": \"g2\" }}\n\
 - arrange {{ \"board\": \"Offline sync\", \"refs\": [\"i1\", \"i2\", \"i3\", \"i4\"], \"layout\": \"grid\", \"columns\": 2, \"below\": \"n1\" }}\n\
 - arrange {{ \"board\": \"Offline sync\", \"refs\": [\"n3\"], \"collides\": false }}\n\
+- arrange {{ \"board\": \"Offline sync\", \"centerpiece\": \"g1\" }}\n\
 - group_create {{ \"board\": \"Offline sync\", \"refs\": [\"i1\", \"i2\", \"n4\"], \"title\": \"Moodboard\" }}\n\
 - item_delete {{ \"board\": \"Offline sync\", \"ref\": \"n5\" }}\n\
 - board_create {{ \"title\": \"Offline sync, v2\", \"request_id\": \"board-v2-1\" }}\n\

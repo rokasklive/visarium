@@ -16,6 +16,7 @@ import {
   type Anchor,
   type CanvasGroup,
   type CanvasItem,
+  type Centerpiece,
   DEFAULT_APPEARANCE,
   FULL_CROP,
   hasSource,
@@ -42,6 +43,7 @@ export class CanvasDocument {
 
   #items = new Map<ItemId, CanvasItem>();
   #groups = new Map<GroupId, CanvasGroup>();
+  #centerpiece: Centerpiece | null = null;
   #links = new Map<LinkId, Link>();
   #revision = 0;
   #applied: ((body: CanvasOperationBody, origin: OperationOrigin) => void) | undefined;
@@ -105,13 +107,35 @@ export class CanvasDocument {
     groups: readonly CanvasGroup[],
     revision: number,
     links: readonly Link[] = [],
+    centerpiece: Centerpiece | null = null,
   ): void {
+    this.#centerpiece = centerpiece;
     this.#items = new Map(items.map((i) => [i.id, i]));
     this.#groups = new Map(groups.map((g) => [g.id, g]));
     this.#links = new Map(links.map((l) => [l.id, l]));
     this.index.clear();
     this.index.load(items.map((i) => [i.id, transformBounds(i.transform)] as const));
     this.#revision = revision;
+  }
+
+  /**
+   * The centerpiece, when it still names something on the board: a deleted
+   * target is no centerpiece (the server clears it too).
+   */
+  get centerpiece(): Centerpiece | null {
+    const c = this.#centerpiece;
+    if (!c) return null;
+    const [kind, id] = c.split(':') as ['item' | 'group', string];
+    const there = kind === 'item' ? this.#items.has(id as ItemId) : this.#groups.has(id as GroupId);
+    return there ? c : null;
+  }
+
+  /** The centerpiece's bounds, or `undefined` when there is none. */
+  centerpieceBounds(): Rect | undefined {
+    const c = this.centerpiece;
+    if (!c) return undefined;
+    const [kind, id] = c.split(':') as ['item' | 'group', string];
+    return kind === 'item' ? this.index.boundsOf(id as ItemId) : this.groupBounds(id as GroupId);
   }
 
   /** Bounds of a group, or `undefined` if it is empty or unknown. */
@@ -228,6 +252,9 @@ export class CanvasDocument {
           revision: 0,
           ...(body.groupId !== undefined ? { groupId: body.groupId } : {}),
           ...(body.collides ? { collides: true } : {}),
+          ...(body.textScale !== undefined && body.textScale !== 1
+            ? { textScale: body.textScale }
+            : {}),
         });
         return { type: 'item.delete', itemId: body.itemId };
       }
@@ -253,22 +280,32 @@ export class CanvasDocument {
           ...(isFullCrop(existing.crop) ? {} : { crop: existing.crop }),
           ...(existing.groupId !== undefined ? { groupId: existing.groupId } : {}),
           ...(existing.collides ? { collides: true } : {}),
+          ...(existing.textScale !== undefined ? { textScale: existing.textScale } : {}),
         };
       }
 
       case 'item.transform': {
         const existing = this.#items.get(body.itemId);
         if (!existing) return undefined;
+        const { textScale: _, ...rest } = existing;
+        const scaled =
+          body.textScale === undefined
+            ? existing
+            : body.textScale === 1
+              ? rest
+              : { ...existing, textScale: body.textScale };
         this.#put(
-          this.#bumped(existing, { transform: body.transform, crop: body.crop ?? existing.crop }),
+          this.#bumped(scaled, { transform: body.transform, crop: body.crop ?? existing.crop }),
         );
-        // The inverse names the crop exactly when the body did: a plain move's
-        // undo must not overwrite a crop someone else made in between.
+        // The inverse names the crop and the text scale exactly when the body
+        // did: a plain move's undo must not overwrite a crop or a scale someone
+        // else made in between.
         return {
           type: 'item.transform',
           itemId: body.itemId,
           transform: existing.transform,
           ...(body.crop ? { crop: existing.crop } : {}),
+          ...(body.textScale !== undefined ? { textScale: existing.textScale ?? 1 } : {}),
         };
       }
 
@@ -387,7 +424,11 @@ export class CanvasDocument {
         const existing = this.#groups.get(body.groupId);
         if (!existing) return undefined;
         this.#groups.set(body.groupId, { ...existing, collides: body.collides });
-        return { type: 'group.collides', groupId: body.groupId, collides: existing.collides ?? false };
+        return {
+          type: 'group.collides',
+          groupId: body.groupId,
+          collides: existing.collides ?? false,
+        };
       }
 
       case 'item.source': {
@@ -481,6 +522,12 @@ export class CanvasDocument {
         if (!existing) return undefined;
         this.#links.set(body.linkId, { ...existing, linkType: body.linkType });
         return { type: 'link.set', linkId: body.linkId, linkType: existing.linkType };
+      }
+
+      case 'board.centerpiece': {
+        const was = this.#centerpiece;
+        this.#centerpiece = body.target;
+        return { type: 'board.centerpiece', target: was };
       }
 
       case 'link.delete': {

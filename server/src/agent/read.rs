@@ -314,6 +314,9 @@ pub async fn board_read(app: &AppState, caller: &Caller, args: &Value) -> Result
     if let Some(last) = last_change(app, &b).await? {
         text.push_str(&format!("Last change {last}.\n"));
     }
+    if let Some(c) = b.centerpiece_ref() {
+        text.push_str(&format!("Centerpiece: {c} — people open the board framed on it.\n"));
+    }
     text.push_str(&format!(
         "You are {} for {}. item_read(ref) reads one thing in full; trace(ref) follows it. `d2#Server` names an element inside a diagram.\n",
         caller.agent, caller.user.display_name
@@ -548,6 +551,10 @@ pub async fn item_read(app: &AppState, args: &Value) -> Result<Out, Fail> {
             g.label.as_deref().unwrap_or("")
         ));
     }
+    if let Some(scale) = i.text_scale {
+        // canvas/text-scaling: the text is drawn this much larger than at 1.
+        text.push_str(&format!("Text shown at {}× its normal size.\n", (scale * 100.0).round() / 100.0));
+    }
     let links = links_of_item(&b, i);
     if !links.is_empty() {
         text.push_str(&format!("Links: {}\n", links.join(" · ")));
@@ -647,6 +654,18 @@ pub async fn item_read(app: &AppState, args: &Value) -> Result<Out, Fail> {
                         text.push_str(&format!("Elements: not extracted for {t}.\n"))
                     }
                     None => {}
+                }
+            }
+            if i.kind == "note" {
+                // canvas/text-anchors: what a link can point at inside this note.
+                let names = crate::agent::blocks::block_names(i.body.as_deref().unwrap_or(""));
+                if !names.is_empty() {
+                    text.push_str(&format!(
+                        "Passages ({}): {} — link one as {}#name.\n",
+                        names.len(),
+                        names.join(", "),
+                        i.short_ref()
+                    ));
                 }
             }
             let source = i.body.as_deref().unwrap_or("");
@@ -1056,6 +1075,10 @@ pub fn describe(b: &BoardData, op: &Value) -> String {
         ),
         "link.set" => format!("changed a link's type to {}", s("linkType")),
         "link.delete" => "removed a link".into(),
+        "board.centerpiece" => match op.get("target").and_then(Value::as_str) {
+            Some(_) => "set the board's centerpiece".into(),
+            None => "cleared the board's centerpiece".into(),
+        },
         "group.create" => "made a group".into(),
         "group.delete" => "removed a group".into(),
         "group.members" => "changed a group's members".into(),

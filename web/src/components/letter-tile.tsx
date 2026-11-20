@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { GLYPHS } from './letter-glyphs';
-import { useDevicePixelRatio } from './wordmark';
+import { ROW_FILLS, useDevicePixelRatio } from './wordmark';
 
 /**
  * The letter a participant is shown by (canvas/presence-indicators): the first
@@ -16,6 +16,11 @@ export function letterOf(name: string): string {
 
 /** The letter's dots in device pixels, centred in a `size`-device-pixel tile. */
 export function tileLayout(letter: string, size: number, dpr: number): string {
+  return tileRows(letter, size, dpr).join('');
+}
+
+/** The same dots, one path per inked row, so each row can take its own colour. */
+export function tileRows(letter: string, size: number, dpr: number): string[] {
   const rows = GLYPHS[letter] ?? GLYPHS['?'] ?? [];
   // About 1.75 CSS px a dot pitch, whole device pixels, never under 2 so a
   // dot and its gap are both at least a pixel.
@@ -26,21 +31,22 @@ export function tileLayout(letter: string, size: number, dpr: number): string {
   const height = (rows.length - 1) * pitch + dot;
   const left = Math.floor((size - width) / 2);
   const top = Math.floor((size - height) / 2);
-  return rows
-    .flatMap((row, r) =>
-      [...row].flatMap((cell, k) =>
+  return rows.map((row, r) =>
+    [...row]
+      .flatMap((cell, k) =>
         cell === '#'
           ? [`M${left + Math.floor((k * pitch) / 2)} ${top + r * pitch}h${dot}v${dot}h-${dot}z`]
           : [],
-      ),
-    )
-    .join('');
+      )
+      .join(''),
+  );
 }
 
 /**
  * One participant, the way the app icon is drawn: the dark ground with a
- * dot-matrix letter, here in the participant's colour. An agent's tile is
- * outlined in that colour too. The full name is the tile's accessible name
+ * dot-matrix letter, here in the participant's colour. An agent's letter is
+ * the icon's own, row by row in the wordmark's colours, and its tile is
+ * outlined in the agent's colour so two agents are still told apart. The full name is the tile's accessible name
  * and its hover text, so the letter never has to carry more than recognition.
  *
  * Drawn as dots, not set as text: the face set at this size paints nothing at
@@ -68,7 +74,7 @@ export function LetterTile({
   const dpr = useDevicePixelRatio();
   const letter = letterOf(name);
   const device = Math.round(size * dpr);
-  const path = useMemo(() => tileLayout(letter, device, dpr), [letter, device, dpr]);
+  const rows = useMemo(() => tileRows(letter, device, dpr), [letter, device, dpr]);
   const radius = Math.round(4 * dpr);
   const stroke = Math.max(1, Math.round(dpr));
   return (
@@ -93,7 +99,14 @@ export function LetterTile({
         className="fill-surface"
         {...(agent ? { stroke: colour, strokeWidth: stroke } : {})}
       />
-      <path d={path} fill={colour} />
+      {agent ? (
+        rows.map((d, r) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: a row's place is its identity.
+          <path key={r} d={d} fill={ROW_FILLS[r] ?? ROW_FILLS[ROW_FILLS.length - 1]} data-row={r} />
+        ))
+      ) : (
+        <path d={rows.join('')} fill={colour} />
+      )}
     </svg>
   );
 }

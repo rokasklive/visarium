@@ -419,7 +419,12 @@ export function useBitmaps(
         const view = objects.view(item);
         if (!view) continue;
         const { layout } = view;
-        const scale = objectScale(tierZoom, layout.width * layout.height);
+        // Device pixels per LAYOUT unit: a note with a text scale is laid out
+        // narrower than it is drawn (canvas/text-scaling), so it needs more.
+        const scale = objectScale(
+          (tierZoom * item.transform.width) / layout.width,
+          layout.width * layout.height,
+        );
         made.push({ key: objectBitmapKey(item.id, view.key, scale), svg: () => layout.svg(scale) });
         continue;
       }
@@ -457,7 +462,10 @@ export function useBitmaps(
         const view = objects.view(item);
         if (!view) return undefined;
         const { layout } = view;
-        const exact = objectScale(tierZoom, layout.width * layout.height);
+        const exact = objectScale(
+          (tierZoom * item.transform.width) / layout.width,
+          layout.width * layout.height,
+        );
         // Its own scale, else any scale of the SAME drawing already in memory.
         for (const scale of [exact, ...OBJECT_SCALES]) {
           const bitmap = cache.get(objectBitmapKey(item.id, view.key, scale));

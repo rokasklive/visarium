@@ -533,7 +533,7 @@ async fn notes_diagrams_checklists_and_links() {
         (json!({ "type": "task.add", "itemId": note, "task": { "id": "t9", "text": "x" } }), "not a checklist"),
         (json!({ "type": "task.add", "itemId": list, "task": { "id": "t1", "text": "x" } }), "already in this checklist"),
         (json!({ "type": "link.add", "linkId": id(), "from": { "itemId": note }, "to": { "itemId": note }, "linkType": "describes" }), "two different ends"),
-        (json!({ "type": "link.add", "linkId": id(), "from": { "itemId": note, "element": "Pay" }, "to": { "itemId": flow }, "linkType": "describes" }), "only a diagram has named elements"),
+        (json!({ "type": "link.add", "linkId": id(), "from": { "itemId": list, "element": "Pay" }, "to": { "itemId": flow }, "linkType": "describes" }), "only a diagram or a note has named parts"),
         (json!({ "type": "link.add", "linkId": id(), "from": { "itemId": note }, "to": { "itemId": flow, "element": "x".repeat(201) }, "linkType": "describes" }), "element name is 1-200"),
         (json!({ "type": "link.add", "linkId": id(), "from": { "itemId": note }, "to": { "itemId": flow }, "linkType": "likes" }), "link type must be one of"),
         (json!({ "type": "link.add", "linkId": id(), "from": { "itemId": note }, "to": { "itemId": id() }, "linkType": "describes" }), "no item"),
@@ -1612,5 +1612,141 @@ async fn the_manage_boards_grant_starts_off_and_persists() {
     let set = c.json("PATCH", "/api/agent-settings", json!({ "localAgentsManageBoards": true })).await;
     assert_eq!(set.json(), json!({ "localAgentsManageBoards": true }));
     assert_eq!(c.get("/api/agent-settings").await.json()["localAgentsManageBoards"], true);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// --- canvas-polish: centerpiece, text scale, homes ---------------------------
+
+#[tokio::test]
+async fn centerpiece_is_set_snapshotted_validated_and_cleared_by_deletion() {
+    let (mut c, _app, dir) = signed_in().await;
+    let b = c.json("POST", "/api/boards", json!({ "title": "Centre" })).await.json()["id"].as_str().unwrap().to_string();
+    let (n, g) = (uuid::Uuid::now_v7().to_string(), uuid::Uuid::now_v7().to_string());
+    let set = |t: Value| json!({ "type": "board.centerpiece", "target": t });
+    assert_eq!(
+        post_ops(&mut c, &b, vec![create(&n, json!({ "kind": "note", "source": "x" })),
+            json!({ "type": "group.create", "groupId": g, "memberIds": [n] }), set(json!(format!("group:{g}")))]).await.status,
+        StatusCode::OK
+    );
+    let snap = c.get(&format!("/api/boards/{b}/snapshot")).await.json();
+    assert_eq!(snap["centerpiece"], json!(format!("group:{g}")));
+    assert_eq!(post_ops(&mut c, &b, vec![set(json!("item:nope"))]).await.status, StatusCode::BAD_REQUEST, "must be on the board");
+    assert_eq!(post_ops(&mut c, &b, vec![set(json!("n1"))]).await.status, StatusCode::BAD_REQUEST, "must say item: or group:");
+    assert_eq!(post_ops(&mut c, &b, vec![set(json!(format!("item:{n}")))]).await.status, StatusCode::OK);
+    assert_eq!(post_ops(&mut c, &b, vec![json!({ "type": "item.delete", "itemId": n })]).await.status, StatusCode::OK);
+    let snap = c.get(&format!("/api/boards/{b}/snapshot")).await.json();
+    assert_eq!(snap["centerpiece"], Value::Null, "a deleted centerpiece leaves none");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn text_scale_rides_on_create_and_transform_and_is_bounded() {
+    let (mut c, _app, dir) = signed_in().await;
+    let b = c.json("POST", "/api/boards", json!({ "title": "Scale" })).await.json()["id"].as_str().unwrap().to_string();
+    let n = uuid::Uuid::now_v7().to_string();
+    let mut make = create(&n, json!({ "kind": "note", "source": "x" }));
+    make["textScale"] = json!(2.0);
+    assert_eq!(post_ops(&mut c, &b, vec![make]).await.status, StatusCode::OK);
+    let scale = |snap: &Value| snap["items"][0]["textScale"].clone();
+    assert_eq!(scale(&c.get(&format!("/api/boards/{b}/snapshot")).await.json()), json!(2.0));
+    let tf = |s: Value| json!({ "type": "item.transform", "itemId": n, "transform": { "x": 0.0, "y": 0.0, "width": 640.0, "height": 240.0, "rotation": 0.0 }, "textScale": s });
+    assert_eq!(post_ops(&mut c, &b, vec![tf(json!(9.0))]).await.status, StatusCode::BAD_REQUEST);
+    assert_eq!(post_ops(&mut c, &b, vec![tf(json!(1.0))]).await.status, StatusCode::OK);
+    assert_eq!(scale(&c.get(&format!("/api/boards/{b}/snapshot")).await.json()), Value::Null, "1 is the default, stored as none");
+    let copy = c.json("POST", &format!("/api/boards/{b}/duplicate"), json!(null)).await.json()["id"].as_str().unwrap().to_string();
+    assert_eq!(c.get(&format!("/api/boards/{copy}/snapshot")).await.status, StatusCode::OK);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn a_pushed_item_keeps_its_home_and_returns_when_the_pusher_shrinks() {
+    let (mut c, app, dir) = signed_in().await;
+    let b = c.json("POST", "/api/boards", json!({ "title": "Home" })).await.json()["id"].as_str().unwrap().to_string();
+    let (big, note) = (uuid::Uuid::now_v7().to_string(), uuid::Uuid::now_v7().to_string());
+    let at = |id: &str, y: f64, h: f64| json!({ "type": "item.create", "itemId": id, "z": 1.0, "collides": true,
+        "transform": { "x": 0.0, "y": y, "width": 200.0, "height": h, "rotation": 0.0 }, "content": { "kind": "note", "source": "x" } });
+    let size = |h: f64| json!({ "type": "item.transform", "itemId": big,
+        "transform": { "x": 0.0, "y": h / 2.0, "width": 200.0, "height": h, "rotation": 0.0 } });
+    assert_eq!(post_ops(&mut c, &b, vec![at(&big, 50.0, 100.0), at(&note, 200.0, 100.0)]).await.status, StatusCode::OK);
+    let pos = |app: &visarium::AppState, id: String| {
+        let db = app.db.clone();
+        async move {
+            sqlx::query_as::<_, (f64, f64, Option<f64>, Option<f64>)>("SELECT x, y, home_x, home_y FROM canvas_item WHERE id = ?")
+                .bind(id)
+                .fetch_one(&db)
+                .await
+                .unwrap()
+        }
+    };
+    // The pusher grows to its drawn height: the note is pushed, its home kept.
+    assert_eq!(post_ops(&mut c, &b, vec![size(400.0)]).await.status, StatusCode::OK);
+    let (x, y, hx, hy) = pos(&app, note.clone()).await;
+    assert!((x, y) != (0.0, 200.0) && (hx, hy) == (Some(0.0), Some(200.0)), "pushed to {x},{y}, home {hx:?},{hy:?}");
+    // It shrinks again: the note comes home, and is at home.
+    assert_eq!(post_ops(&mut c, &b, vec![size(100.0)]).await.status, StatusCode::OK);
+    assert_eq!(pos(&app, note.clone()).await, (0.0, 200.0, None, None));
+    // Pushed again, then dragged on purpose: the drag is its new home.
+    assert_eq!(post_ops(&mut c, &b, vec![size(400.0)]).await.status, StatusCode::OK);
+    let drag = json!({ "type": "item.transform", "itemId": note, "transform": { "x": 600.0, "y": 0.0, "width": 200.0, "height": 100.0, "rotation": 0.0 } });
+    assert_eq!(post_ops(&mut c, &b, vec![drag]).await.status, StatusCode::OK);
+    assert_eq!(pos(&app, note.clone()).await, (600.0, 0.0, None, None));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn an_agent_built_column_comes_back_together_after_heights_are_corrected() {
+    // The opengrok board: an agent stacks items at estimated sizes, a browser
+    // corrects the first diagram's height (taller), then a later edit shrinks it.
+    let (mut c, app, dir) = signed_in().await;
+    let b = c.json("POST", "/api/boards", json!({ "title": "Replay" })).await.json()["id"].as_str().unwrap().to_string();
+    let ids: Vec<String> = (0..4).map(|_| uuid::Uuid::now_v7().to_string()).collect();
+    let create = |id: &str, y: f64| json!({ "type": "item.create", "itemId": id, "z": 1.0, "collides": true,
+        "transform": { "x": 0.0, "y": y, "width": 480.0, "height": 360.0, "rotation": 0.0 },
+        "content": { "kind": "diagram", "lang": "mermaid", "source": "flowchart LR\n A-->B" } });
+    let ops: Vec<Value> = ids.iter().enumerate().map(|(n, id)| create(id, n as f64 * 408.0)).collect();
+    assert_eq!(post_ops(&mut c, &b, ops).await.status, StatusCode::OK);
+    let at = |h: f64| json!({ "type": "item.transform", "itemId": ids[0],
+        "transform": { "x": 0.0, "y": h / 2.0 - 180.0, "width": 480.0, "height": h, "rotation": 0.0 } });
+    assert_eq!(post_ops(&mut c, &b, vec![at(1400.0)]).await.status, StatusCode::OK);
+    let rows = |app: &visarium::AppState| {
+        let db = app.db.clone();
+        async move {
+            sqlx::query_as::<_, (String, f64, f64)>("SELECT id, x, y FROM canvas_item").fetch_all(&db).await.unwrap()
+        }
+    };
+    let pushed = rows(&app).await;
+    assert!(pushed.iter().any(|(id, x, y)| *id != ids[0] && (*x, *y) != (0.0, 0.0)), "the column was pushed: {pushed:?}");
+    assert_eq!(post_ops(&mut c, &b, vec![at(360.0)]).await.status, StatusCode::OK);
+    for (id, x, y) in rows(&app).await {
+        let n = ids.iter().position(|i| *i == id).unwrap() as f64;
+        assert!((x).abs() <= 24.0 && (y - n * 408.0).abs() <= 24.0, "{id} at ({x}, {y}), home (0, {})", n * 408.0);
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn a_note_reports_its_passages_and_links_to_them() {
+    let (mut c, app, dir) = signed_in().await;
+    let b = c.json("POST", "/api/boards", json!({ "title": "Passages" })).await.json()["id"].as_str().unwrap().to_string();
+    let (n, d, list) = (uuid::Uuid::now_v7().to_string(), uuid::Uuid::now_v7().to_string(), uuid::Uuid::now_v7().to_string());
+    assert_eq!(
+        post_ops(&mut c, &b, vec![
+            create(&n, json!({ "kind": "note", "source": "# Title\n\nFirst. ^a\n\nSecond. ^b" })),
+            create(&d, json!({ "kind": "diagram", "lang": "mermaid", "source": "flowchart LR\n  A --> B" })),
+            create(&list, json!({ "kind": "checklist", "title": "T", "tasks": [] })),
+        ]).await.status,
+        StatusCode::OK
+    );
+    let report = json!({ "revision": 0, "width": 320.0, "elements": { "^a": [0.0, 40.0, 320.0, 20.0], "^b": [0.0, 70.0, 320.0, 20.0] } });
+    assert_eq!(c.json("PUT", &format!("/api/boards/{b}/items/{n}/elements"), report.clone()).await.status, StatusCode::NO_CONTENT);
+    let rev: Option<i64> = sqlx::query_scalar("SELECT element_rev FROM canvas_item WHERE id = ?").bind(&n).fetch_one(&app.db).await.unwrap();
+    assert_eq!(rev, Some(0), "a note's passages are stored like a diagram's elements");
+    assert_eq!(c.json("PUT", &format!("/api/boards/{b}/items/{list}/elements"), report).await.status, StatusCode::NOT_FOUND);
+    let link = |el: &str| json!({ "type": "link.add", "linkId": uuid::Uuid::now_v7(), "from": { "itemId": n, "element": el }, "to": { "itemId": d, "element": "A" }, "linkType": "describes" });
+    assert_eq!(post_ops(&mut c, &b, vec![link("^a"), link("^b")]).await.status, StatusCode::OK);
+    let snap = c.get(&format!("/api/boards/{b}/snapshot")).await.json();
+    let mut froms: Vec<String> = snap["links"].as_array().unwrap().iter().map(|l| l["from"]["element"].as_str().unwrap().to_string()).collect();
+    froms.sort();
+    assert_eq!(froms, vec!["^a", "^b"]);
     let _ = std::fs::remove_dir_all(dir);
 }

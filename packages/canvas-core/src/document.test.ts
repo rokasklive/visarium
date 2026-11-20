@@ -314,11 +314,17 @@ describe('groups', () => {
     const d = doc();
     d.apply({ ...create(A), collides: true } as CanvasOperationBody);
     expect(d.item(A)?.collides).toBe(true);
-    expect(d.apply({ type: 'item.delete', itemId: A })).toMatchObject({ type: 'item.create', collides: true });
+    expect(d.apply({ type: 'item.delete', itemId: A })).toMatchObject({
+      type: 'item.create',
+      collides: true,
+    });
     d.apply(create(B));
     expect(d.item(B)?.collides).toBeUndefined();
     d.apply({ type: 'group.create', groupId: G, memberIds: [B], collides: true });
-    expect(d.apply({ type: 'group.delete', groupId: G })).toMatchObject({ type: 'group.create', collides: true });
+    expect(d.apply({ type: 'group.delete', groupId: G })).toMatchObject({
+      type: 'group.create',
+      collides: true,
+    });
   });
 
   it('reports bounds spanning its members', () => {
@@ -437,5 +443,46 @@ describe('the index knows its own extent', () => {
     d.apply({ type: 'item.delete', itemId: B });
 
     expect(d.index.bounds()).toEqual(transformBounds(at(0, 0)));
+  });
+});
+
+describe('text scale and centerpiece (canvas-polish)', () => {
+  it('carries a text scale through create, transform, undo and delete', () => {
+    const d = doc();
+    d.apply({ ...create(), textScale: 2 } as CanvasOperationBody);
+    expect(d.item(A)?.textScale).toBe(2);
+    const inverse = d.apply({
+      type: 'item.transform',
+      itemId: A,
+      transform: at(0, 0),
+      textScale: 3,
+    });
+    expect(d.item(A)?.textScale).toBe(3);
+    expect(inverse).toMatchObject({ textScale: 2 });
+    // A plain move leaves the scale alone, and its undo does not name one.
+    const move = d.apply({ type: 'item.transform', itemId: A, transform: at(10, 0) });
+    expect(d.item(A)?.textScale).toBe(3);
+    expect(move).not.toHaveProperty('textScale');
+    // 1 is the default: stored as nothing.
+    d.apply({ type: 'item.transform', itemId: A, transform: at(10, 0), textScale: 1 });
+    expect(d.item(A)).not.toHaveProperty('textScale');
+    d.apply({ type: 'item.transform', itemId: A, transform: at(10, 0), textScale: 4 });
+    const recreate = d.apply({ type: 'item.delete', itemId: A });
+    expect(recreate).toMatchObject({ type: 'item.create', textScale: 4 });
+  });
+
+  it('sets, inverts and forgets a centerpiece whose target is gone', () => {
+    const d = doc();
+    d.apply(create());
+    d.apply(create(B, 500, 0));
+    d.loadSnapshot([...d.items()], [], 2, [], `item:${B}`);
+    expect(d.centerpiece).toBe(`item:${B}`);
+    expect(d.centerpieceBounds()).toEqual(d.index.boundsOf(B));
+    expect(d.centerpieceBounds()?.minX).toBeGreaterThan(400);
+    const inverse = d.apply({ type: 'board.centerpiece', target: `item:${A}` });
+    expect(inverse).toEqual({ type: 'board.centerpiece', target: `item:${B}` });
+    d.apply({ type: 'item.delete', itemId: A });
+    expect(d.centerpiece).toBeNull();
+    expect(d.centerpieceBounds()).toBeUndefined();
   });
 });

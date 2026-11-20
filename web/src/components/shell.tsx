@@ -23,6 +23,8 @@ import { Wordmark } from './wordmark';
  */
 export function Shell({ children }: { children: ReactNode }) {
   const sidebarOpen = useUiStore((s) => s.sidebarOpen);
+  // Lit while an agent works on the open board, as on hover.
+  const agentWorking = useUiStore((s) => s.agentWorking);
   const toggleSidebar = useUiStore((s) => s.toggleSidebar);
 
   return (
@@ -61,7 +63,7 @@ export function Shell({ children }: { children: ReactNode }) {
          * wordmark.tsx. Loudness is held down by `ink-dim` and the corner, not by
          * shrinking it.
          */}
-        <Wordmark className="text-ink-dim" illuminated="hover" />
+        <Wordmark className="text-ink-dim" illuminated="hover" lit={agentWorking} />
       </header>
 
       <div className="flex min-h-0 flex-1">

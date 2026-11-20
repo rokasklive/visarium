@@ -38,7 +38,8 @@ export const ROWS: readonly [string, ...string[]] = [
   '....#.#......#.#..#.#.#.#.#....#.#.....#.#..#.#.....#.#..#.#....#.#.#.#....#.#...#.#...#.#',
 ];
 
-const ROW_FILLS = [
+/** The illuminated colours, top row to bottom: the app icon's and the agent tile's too. */
+export const ROW_FILLS = [
   'var(--wordmark-white)',
   'var(--wordmark-white)',
   'var(--wordmark-white)',
@@ -91,9 +92,12 @@ export function onBothGrids(v: number, dpr: number, up = false): number {
 export function Wordmark({
   className,
   illuminated = false,
+  lit = false,
 }: {
   className?: string;
   illuminated?: boolean | 'hover';
+  /** With `illuminated="hover"`: shown lit without a hover, fading like one. */
+  lit?: boolean;
 }) {
   const dpr = useDevicePixelRatio();
   const { pitch, dot, rowPaths } = useMemo(() => wordmarkLayout(dpr), [dpr]);
@@ -150,7 +154,11 @@ export function Wordmark({
       {(!illuminated || illuminateOnHover) && <path d={rowPaths.join('')} />}
       {illuminateOnHover && <rect width={width} height={height} fill="none" pointerEvents="all" />}
       {illuminated && (
-        <g className={illuminateOnHover ? 'wordmark-hover-color' : undefined}>
+        <g
+          className={illuminateOnHover ? 'wordmark-hover-color' : undefined}
+          data-lit={lit || undefined}
+          data-testid="wordmark-colour"
+        >
           <defs>
             <filter
               id={bloomId}

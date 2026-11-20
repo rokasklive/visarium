@@ -168,7 +168,9 @@ test("shows a selected diagram's stored model, its elements and links, and the b
   await open(page);
   const box = await page.locator('canvas').first().boundingBox();
   if (!box) throw new Error('no canvas');
-  await page.mouse.click(box.x + box.width / 2 + 100, box.y + box.height / 2 - 160);
+  // Clear of the link, which now runs straight across from the note at the
+  // height the two share (canvas/link-geometry).
+  await page.mouse.click(box.x + box.width / 2 + 100, box.y + box.height / 2 - 130);
   await page.keyboard.press('Backquote');
   await expect(inspector(page)).toContainText('"lang": "mermaid"');
   await expect(inspector(page)).toContainText('"revision": 4');

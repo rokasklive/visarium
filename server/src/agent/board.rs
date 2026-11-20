@@ -31,6 +31,8 @@ pub struct BoardData {
     pub id: Uuid,
     pub title: String,
     pub revision: i64,
+    /// `item:<id>` or `group:<id>` (canvas/centerpiece).
+    pub centerpiece: Option<String>,
     pub items: Vec<ItemRow>,
     pub groups: Vec<Group>,
     pub links: Vec<LinkRow>,
@@ -125,8 +127,8 @@ impl BoardData {
     pub async fn load(db: &sqlx::SqlitePool, board: &Board) -> Result<BoardData, Fail> {
         let id = board.id.to_string();
         let mut tx = db.begin().await.map_err(db_fail)?;
-        let (title, revision): (String, i64) =
-            sqlx::query_as("SELECT title, revision FROM canvas WHERE id = ?")
+        let (title, revision, centerpiece): (String, i64, Option<String>) =
+            sqlx::query_as("SELECT title, revision, centerpiece FROM canvas WHERE id = ?")
                 .bind(&id)
                 .fetch_optional(&mut *tx)
                 .await
@@ -181,6 +183,7 @@ impl BoardData {
             id: board.id,
             title,
             revision,
+            centerpiece,
             items,
             groups: groups
                 .into_iter()
@@ -297,6 +300,15 @@ impl BoardData {
         })
     }
 
+    /// The centerpiece's short ref, `g1` or `d2`, when it is still on the board.
+    pub fn centerpiece_ref(&self) -> Option<String> {
+        let (kind, id) = self.centerpiece.as_deref()?.split_once(':')?;
+        match kind {
+            "group" => self.group(id).map(Group::short_ref),
+            _ => self.items.iter().find(|i| i.id == id).map(ItemRow::short_ref),
+        }
+    }
+
     pub fn resolve_group(&self, r: &str) -> Result<&Group, Fail> {
         let r = r.trim();
         if let Ok(id) = Uuid::parse_str(r) {
@@ -339,9 +351,23 @@ impl BoardData {
         let Some(element) = element.filter(|e| !e.is_empty()) else {
             return Ok((item, None));
         };
+        if item.kind == "note" {
+            // A passage (canvas/text-anchors): a `^id` or a heading's slug the
+            // note has. Never by position, so an agent names one first.
+            let names = crate::agent::blocks::block_names(item.body.as_deref().unwrap_or(""));
+            if validate && !names.contains(&element) {
+                return Err(format!(
+                    "{} has no passage '{element}'. Its passages: {}. To point at a paragraph, end it with ` ^name` (item_edit), then link {}#^name.",
+                    item.short_ref(),
+                    if names.is_empty() { "none".into() } else { names.join(", ") },
+                    item.short_ref()
+                ));
+            }
+            return Ok((item, Some(element)));
+        }
         if item.kind != "diagram" {
             return Err(format!(
-                "{} is a {}; only a diagram has elements to point at with #.",
+                "{} is a {}; only a diagram's elements and a note's passages can be pointed at with #.",
                 item.short_ref(),
                 item.kind
             ));
@@ -380,6 +406,10 @@ impl BoardData {
         let Some(element) = element else {
             return Anchored::Whole;
         };
+        if let Some(note) = self.item(item_id).filter(|i| i.kind == "note") {
+            let names = crate::agent::blocks::block_names(note.body.as_deref().unwrap_or(""));
+            return if names.iter().any(|n| n == element) { Anchored::Whole } else { Anchored::Broken };
+        }
         match self.item(item_id).and_then(|i| self.structure(i)) {
             Some(Extracted::Known(s)) if s.elements.iter().any(|e| e == element) => Anchored::Whole,
             Some(Extracted::Known(_)) => Anchored::Broken,

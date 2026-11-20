@@ -134,7 +134,8 @@ test('Alt-dragging from a note onto a flowchart node links them, typed by the so
 }) => {
   const posted = await stubBoard(page);
   const c = await open(page);
-  await altDrag(page, { x: c.x - 220, y: c.y - 160 }, await nodeCentre(page, c, 'Pay'));
+  // From the note's title, which stands for the whole note (canvas/text-anchors).
+  await altDrag(page, { x: c.x - 300, y: c.y - 190 }, await nodeCentre(page, c, 'Pay'));
   await expect.poll(() => ofType(posted, 'link.add').length).toBe(1);
   expect(ofType(posted, 'link.add')[0]).toMatchObject({
     from: { itemId: NOTE, element: null },
@@ -142,6 +143,7 @@ test('Alt-dragging from a note onto a flowchart node links them, typed by the so
     linkType: 'describes',
   });
   expect(ofType(posted, 'item.transform'), 'the note did not move').toHaveLength(0);
+  expect(ofType(posted, 'item.source'), 'nor was it renamed').toHaveLength(0);
 
   await altDrag(page, { x: c.x - 220, y: c.y + 100 }, { x: c.x + 150, y: c.y - 150 });
   await expect.poll(() => ofType(posted, 'link.add').length).toBe(2);
@@ -276,4 +278,139 @@ test('deleting an item takes its links, and one undo brings both back', async ({
   await expect.poll(() => ofType(posted, 'link.add').length).toBe(1);
   expect(ofType(posted, 'item.create')).toHaveLength(1);
   await expect.poll(async () => (await links(page)).length).toBe(1);
+});
+
+test('a link to a sequence participant lands on its head, and the whole lifeline is its anchor', async ({
+  page,
+}) => {
+  const SEQ = '01a01640-6b72-7d60-968b-88be186f7005';
+  const seq = at(SEQ, 150, 200, 320, {
+    kind: 'diagram',
+    lang: 'mermaid',
+    source: 'sequenceDiagram\n  Alice->>Bob: hello\n  Bob-->>Alice: hi\n  Alice->>Bob: again',
+  });
+  const note = at(NOTE, 0, -200, 400, { kind: 'note', source: 'Above them both.' });
+  await page.route(`**/api/boards/${BOARD}/snapshot`, (route) =>
+    route.fulfill({
+      json: {
+        revision: 1,
+        items: [note, seq],
+        groups: [],
+        people: {},
+        links: [
+          {
+            id: LINK,
+            from: { itemId: NOTE, element: null },
+            to: { itemId: SEQ, element: 'Bob' },
+            linkType: 'describes',
+          },
+        ],
+      },
+    }),
+  );
+  await page.goto(`/boards/${BOARD}`);
+  await expect(page.getByTestId('canvas-stats')).toBeVisible();
+  await page.waitForFunction(
+    (id) => !!(window as unknown as { __objects: Hook }).__objects?.layout(id)?.elements.Bob,
+    SEQ,
+  );
+  const laid = await page.evaluate(
+    (id) =>
+      (window as unknown as { __objects: Hook }).__objects.layout(id) as unknown as {
+        width: number;
+        height: number;
+        elements: Record<string, { x: number; y: number; width: number; height: number }>;
+      },
+    SEQ,
+  );
+  const bob = laid.elements.Bob;
+  if (!bob) throw new Error('no Bob');
+  // Head to foot: most of the drawing's height, not just the head box.
+  expect(bob.height).toBeGreaterThan(laid.height * 0.75);
+  // The arrow ends just above Bob's top (the lifeline's head), not partway
+  // down. Read together: the item's height can settle while this runs.
+  await expect
+    .poll(async () => {
+      const [l] = await links(page);
+      const t = await page.evaluate(
+        (id) =>
+          (
+            window as unknown as {
+              __objects: { item(i: string): { transform: { y: number; height: number } } };
+            }
+          ).__objects.item(id).transform,
+        SEQ,
+      );
+      const top = t.y - t.height / 2 + bob.y * (320 / laid.width);
+      const gap = top - (l?.to.y ?? Number.NaN);
+      return gap > 0 && gap < 12;
+    })
+    .toBe(true);
+});
+
+type Blocks = { index: number; name?: string; text: string; rect: { x: number; y: number; width: number; height: number } }[];
+
+test('a paragraph is named when a link starts from it, in one undoable act', async ({ page }) => {
+  const posted = await stubBoard(page);
+  const c = await open(page);
+  const laid = await page.evaluate(
+    (id) =>
+      (window as unknown as { __objects: { layout(id: string): { elements: Record<string, unknown>; blocks: Blocks } } }).__objects.layout(id),
+    NOTE,
+  );
+  // The heading is an anchor by its slug; the paragraph is a block with no name yet.
+  expect(Object.keys(laid.elements)).toEqual(['overview']);
+  const para = laid.blocks.find((b) => b.text.includes('checkout'));
+  if (!para) throw new Error('no paragraph block');
+  expect(para.name).toBeUndefined();
+  // NOTE sits at world (-220, -150), 200 wide: its top-left is (-320, -200).
+  const from = { x: c.x - 320 + para.rect.x + 10, y: c.y - 200 + para.rect.y + para.rect.height / 2 };
+  await altDrag(page, from, await nodeCentre(page, c, 'Pay'));
+  await expect.poll(() => ofType(posted, 'link.add').length).toBe(1);
+  const source = ofType(posted, 'item.source')[0]?.source as string;
+  const name = /The checkout\. (\^[0-9a-z]{4})$/.exec(source)?.[1];
+  expect(name, source).toBeTruthy();
+  expect(ofType(posted, 'link.add')[0]).toMatchObject({
+    from: { itemId: NOTE, element: name },
+    to: { itemId: FLOW, element: 'Pay' },
+  });
+  // The marker is in the source, not in the drawing; the paragraph is now an anchor.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (id) =>
+          (window as unknown as { __objects: { layout(id: string): { blocks: Blocks } } }).__objects
+            .layout(id)
+            .blocks.map((b) => [b.name ?? null, b.text]),
+        NOTE,
+      ),
+    )
+    .toContainEqual([name, 'The checkout.']);
+  // One undo takes back the link and the name together.
+  await page.keyboard.press('Control+z');
+  await expect.poll(async () => (await links(page)).length).toBe(0);
+  const restored = await page.evaluate(
+    (id) =>
+      (window as unknown as { __objects: { item(i: string): { content: { source: string } } } }).__objects.item(id).content.source,
+    NOTE,
+  );
+  expect(restored).toBe('### Overview\n\nThe checkout.');
+});
+
+test('a link to a passage that is gone is broken, and heals when it comes back', async ({ page }) => {
+  await stubBoard(page, [
+    { id: LINK, from: { itemId: NOTE, element: '^gone' }, to: { itemId: FLOW, element: 'Pay' }, linkType: 'describes' },
+  ]);
+  await open(page);
+  await expect.poll(async () => (await links(page))[0]?.broken).toBe(true);
+  await page.evaluate(
+    ([id]) =>
+      (window as unknown as { __objects: Hook }).__objects.remote({
+        type: 'item.source',
+        itemId: id,
+        source: '### Overview\n\nThe checkout. ^gone',
+      }),
+    [NOTE],
+  );
+  await expect.poll(async () => (await links(page))[0]?.broken, { timeout: 10_000 }).toBe(false);
 });
