@@ -60,7 +60,7 @@ export function Shell({ children }: { children: ReactNode }) {
          * wordmark.tsx. Loudness is held down by `ink-dim` and the corner, not by
          * shrinking it.
          */}
-        <Wordmark className="text-ink-dim" />
+        <Wordmark className="text-ink-dim" illuminated="hover" />
       </header>
 
       <div className="flex min-h-0 flex-1">

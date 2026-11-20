@@ -4,13 +4,14 @@ import { onBothGrids, wordmarkLayout } from './wordmark';
 describe('wordmark', () => {
   it('is the 260 dots of "Visarium" in the face', () => {
     // Counted from the font itself at 1000px. A changed map is a changed logo.
-    expect(wordmarkLayout(1).path.match(/M/g)).toHaveLength(260);
+    const { rowPaths } = wordmarkLayout(1);
+    expect(rowPaths.join('').match(/M/g)).toHaveLength(260);
   });
 
   it("puts every dot on whole device pixels, at about the face's 32px size", () => {
     for (const dpr of [1, 1.25, 1.5, 2, 3]) {
-      const { pitch, dot, path } = wordmarkLayout(dpr);
-      expect(path).not.toMatch(/\./);
+      const { pitch, dot, rowPaths } = wordmarkLayout(dpr);
+      expect(rowPaths.join('')).not.toMatch(/\./);
       expect(Math.abs(pitch / dpr - 2.88)).toBeLessThan(0.5);
       expect(dot).toBeGreaterThanOrEqual(pitch - dot);
     }

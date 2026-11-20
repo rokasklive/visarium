@@ -105,6 +105,14 @@
 }
 
 @layer base {
+  :root {
+    --wordmark-white: #ffffff;
+    --wordmark-cream: #f5e3b5;
+    --wordmark-peach: #f9c59a;
+    --wordmark-coral: #f87562;
+    --wordmark-turquoise: #31c5b7;
+  }
+
   html,
   body,
   #root {
@@ -148,6 +156,23 @@
   .wordmark {
     font-family: "Edit Undo Dot", ui-sans-serif, system-ui, sans-serif;
     -webkit-font-smoothing: none;
+  }
+
+  .wordmark-hover-color {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  @media (hover: hover) {
+    svg:hover > .wordmark-hover-color {
+      opacity: 1;
+    }
+  }
+
+  @media (hover: hover) and (prefers-reduced-motion: no-preference) {
+    .wordmark-hover-color {
+      transition: opacity 160ms ease-out;
+    }
   }
 
   /*

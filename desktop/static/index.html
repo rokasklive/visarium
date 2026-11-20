@@ -30,6 +30,11 @@
         --ink-dim: oklch(0.66 0.006 265);
         --ink-disabled: oklch(0.5 0.006 265);
         --accent: oklch(0.72 0.15 215);
+        --wordmark-white: #ffffff;
+        --wordmark-cream: #f5e3b5;
+        --wordmark-peach: #f9c59a;
+        --wordmark-coral: #f87562;
+        --wordmark-turquoise: #31c5b7;
       }
       * { box-sizing: border-box; }
       html, body { height: 100%; margin: 0; }
@@ -80,9 +85,17 @@
       because set as text it smears. Same drawing and same reasoning as
       web/src/components/wordmark.tsx, which is where the dot map comes from.
     -->
-    <svg id="wordmark" class="wordmark" role="img" aria-label="Visarium" shape-rendering="crispEdges" fill="currentColor"><path /></svg>
+    <svg id="wordmark" class="wordmark" role="img" aria-label="Visarium" shape-rendering="crispEdges" overflow="visible">
+      <defs>
+        <filter id="wordmark-bloom" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+          <feGaussianBlur in="SourceGraphic" />
+        </filter>
+      </defs>
+      <use href="#wordmark-dots" filter="url(#wordmark-bloom)" opacity="0.18" />
+      <g id="wordmark-dots"></g>
+    </svg>
     <script>
-      (function draw() {
+      (() => {
         const rows = [
           '#.#.....#.#..#.#....#.#.#.#.#....#.#.#.#......#.#.#.#....#.#..#.#.....#.#....#.#.#.#.#.#..',
           '#.#.....#.#..#.#..#.#.#.#.#.#..#.#.#.#.#.#..#.#.#.#.#.#..#.#..#.#.....#.#..#.#.#.#.#.#.#.#',
@@ -93,15 +106,15 @@
           '..#.#.#.#....#.#..#.#.#.#.#.#..#.#.....#.#..#.#.....#.#..#.#..#.#.#.#.#.#..#.#...#.#...#.#',
           '....#.#......#.#..#.#.#.#.#....#.#.....#.#..#.#.....#.#..#.#....#.#.#.#....#.#...#.#...#.#',
         ];
-        const dpr = window.devicePixelRatio || 1;
-        const pitch = Math.max(2, Math.round(2.88 * dpr));
-        const dot = Math.ceil(pitch / 2);
-        let d = '';
-        rows.forEach((row, r) => {
-          [...row].forEach((cell, k) => {
-            if (cell === '#') d += `M${Math.floor((k * pitch) / 2)} ${r * pitch}h${dot}v${dot}h-${dot}z`;
-          });
+        const colors = ['white', 'white', 'white', 'white', 'cream', 'peach', 'coral', 'turquoise'];
+        const mark = document.getElementById('wordmark');
+        const bloom = document.getElementById('wordmark-bloom');
+        const paths = colors.map((color) => {
+          const path = document.createElementNS(mark.namespaceURI, 'path');
+          path.setAttribute('fill', `var(--wordmark-${color})`);
+          return path;
         });
+        document.getElementById('wordmark-dots').append(...paths);
         // Box and position on whole CSS pixels that are also whole device
         // pixels: Chrome snaps an SVG's box to CSS pixels and stretches the
         // drawing to fit, so anything else blends or drops a row.
@@ -114,13 +127,6 @@
           }
           return start;
         };
-        const width = both((Math.floor(((rows[0].length - 1) * pitch) / 2) + dot) / dpr, dpr, true);
-        const height = both(((rows.length - 1) * pitch + dot) / dpr, dpr, true);
-        const mark = document.getElementById('wordmark');
-        mark.setAttribute('viewBox', `0 0 ${Math.round(width * dpr)} ${Math.round(height * dpr)}`);
-        mark.setAttribute('width', width);
-        mark.setAttribute('height', height);
-        mark.firstChild.setAttribute('d', d);
         // Centring rarely lands there, and the column moves as the page below
         // is built and its lists fill in. A relative offset, not a transform:
         // a transform has the compositor resample the mark.
@@ -132,10 +138,36 @@
           mark.style.left = `${both(at.left, r) - at.left}px`;
           mark.style.top = `${both(at.top, r) - at.top}px`;
         };
+        function draw() {
+          const dpr = window.devicePixelRatio || 1;
+          const pitch = Math.max(2, Math.round(2.88 * dpr));
+          const dot = Math.ceil(pitch / 2);
+          rows.forEach((row, r) => {
+            const d = [...row].map((cell, k) =>
+              cell === '#' ? `M${Math.floor((k * pitch) / 2)} ${r * pitch}h${dot}v${dot}h-${dot}z` : '',
+            ).join('');
+            paths[r].setAttribute('d', d);
+          });
+          const width = both((Math.floor(((rows[0].length - 1) * pitch) / 2) + dot) / dpr, dpr, true);
+          const height = both(((rows.length - 1) * pitch + dot) / dpr, dpr, true);
+          const deviceWidth = Math.round(width * dpr);
+          const deviceHeight = Math.round(height * dpr);
+          const padding = Math.ceil(3 * dpr);
+          mark.setAttribute('viewBox', `0 0 ${deviceWidth} ${deviceHeight}`);
+          mark.setAttribute('width', width);
+          mark.setAttribute('height', height);
+          bloom.setAttribute('x', -padding);
+          bloom.setAttribute('y', -padding);
+          bloom.setAttribute('width', deviceWidth + 2 * padding);
+          bloom.setAttribute('height', deviceHeight + 2 * padding);
+          bloom.firstElementChild.setAttribute('stdDeviation', dpr);
+          snap();
+          matchMedia(`(resolution: ${dpr}dppx)`).addEventListener('change', draw, { once: true });
+        }
+        draw();
         new ResizeObserver(snap).observe(document.documentElement);
         addEventListener('DOMContentLoaded', () => new ResizeObserver(snap).observe(document.querySelector('main')));
         window.onresize = snap;
-        matchMedia(`(resolution: ${dpr}dppx)`).addEventListener('change', draw, { once: true });
       })();
     </script>
     <main>

@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useSyncExternalStore } from 'react';
+import { useId, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 
 /**
  * "Visarium" in the identity face, drawn from the face's own dot grid.
@@ -38,18 +38,31 @@ export const ROWS: readonly [string, ...string[]] = [
   '....#.#......#.#..#.#.#.#.#....#.#.....#.#..#.#.....#.#..#.#....#.#.#.#....#.#...#.#...#.#',
 ];
 
+const ROW_FILLS = [
+  'var(--wordmark-white)',
+  'var(--wordmark-white)',
+  'var(--wordmark-white)',
+  'var(--wordmark-white)',
+  'var(--wordmark-cream)',
+  'var(--wordmark-peach)',
+  'var(--wordmark-coral)',
+  'var(--wordmark-turquoise)',
+];
+
 /** How the grid lands on one screen, in device pixels. */
-export function wordmarkLayout(dpr: number): { pitch: number; dot: number; path: string } {
+export function wordmarkLayout(dpr: number): { pitch: number; dot: number; rowPaths: string[] } {
   const pitch = Math.max(2, Math.round(2.88 * dpr));
   const dot = Math.ceil(pitch / 2);
   // Columns run on the half-pitch unit; floored, so a letter keeps its own
   // spacing exact and only the half-pitch joins between letters round.
-  const path = ROWS.flatMap((row, r) =>
-    [...row].flatMap((cell, k) =>
-      cell === '#' ? [`M${Math.floor((k * pitch) / 2)} ${r * pitch}h${dot}v${dot}h-${dot}z`] : [],
-    ),
-  ).join('');
-  return { pitch, dot, path };
+  const rowPaths = ROWS.map((row, r) =>
+    [...row]
+      .map((cell, k) =>
+        cell === '#' ? `M${Math.floor((k * pitch) / 2)} ${r * pitch}h${dot}v${dot}h-${dot}z` : '',
+      )
+      .join(''),
+  );
+  return { pitch, dot, rowPaths };
 }
 
 /**
@@ -75,9 +88,17 @@ export function onBothGrids(v: number, dpr: number, up = false): number {
   return start;
 }
 
-export function Wordmark({ className }: { className?: string }) {
+export function Wordmark({
+  className,
+  illuminated = false,
+}: {
+  className?: string;
+  illuminated?: boolean | 'hover';
+}) {
   const dpr = useDevicePixelRatio();
-  const { pitch, dot, path } = useMemo(() => wordmarkLayout(dpr), [dpr]);
+  const { pitch, dot, rowPaths } = useMemo(() => wordmarkLayout(dpr), [dpr]);
+  const dotsId = useId();
+  const bloomId = `${dotsId}-bloom`;
   // The drawing in device pixels, and a box on both grids at least that big,
   // so the viewBox is the box in device pixels and maps 1:1.
   const box = {
@@ -109,6 +130,10 @@ export function Wordmark({ className }: { className?: string }) {
     };
   }, [dpr]);
 
+  const width = Math.round(box.width * dpr);
+  const height = Math.round(box.height * dpr);
+  const bloomPadding = Math.ceil(3 * dpr);
+  const illuminateOnHover = illuminated === 'hover';
   return (
     <svg
       ref={ref}
@@ -116,12 +141,37 @@ export function Wordmark({ className }: { className?: string }) {
       aria-label="Visarium"
       width={box.width}
       height={box.height}
-      viewBox={`0 0 ${Math.round(box.width * dpr)} ${Math.round(box.height * dpr)}`}
+      viewBox={`0 0 ${width} ${height}`}
       shapeRendering="crispEdges"
       fill="currentColor"
+      overflow={illuminated ? 'visible' : undefined}
       className={`relative block shrink-0 ${className ?? ''}`}
     >
-      <path d={path} />
+      {(!illuminated || illuminateOnHover) && <path d={rowPaths.join('')} />}
+      {illuminateOnHover && <rect width={width} height={height} fill="none" pointerEvents="all" />}
+      {illuminated && (
+        <g className={illuminateOnHover ? 'wordmark-hover-color' : undefined}>
+          <defs>
+            <filter
+              id={bloomId}
+              filterUnits="userSpaceOnUse"
+              x={-bloomPadding}
+              y={-bloomPadding}
+              width={width + 2 * bloomPadding}
+              height={height + 2 * bloomPadding}
+              colorInterpolationFilters="sRGB"
+            >
+              <feGaussianBlur in="SourceGraphic" stdDeviation={dpr} />
+            </filter>
+          </defs>
+          <use href={`#${dotsId}`} filter={`url(#${bloomId})`} opacity={0.18} />
+          <g id={dotsId}>
+            {rowPaths.map((path, row) => (
+              <path key={path} d={path} fill={ROW_FILLS[row]} />
+            ))}
+          </g>
+        </g>
+      )}
     </svg>
   );
 }

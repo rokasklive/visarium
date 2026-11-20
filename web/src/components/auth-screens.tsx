@@ -6,15 +6,11 @@
  * radius, one ghost button, and an accent that means *you* and nothing else.
  * That is not a constraint being worked around here; it is the whole design.
  *
- * Three rules are doing the work:
+ * Two rules are doing the work:
  *
  *   * **The Absent Panel Rule.** A container with nothing to contain does not
  *     exist. The form sits on `surface-sunken` full bleed with no box around it,
  *     which reads as more considered than the same fields inside a rectangle.
- *   * **The wordmark is the design.** "Edit Undo Dot" is already the identity
- *     decision and already loaded. Here it is large and `ink` — the one place in
- *     the product where it is allowed to be, because there is no canvas for it
- *     to compete with. Everywhere else it stays `ink-dim` in a corner.
  *   * **The accent appears exactly once**, as the focus ring on the field being
  *     typed into. Hence no `focus:outline-none` on these inputs: the global
  *     `:focus-visible` rule in app.css is deliberately left to do its job.
@@ -45,17 +41,19 @@ import { Wordmark } from './wordmark';
  * 320px because two fields and a button need no more, and a wider column would
  * put the label further from the input it names.
  */
-function AuthScreen({ title, children }: { title: string; children: ReactNode }) {
+function AuthScreen({
+  title,
+  children,
+  illuminatedWordmark = false,
+}: {
+  title: string;
+  children: ReactNode;
+  illuminatedWordmark?: boolean;
+}) {
   return (
     <div className="flex h-full w-full items-center justify-center bg-surface-sunken px-6">
       <div className="w-full max-w-[320px]">
-        {/*
-         * The identity face at its one size, the same as the toolbar wordmark,
-         * drawn as device-pixel dots so it stays crisp on any screen (see
-         * wordmark.tsx). What is louder here is the ink and the empty screen
-         * around it, not the size.
-         */}
-        <Wordmark className="mb-2 text-ink" />
+        <Wordmark className="mb-2 text-ink" illuminated={illuminatedWordmark} />
         <h1 className="mb-6 text-[11px] uppercase tracking-wide text-ink-dim">{title}</h1>
         {children}
       </div>
@@ -207,7 +205,7 @@ export function SetupScreen() {
   if (straightTo) return <div className="h-full bg-surface-sunken" />;
 
   return (
-    <AuthScreen title="Set up this instance">
+    <AuthScreen title="Set up this instance" illuminatedWordmark>
       {passwordEnabled && (
         <form onSubmit={submit}>
           <Field
@@ -276,7 +274,7 @@ export function SignInScreen() {
   if (straightTo) return <div className="h-full bg-surface-sunken" />;
 
   return (
-    <AuthScreen title="Sign in">
+    <AuthScreen title="Sign in" illuminatedWordmark>
       {returned && (
         <p className="mb-4 text-ink" role="alert">
           {returned}
