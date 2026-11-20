@@ -1483,7 +1483,7 @@ async fn people_see_an_agent_arrive_look_and_leave_and_viewers_see_none_of_it() 
     let (mut member, _) = tokio_tungstenite::connect_async(req).await.unwrap();
     member
         .send(
-            json!({ "t": "hello", "protocolVersion": 3, "sinceRevision": 0 })
+            json!({ "t": "hello", "protocolVersion": visarium::PROTOCOL_VERSION, "sinceRevision": 0 })
                 .to_string()
                 .into(),
         )
@@ -1512,7 +1512,7 @@ async fn people_see_an_agent_arrive_look_and_leave_and_viewers_see_none_of_it() 
     let (mut viewer, _) = tokio_tungstenite::connect_async(req).await.unwrap();
     viewer
         .send(
-            json!({ "t": "hello", "protocolVersion": 3, "sinceRevision": 0 })
+            json!({ "t": "hello", "protocolVersion": visarium::PROTOCOL_VERSION, "sinceRevision": 0 })
                 .to_string()
                 .into(),
         )
@@ -1837,7 +1837,7 @@ async fn people_on_a_board_see_it_renamed_and_deleted_and_by_whom() {
         .insert("cookie", format!("VISARIUM_SESSION={browser}").parse().unwrap());
     let (mut member, _) = tokio_tungstenite::connect_async(req).await.unwrap();
     member
-        .send(json!({ "t": "hello", "protocolVersion": 3, "sinceRevision": 0 }).to_string().into())
+        .send(json!({ "t": "hello", "protocolVersion": visarium::PROTOCOL_VERSION, "sinceRevision": 0 }).to_string().into())
         .await
         .unwrap();
     assert_eq!(next(&mut member).await["t"], "welcome");

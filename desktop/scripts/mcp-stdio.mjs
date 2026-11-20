@@ -30,7 +30,8 @@ async function relay(line) {
     return reply({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'not JSON' } });
   }
   const fail = (text) =>
-    message.id !== undefined && reply({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: text } });
+    message.id !== undefined &&
+    reply({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: text } });
   try {
     const res = await fetch(url, {
       method: 'POST',

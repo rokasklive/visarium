@@ -281,7 +281,8 @@ describe('an editing session is one undo step', () => {
   it('records the whole session from its first text, however many saves it made', () => {
     const d = board();
     const history = new CanvasHistory(d);
-    for (const source of ['### O', '### Ov', '### Overview v2']) d.apply({ type: 'item.source', itemId: NOTE, source });
+    for (const source of ['### O', '### Ov', '### Overview v2'])
+      d.apply({ type: 'item.source', itemId: NOTE, source });
     history.record({ type: 'item.source', itemId: NOTE, source: '### Overview' });
     expect(history.depth).toBe(1);
     history.undo();

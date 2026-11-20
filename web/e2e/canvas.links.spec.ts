@@ -348,14 +348,23 @@ test('a link to a sequence participant lands on its head, and the whole lifeline
     .toBe(true);
 });
 
-type Blocks = { index: number; name?: string; text: string; rect: { x: number; y: number; width: number; height: number } }[];
+type Blocks = {
+  index: number;
+  name?: string;
+  text: string;
+  rect: { x: number; y: number; width: number; height: number };
+}[];
 
 test('a paragraph is named when a link starts from it, in one undoable act', async ({ page }) => {
   const posted = await stubBoard(page);
   const c = await open(page);
   const laid = await page.evaluate(
     (id) =>
-      (window as unknown as { __objects: { layout(id: string): { elements: Record<string, unknown>; blocks: Blocks } } }).__objects.layout(id),
+      (
+        window as unknown as {
+          __objects: { layout(id: string): { elements: Record<string, unknown>; blocks: Blocks } };
+        }
+      ).__objects.layout(id),
     NOTE,
   );
   // The heading is an anchor by its slug; the paragraph is a block with no name yet.
@@ -364,7 +373,10 @@ test('a paragraph is named when a link starts from it, in one undoable act', asy
   if (!para) throw new Error('no paragraph block');
   expect(para.name).toBeUndefined();
   // NOTE sits at world (-220, -150), 200 wide: its top-left is (-320, -200).
-  const from = { x: c.x - 320 + para.rect.x + 10, y: c.y - 200 + para.rect.y + para.rect.height / 2 };
+  const from = {
+    x: c.x - 320 + para.rect.x + 10,
+    y: c.y - 200 + para.rect.y + para.rect.height / 2,
+  };
   await altDrag(page, from, await nodeCentre(page, c, 'Pay'));
   await expect.poll(() => ofType(posted, 'link.add').length).toBe(1);
   const source = ofType(posted, 'item.source')[0]?.source as string;
@@ -391,15 +403,24 @@ test('a paragraph is named when a link starts from it, in one undoable act', asy
   await expect.poll(async () => (await links(page)).length).toBe(0);
   const restored = await page.evaluate(
     (id) =>
-      (window as unknown as { __objects: { item(i: string): { content: { source: string } } } }).__objects.item(id).content.source,
+      (
+        window as unknown as { __objects: { item(i: string): { content: { source: string } } } }
+      ).__objects.item(id).content.source,
     NOTE,
   );
   expect(restored).toBe('### Overview\n\nThe checkout.');
 });
 
-test('a link to a passage that is gone is broken, and heals when it comes back', async ({ page }) => {
+test('a link to a passage that is gone is broken, and heals when it comes back', async ({
+  page,
+}) => {
   await stubBoard(page, [
-    { id: LINK, from: { itemId: NOTE, element: '^gone' }, to: { itemId: FLOW, element: 'Pay' }, linkType: 'describes' },
+    {
+      id: LINK,
+      from: { itemId: NOTE, element: '^gone' },
+      to: { itemId: FLOW, element: 'Pay' },
+      linkType: 'describes',
+    },
   ]);
   await open(page);
   await expect.poll(async () => (await links(page))[0]?.broken).toBe(true);
