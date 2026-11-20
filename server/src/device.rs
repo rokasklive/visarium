@@ -138,6 +138,7 @@ async fn exchange(
     Json(body): Json<Exchange>,
 ) -> ApiResult<(StatusCode, axum::Json<serde_json::Value>)> {
     let refused = || {
+        tracing::warn!(method = "device", reason = "bad code", "sign-in refused");
         ApiError::unauthorized("that sign-in code is not valid; sign in again from the desktop app")
     };
     let pending = app.device_codes.take(&body.code).ok_or_else(refused)?;
@@ -159,6 +160,7 @@ async fn exchange(
         Some(&pending.label),
     )
     .await?;
+    tracing::info!(user = %user.id, method = "device", "signed in");
     Ok((
         StatusCode::CREATED,
         axum::Json(json!({ "token": token, "user": user })),

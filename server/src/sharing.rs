@@ -149,6 +149,7 @@ async fn create(
         .bind(&id)
         .fetch_one(&app.db)
         .await?;
+    tracing::info!(share = %id, board = %board, by = %me.id, "share link created");
     // The only time the token exists outside the person who shares it.
     let mut out = serde_json::to_value(link).unwrap();
     out["link"] = json!(format!("/s#{token}"));
@@ -199,7 +200,11 @@ async fn end_viewers(app: &AppState, id: &str) -> sqlx::Result<()> {
     Ok(())
 }
 
-async fn revoke(State(app): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<StatusCode> {
+async fn revoke(
+    State(app): State<AppState>,
+    axum::Extension(me): axum::Extension<User>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<StatusCode> {
     require_sharing(&app)?;
     let id = id.to_string();
     let done = sqlx::query(sqlx::AssertSqlSafe(format!(
@@ -212,6 +217,7 @@ async fn revoke(State(app): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<
         return Err(ApiError::not_found(format!("no active link {id}")));
     }
     end_viewers(&app, &id).await?;
+    tracing::info!(share = %id, by = %me.id, "share link revoked");
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -225,6 +231,7 @@ struct PassphraseChange {
 /// revoking: whoever was let in by the old one has to come in by the new one.
 async fn change_passphrase(
     State(app): State<AppState>,
+    axum::Extension(me): axum::Extension<User>,
     Path(id): Path<Uuid>,
     Json(body): Json<PassphraseChange>,
 ) -> ApiResult<axum::Json<ShareLink>> {
@@ -243,6 +250,7 @@ async fn change_passphrase(
         .await?
         .ok_or_else(|| ApiError::not_found(format!("no active link {id}")))?;
     end_viewers(&app, &id).await?;
+    tracing::info!(share = %id, board = %link.canvas_id, by = %me.id, "share link passphrase changed; viewers ended");
     Ok(axum::Json(link))
 }
 
@@ -309,6 +317,7 @@ pub async fn redeem(
         };
         tokio::time::sleep(app.throttle.delay(&key)).await;
         if auth::verify_password(passphrase, Some(hash)).await == auth::Verified::No {
+            tracing::warn!(share = %secret.id, reason = "bad passphrase", "share link refused");
             app.throttle.failed(&key);
             return Err(ApiError::unauthorized("that passphrase is not right")
                 .titled("Passphrase required")
@@ -337,6 +346,7 @@ pub async fn redeem(
     let link = active_link(&app.db, &secret.id)
         .await?
         .ok_or_else(|| gone("revoked", "this link is no longer active"))?;
+    tracing::info!(share = %link.id, board = %link.canvas_id, "share link opened");
     let title: Option<String> = sqlx::query_scalar("SELECT title FROM canvas WHERE id = ?")
         .bind(&link.canvas_id)
         .fetch_optional(&app.db)

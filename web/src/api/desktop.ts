@@ -104,3 +104,38 @@ export function markLibraryOpened() {
       .catch(() => {});
   }
 }
+
+/**
+ * A path with its IDs taken out, so a log can group errors by page without
+ * holding which board: `/boards/0190…` → `/boards/:id`. Secrets ride in the
+ * fragment (`/s#…`, `/invite#…`), which a pathname never has.
+ */
+export function routePattern(pathname: string): string {
+  return pathname
+    .split('/')
+    .map((segment) => (/\d/.test(segment) && segment.length >= 8 ? ':id' : segment))
+    .join('/');
+}
+
+/**
+ * In the desktop app, uncaught errors and unhandled rejections go to its log
+ * (desktop/diagnostics), which the diagnostics bundle carries. The app clips
+ * and rations them; a page cannot be trusted to.
+ */
+export function reportErrorsToDesktop() {
+  const app = tauri();
+  if (!app) return;
+  const send = (reason: unknown) => {
+    const error = reason instanceof Error ? reason : undefined;
+    void app
+      .invoke('log_client_error', {
+        message: error ? `${error.name}: ${error.message}` : String(reason),
+        stack: error?.stack ?? null,
+        route: routePattern(window.location.pathname),
+      })
+      // Not allowed on this page, or the app is going away: nothing to do.
+      .catch(() => {});
+  };
+  window.addEventListener('error', (event) => send(event.error ?? event.message));
+  window.addEventListener('unhandledrejection', (event) => send(event.reason));
+}

@@ -177,7 +177,9 @@ pub async fn set_local_port(
                 next.set_path(here.path());
                 next.set_query(here.query());
             }
-            let _ = window.navigate(next);
+            if let Err(e) = window.navigate(next) {
+                tracing::warn!(error = %e, "could not move the window to the new port");
+            }
             tokio::time::sleep(Duration::from_millis(500)).await;
             old.server.abort();
         });

@@ -194,6 +194,7 @@ pub async fn insert_user<'e>(
     .fetch_one(db)
     .await
     .map_err(taken)
+    .inspect(|user: &User| tracing::info!(user = %user.id, admin, "account created"))
 }
 
 // --- sessions ---------------------------------------------------------------
@@ -606,13 +607,17 @@ async fn agent_principal(db: &SqlitePool, headers: &HeaderMap) -> Principal {
     }
     // "Last used" is what the Agents list shows, so the first use is written
     // at once, and later ones at most every SESSION_TOUCH_SECS.
-    let _ = sqlx::query(sqlx::AssertSqlSafe(format!(
+    if let Err(e) = sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE session SET last_seen_at = {NOW} WHERE token_hash = ?
             AND (last_seen_at = created_at OR last_seen_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-{SESSION_TOUCH_SECS} seconds'))"
     )))
     .bind(&token_hash)
     .execute(db)
-    .await;
+    .await
+    {
+        // The request goes ahead; only the Agents list's "last used" lags.
+        tracing::warn!(session = %id, error = %e, "could not record an agent token's last use");
+    }
     Principal::Agent {
         user,
         session: Session {
@@ -759,6 +764,8 @@ pub async fn verify_password(password: String, stored: Option<String>) -> Verifi
                 .unwrap()
                 .to_string()
         });
+        // Only the time it takes matters: an unknown name costs as much as a
+        // wrong password, so timing does not tell which accounts exist.
         let _ = argon2().verify_password(password.as_bytes(), &PasswordHash::new(dummy).unwrap());
         Verified::No
     })
@@ -875,10 +882,18 @@ pub async fn sign_in(
     };
     let verified = verify_password(body.password.clone(), hash).await;
     let Some(id) = id.filter(|_| verified != Verified::No && deactivated.is_none()) else {
+        // Never the username: it may be a mistyped password or an address.
+        let reason = if deactivated.is_some() && verified != Verified::No {
+            "deactivated"
+        } else {
+            "bad credentials"
+        };
+        tracing::warn!(method = "password", reason, "sign-in refused");
         app.throttle.failed(&body.username);
         return Err(ApiError::unauthorized(REFUSED));
     };
     app.throttle.succeeded(&body.username);
+    tracing::info!(user = %id, method = "password", "signed in");
     if verified == Verified::YesRehash {
         let upgraded = hash_password(body.password).await?;
         sqlx::query("UPDATE app_user SET password_hash = ? WHERE id = ?")
@@ -949,8 +964,9 @@ pub async fn sign_out(
     headers: HeaderMap,
     axum::Extension(principal): axum::Extension<Principal>,
 ) -> ApiResult<Response> {
-    if let Principal::Member { session, .. } = &principal {
+    if let Principal::Member { user, session } = &principal {
         end_session(&app.db, &session.token_hash).await?;
+        tracing::info!(user = %user.id, "signed out");
     }
     let mut response = StatusCode::NO_CONTENT.into_response();
     for cookie in SESSION.clear(is_secure(&headers)) {
@@ -984,6 +1000,7 @@ pub async fn claim(
     let mut tx = app.db.begin().await?;
     let user = claim_in(&mut tx, &body.username, &body.display_name, Some(&hash)).await?;
     tx.commit().await?;
+    tracing::info!(user = %user.id, method = "password", "instance claimed");
     establish(
         &app,
         &headers,
@@ -1140,6 +1157,7 @@ async fn change_password(
         .execute(&app.db)
         .await?;
     end_sessions_of(&app.db, &me.id, principal.session_hash()).await?;
+    tracing::info!(user = %me.id, "password changed; other sessions ended");
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1185,6 +1203,7 @@ async fn set_admin(
         .bind(&id)
         .execute(&app.db)
         .await?;
+    tracing::info!(user = %id, admin = body.granted, by = %me.id, "admin changed");
     Ok(axum::Json(
         find_user(&app.db, &id).await?.ok_or_else(|| gone(&id))?,
     ))
@@ -1206,6 +1225,7 @@ async fn deactivate(
     .execute(&app.db)
     .await?;
     end_sessions_of(&app.db, &id, None).await?;
+    tracing::info!(user = %id, by = %me.id, "account deactivated");
     Ok(axum::Json(
         find_user(&app.db, &id).await?.ok_or_else(|| gone(&id))?,
     ))
@@ -1255,6 +1275,7 @@ async fn end_one_session(
     if done.rows_affected() == 0 {
         return Err(ApiError::not_found(format!("no session {id}")));
     }
+    tracing::info!(user = %me.id, session = %id, "session revoked");
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1273,6 +1294,7 @@ async fn end_other_sessions(
     .bind(principal.session_hash())
     .execute(&app.db)
     .await?;
+    tracing::info!(user = %me.id, "other sessions revoked");
     Ok(StatusCode::NO_CONTENT)
 }
 

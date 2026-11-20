@@ -19,6 +19,7 @@ pub mod invitations;
 pub mod oidc;
 pub mod realtime;
 pub mod sharing;
+pub mod telemetry;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -124,7 +125,16 @@ pub async fn open(config: Config) -> anyhow_lite::Result<AppState> {
         .max_connections(8)
         .connect_with(options)
         .await?;
-    sqlx::migrate!("./migrations").run(&db).await?;
+    let migrator = sqlx::migrate!("./migrations");
+    // A fresh file has no table yet: everything is about to be applied.
+    let applied: Vec<i64> = sqlx::query_scalar("SELECT version FROM _sqlx_migrations")
+        .fetch_all(&db)
+        .await
+        .unwrap_or_default();
+    migrator.run(&db).await?;
+    for m in migrator.iter().filter(|m| !applied.contains(&m.version)) {
+        tracing::info!(version = m.version, description = %m.description, "migration applied");
+    }
 
     let local_user = if config.single_user {
         Some(auth::ensure_local_user(&db).await?)
@@ -142,12 +152,28 @@ pub async fn open(config: Config) -> anyhow_lite::Result<AppState> {
             let mut every = tokio::time::interval(SWEEP_EVERY);
             loop {
                 every.tick().await;
-                if let Err(e) = auth::sweep(&db).await {
-                    tracing::warn!("session sweep failed: {e}");
+                let started = std::time::Instant::now();
+                match auth::sweep(&db).await {
+                    Ok(()) => tracing::debug!(
+                        duration_ms = started.elapsed().as_millis() as u64,
+                        "session sweep done"
+                    ),
+                    Err(e) => tracing::warn!(error = %e, "session sweep failed"),
                 }
             }
         });
     }
+    // What this instance is, for whoever reads the log first. No secrets.
+    tracing::info!(
+        version = %config.version,
+        protocol = PROTOCOL_VERSION,
+        single_user = config.single_user,
+        password_sign_in = !config.single_user && !config.password_disabled,
+        providers = %config.providers.iter().map(|p| p.id.as_str()).collect::<Vec<_>>().join(","),
+        sharing = !config.single_user && !config.sharing_disabled,
+        public_url = config.public_url.as_deref().unwrap_or("-"),
+        "server ready"
+    );
     let cpus = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(2);
@@ -245,6 +271,7 @@ pub fn router(state: AppState) -> Router {
         .layer(from_fn_with_state(state.clone(), auth::session_layer))
         .layer(from_fn(auth::csrf_layer))
         .layer(CompressionLayer::new())
+        .layer(from_fn(telemetry::http))
         .with_state(state)
 }
 

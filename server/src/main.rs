@@ -11,7 +11,8 @@
 //!   VISARIUM_AUTH_PASSWORD     on                    off: sign-in providers only
 //!   VISARIUM_SHARING           on                    off: no read-only share links
 //!   VISARIUM_OIDC_{ID}_*       (none)                a sign-in provider; see below
-//!   VISARIUM_LOG_LEVEL         info
+//!   VISARIUM_LOG_LEVEL         info                  error, warn, info, debug, trace
+//!   VISARIUM_LOG_FORMAT        text                  json: one JSON object per line
 //!
 //! A provider is `VISARIUM_OIDC_{ID}_CLIENT_ID`, `_CLIENT_SECRET`, `_ISSUER`
 //! and optionally `_NAME`. `GOOGLE` needs no issuer or name. Register
@@ -29,12 +30,12 @@ fn env(name: &str, default: &str) -> String {
 
 #[tokio::main]
 async fn main() -> visarium::anyhow_lite::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(format!(
-            "visarium={},tower_http=warn",
-            env("VISARIUM_LOG_LEVEL", "info")
-        ))
-        .init();
+    let level = env("VISARIUM_LOG_LEVEL", "info");
+    visarium::telemetry::init(visarium::telemetry::Options {
+        level: &level,
+        format: visarium::telemetry::Format::parse(&env("VISARIUM_LOG_FORMAT", "text")),
+        file_dir: None,
+    })?;
 
     let bind: IpAddr = env("VISARIUM_BIND", "0.0.0.0").parse()?;
     let port: u16 = env("VISARIUM_PORT", "8080").parse()?;
@@ -69,11 +70,7 @@ async fn main() -> visarium::anyhow_lite::Result<()> {
     };
     let state = visarium::open(config).await?;
     let listener = tokio::net::TcpListener::bind(SocketAddr::new(bind, port)).await?;
-    tracing::info!(
-        "visarium listening on http://{}{}",
-        listener.local_addr()?,
-        if single_user { " (single user)" } else { "" }
-    );
+    tracing::info!(address = %listener.local_addr()?, "listening");
 
     axum::serve(listener, visarium::router(state))
         .with_graceful_shutdown(async {
@@ -83,5 +80,6 @@ async fn main() -> visarium::anyhow_lite::Result<()> {
             tokio::select! { _ = ctrl_c => {}, _ = term.recv() => {} }
         })
         .await?;
+    tracing::info!("shut down");
     Ok(())
 }

@@ -187,7 +187,7 @@ impl Provider {
             metadata: RwLock::new(None),
         };
         if let Err(e) = provider.refresh(http).await {
-            tracing::warn!(provider = %provider.id, "could not reach the provider yet ({e}); will retry on first sign-in");
+            tracing::warn!(provider = %provider.id, error = %e, "could not reach the provider yet; will retry on first sign-in");
         }
         provider
     }
@@ -317,6 +317,7 @@ fn redirect(to: &str) -> Response {
 /// Every failure lands on the sign-in page with a code the SPA turns into a
 /// sentence; the details go to the log, not the address bar.
 fn failed(code: &str) -> Response {
+    tracing::warn!(method = "oidc", reason = code, "sign-in refused");
     redirect(&format!("/sign-in?error={code}"))
 }
 
@@ -400,7 +401,7 @@ pub async fn begin(
         .await
         .and_then(|m| p.client(m, public_url))
         .map_err(|e| {
-            tracing::warn!(provider = %p.id, "{e}");
+            tracing::warn!(provider = %p.id, error = %e, "could not reach the provider");
             "provider-unreachable"
         })?;
     let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
@@ -477,7 +478,7 @@ async fn callback(
                 match verify(&app, &provider, q.code.unwrap_or_default(), &flow).await {
                     Ok(identity) => finish(&app, &headers, &principal, identity, flow).await,
                     Err(e) => {
-                        tracing::warn!(provider, "sign-in refused: {e}");
+                        tracing::debug!(provider, error = %e, "provider's answer did not verify");
                         failed("refused")
                     }
                 }
@@ -576,12 +577,16 @@ async fn finish(
     match resolve(app, &identity, &flow.intent, principal).await {
         Ok(Resolved::SignIn(user_id)) => {
             // Keep the address book current; nothing ever matches on it.
-            let _ = sqlx::query("UPDATE user_identity SET email = coalesce(?, email) WHERE provider = ? AND subject = ?")
+            if let Err(e) = sqlx::query("UPDATE user_identity SET email = coalesce(?, email) WHERE provider = ? AND subject = ?")
                 .bind(&identity.email)
                 .bind(&identity.provider)
                 .bind(&identity.subject)
                 .execute(&app.db)
-                .await;
+                .await
+            {
+                // Sign-in goes ahead; Settings shows the old address.
+                tracing::warn!(provider = %identity.provider, error = %e, "could not update a linked identity's address");
+            }
             match auth::start_session(
                 app,
                 principal.session_hash(),
@@ -592,6 +597,7 @@ async fn finish(
             .await
             {
                 Ok(token) => {
+                    tracing::info!(user = %user_id, method = "oidc", provider = %identity.provider, "signed in");
                     let mut response = redirect(&flow.return_to);
                     response.headers_mut().append(
                         header::SET_COOKIE,
@@ -600,12 +606,15 @@ async fn finish(
                     response
                 }
                 Err(e) => {
-                    tracing::error!("could not start a session: {}", e.detail);
+                    tracing::error!(error = %e.detail, "could not start a session");
                     failed("server-error")
                 }
             }
         }
-        Ok(Resolved::Linked) => redirect(&flow.return_to),
+        Ok(Resolved::Linked) => {
+            tracing::info!(provider = %identity.provider, "sign-in method linked");
+            redirect(&flow.return_to)
+        }
         Err(code) => failed(code),
     }
 }
@@ -827,6 +836,7 @@ async fn unlink(
             "no {provider} sign-in on this account"
         )));
     }
+    tracing::info!(user = %me.id, provider, "sign-in method removed");
     Ok(StatusCode::NO_CONTENT)
 }
 

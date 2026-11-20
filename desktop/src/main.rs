@@ -64,6 +64,27 @@ fn saved_password(c: &Connection) -> keyring::Result<keyring::Entry> {
     keyring::Entry::new(KEYCHAIN, &format!("{}@{}", c.username, c.origin))
 }
 
+/// Deletes a keychain item, saying so when one that exists stays behind.
+fn delete_saved(entry: keyring::Result<keyring::Entry>, what: &'static str) {
+    match entry.and_then(|k| k.delete_credential()) {
+        Ok(()) | Err(keyring::Error::NoEntry) => {}
+        Err(e) => tracing::warn!(what, error = %e, "could not delete a saved sign-in"),
+    }
+}
+
+/// Opens `url` in the system browser, logging (never the URL) if it cannot.
+fn open_in_browser_or_log(url: &Url) {
+    if let Err(e) = open_in_browser(url) {
+        tracing::warn!(error = %e, "could not open the system browser");
+    }
+}
+
+fn navigate_or_log(window: &WebviewWindow, url: Url) {
+    if let Err(e) = window.navigate(url) {
+        tracing::warn!(error = %e, "the window would not navigate");
+    }
+}
+
 /// "Visarium Desktop on studio-mac": what the person sees in the server's
 /// session list when deciding which device to sign out.
 fn device_label() -> String {
@@ -137,6 +158,34 @@ async fn connect(
     username: String,
     password: Option<String>,
 ) -> Result<Connected, Problem> {
+    let typed = address.clone();
+    logged(
+        &typed,
+        connect_with(window, desktop, address, username, password).await,
+    )
+}
+
+/// A failed connection, at warn: the address the person typed, never their
+/// username or password.
+fn logged<T>(address: &str, result: Result<T, Problem>) -> Result<T, Problem> {
+    if let Err(problem) = &result {
+        tracing::warn!(
+            address,
+            kind = problem.kind,
+            error = %problem.message,
+            "could not connect to a server"
+        );
+    }
+    result
+}
+
+async fn connect_with(
+    window: WebviewWindow,
+    desktop: State<'_, Desktop>,
+    address: String,
+    username: String,
+    password: Option<String>,
+) -> Result<Connected, Problem> {
     let origin = connect::normalise(&address)?;
     let username = username.trim().to_string();
     if username.is_empty() {
@@ -188,7 +237,7 @@ async fn connect(
                     warning: None,
                 });
             };
-            let _ = saved_password(&entry).and_then(|k| k.delete_credential());
+            delete_saved(saved_password(&entry), "legacy password");
             token
         }
     };
@@ -205,13 +254,11 @@ async fn connect_browser(
     address: String,
     provider: Option<String>,
 ) -> Result<Connected, Problem> {
-    browser_sign_in(
-        &window,
-        &desktop,
-        connect::normalise(&address)?,
-        provider.as_deref(),
-    )
-    .await
+    let result = match connect::normalise(&address) {
+        Ok(origin) => browser_sign_in(&window, &desktop, origin, provider.as_deref()).await,
+        Err(problem) => Err(problem),
+    };
+    logged(&address, result)
 }
 
 async fn browser_sign_in(
@@ -230,6 +277,7 @@ async fn browser_sign_in(
         connect::BROWSER_SIGN_IN_TIMEOUT,
     )
     .await?;
+    // Cosmetic: the person can click the window themselves.
     let _ = window.set_focus();
     open_signed_in(window, desktop, origin, username, token).await
 }
@@ -249,14 +297,17 @@ fn provider_link_in_browser(app: &tauri::AppHandle, link: connect::ProviderLink)
             return;
         };
         if link.intent == "link" {
-            let _ = open_in_browser(&link.origin.join("settings").expect("relative path"));
+            open_in_browser_or_log(&link.origin.join("settings").expect("relative path"));
             return;
         }
         match browser_sign_in(&window, &desktop, link.origin.clone(), Some(&link.provider)).await {
-            Ok(_) => {
-                let _ = window.navigate(link.origin.join(&link.back).unwrap_or(link.origin));
-            }
-            Err(problem) => eprintln!("browser sign-in failed: {}", problem.message),
+            Ok(_) => navigate_or_log(&window, link.origin.join(&link.back).unwrap_or(link.origin)),
+            Err(problem) => tracing::warn!(
+                origin = %link.origin,
+                kind = problem.kind,
+                error = %problem.message,
+                "browser sign-in failed"
+            ),
         }
     });
 }
@@ -288,8 +339,11 @@ async fn open_signed_in(
             format!("signed in, but the window would not take the session: {e}"),
         )
     })?;
+    if let Err(e) = about::allow_client_errors(window.app_handle(), &origin) {
+        tracing::warn!(origin = %origin, error = %e, "this server's web errors stay out of the log");
+    }
     if let Err(e) = drag_out::allow(window.app_handle(), &origin) {
-        eprintln!("drag out stays off for {origin}: {e}");
+        tracing::warn!(origin = %origin, error = %e, "drag out stays off for this server");
     }
 
     let mut warning = None;
@@ -300,14 +354,16 @@ async fn open_signed_in(
     }
     let (list, dropped) = connect::remember(connect::load(&desktop.connections), entry);
     for gone in &dropped {
-        let _ = keychain(gone).and_then(|k| k.delete_credential());
+        delete_saved(keychain(gone), "device token");
     }
     if let Err(e) = connect::save(&desktop.connections, &list) {
         warning.get_or_insert(format!(
             "connected, but this connection could not be remembered ({e})"
         ));
     }
+    // Cosmetic.
     let _ = window.set_title(&format!("Visarium — {host}"));
+    tracing::info!(origin = %origin, "connected to a server");
     Ok(Connected {
         open: origin,
         warning,
@@ -341,7 +397,8 @@ async fn forget(
     ) {
         connect::revoke(&desktop.http, &origin, &token).await;
     }
-    let _ = saved_password(&entry).and_then(|k| k.delete_credential());
+    delete_saved(saved_password(&entry), "legacy password");
+    tracing::info!(origin = %entry.origin, "server connection forgotten");
     match keychain(&entry).and_then(|k| k.delete_credential()) {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(e) => Err(Problem::new(
@@ -367,6 +424,7 @@ fn main() {
             about::check_for_updates,
             about::install_update,
             about::collect_diagnostics,
+            about::log_client_error,
             about::mark_library_opened
         ])
         .setup(|app| {
@@ -397,8 +455,14 @@ fn main() {
             .map_err(|e| e.to_string())?;
             let library: Url =
                 format!("http://127.0.0.1:{}/", listener.local_addr()?.port()).parse()?;
+            tracing::info!(
+                port = listener.local_addr()?.port(),
+                preferred,
+                "local library listening"
+            );
             drag_out::clear();
             drag_out::allow(app.handle(), &library)?;
+            about::allow_client_errors(app.handle(), &library)?;
             local_port::allow(app.handle(), &library)?;
             app.manage(local_port::LocalPort::start(state, port_file, listener)?);
 
@@ -442,7 +506,7 @@ fn main() {
                 // webview drops unless told; it belongs in the system browser.
                 .on_new_window(|url, _| {
                     if matches!(url.scheme(), "http" | "https" | "mailto") {
-                        let _ = open_in_browser(&url);
+                        open_in_browser_or_log(&url);
                     }
                     tauri::webview::NewWindowResponse::Deny
                 })
@@ -472,8 +536,9 @@ fn main() {
             if !alpha_update::allow_navigation(app, &target) {
                 return;
             }
+            // Cosmetic.
             let _ = window.set_title("Visarium");
-            let _ = window.navigate(target);
+            navigate_or_log(&window, target);
         })
         .run(tauri::generate_context!())
         .expect("error while running Visarium");

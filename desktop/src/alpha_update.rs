@@ -10,7 +10,7 @@ use std::time::Duration;
 use tauri::{App, AppHandle, Manager, Url, WebviewWindow};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
-use crate::about::{self, Diagnostics};
+use crate::about;
 
 #[derive(Default)]
 struct UpdateState {
@@ -68,10 +68,9 @@ async fn offered_update(
 }
 
 pub async fn check(app: &AppHandle) -> Result<serde_json::Value, String> {
-    let log = app.state::<Diagnostics>();
     match offered_update(app).await {
         Ok(Some(update)) => {
-            log.record("info", "update.available", None);
+            tracing::info!(version = %update.version, "update available");
             let can_install = !app
                 .state::<Mutex<UpdateState>>()
                 .lock()
@@ -82,11 +81,11 @@ pub async fn check(app: &AppHandle) -> Result<serde_json::Value, String> {
             )
         }
         Ok(None) => {
-            log.record("info", "update.current", None);
+            tracing::info!("no update available");
             Ok(serde_json::json!({ "status": "current" }))
         }
-        Err(_) => {
-            log.record("error", "update.check_failed", None);
+        Err(e) => {
+            tracing::warn!(error = %e, "update check failed");
             Err(
                 "Could not check for updates. Check that the alpha feed is running and try again."
                     .into(),
@@ -98,21 +97,20 @@ pub async fn check(app: &AppHandle) -> Result<serde_json::Value, String> {
 pub async fn install(window: &WebviewWindow, version: &str) -> Result<(), String> {
     let app = window.app_handle();
     let state = app.state::<Mutex<UpdateState>>();
-    let log = app.state::<Diagnostics>();
     if state.lock().unwrap().opened_library {
         return Err(reopen_message());
     }
     let update = offered_update(app)
         .await
-        .map_err(|_| {
-            log.record("error", "update.recheck_failed", None);
+        .map_err(|e| {
+            tracing::warn!(error = %e, "update recheck failed");
             "Could not reach the alpha feed. Check for updates again."
         })?
         .filter(|update| update.version == version)
         .ok_or("The offered version changed. Check for updates again.")?;
 
-    let bytes = update.download(|_, _| {}, || {}).await.map_err(|_| {
-        log.record("error", "update.download_failed", None);
+    let bytes = update.download(|_, _| {}, || {}).await.map_err(|e| {
+        tracing::error!(error = %e, version, "update download failed");
         "The update could not be downloaded or verified."
     })?;
 
@@ -129,12 +127,17 @@ pub async fn install(window: &WebviewWindow, version: &str) -> Result<(), String
         state.installing = true;
     }
     let result = tauri::async_runtime::spawn_blocking(move || swap_verified_app(&bytes)).await;
-    if !matches!(result, Ok(Ok(()))) {
+    let failure = match result {
+        Ok(Ok(())) => None,
+        Ok(Err(e)) => Some(e.to_string()),
+        Err(e) => Some(e.to_string()),
+    };
+    if let Some(error) = failure {
         state.lock().unwrap().installing = false;
-        log.record("error", "update.install_failed", None);
+        tracing::error!(error, version, "update install failed");
         return Err("Could not replace Visarium. The app must be in a writable location on a volume that supports atomic replacement.".into());
     }
-    log.record("info", "update.installed", None);
+    tracing::info!(version, "update installed; restarting");
     app.request_restart();
     Ok(())
 }

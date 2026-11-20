@@ -55,9 +55,11 @@ impl ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        if self.status.is_server_error() {
-            tracing::error!(status = %self.status, detail = %self.detail, "request failed");
-        }
+        // Logged once, on the access line (telemetry::http), with this cause.
+        let cause = self
+            .status
+            .is_server_error()
+            .then(|| crate::telemetry::ErrorCause(self.detail.clone()));
         let mut body = json!({
             "type": "about:blank",
             "title": self.title.unwrap_or_else(|| self.status.canonical_reason().unwrap_or("Error").into()),
@@ -65,12 +67,19 @@ impl IntoResponse for ApiError {
             "detail": self.detail,
         });
         body.as_object_mut().unwrap().extend(self.extra);
-        (
+        if let Some(id) = crate::telemetry::request_id() {
+            body["requestId"] = id.into();
+        }
+        let mut response = (
             self.status,
             [(header::CONTENT_TYPE, "application/problem+json")],
             body.to_string(),
         )
-            .into_response()
+            .into_response();
+        if let Some(cause) = cause {
+            response.extensions_mut().insert(cause);
+        }
+        response
     }
 }
 

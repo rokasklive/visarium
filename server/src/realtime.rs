@@ -23,6 +23,7 @@ use axum::response::{IntoResponse, Response};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio::sync::{Notify, mpsc};
+use tracing::Instrument;
 use uuid::Uuid;
 
 use crate::auth::User;
@@ -319,6 +320,7 @@ impl Rooms {
             .flat_map(|r| &r.viewers)
             .filter(|v| v.share_id == share_id)
         {
+            // A full queue: the viewer is already being dropped as too slow.
             let _ = v.tx.try_send(close_message(
                 POLICY_VIOLATION,
                 "this link is no longer active",
@@ -372,8 +374,11 @@ pub async fn upgrade(
     if !same_origin(&headers) {
         return ApiError::forbidden("cross-origin socket refused").into_response();
     }
-    ws.max_message_size(1024 * 1024)
-        .on_upgrade(move |socket| run(app, socket, board, user.display_name))
+    ws.max_message_size(1024 * 1024).on_upgrade(move |socket| {
+        let span =
+            tracing::info_span!("ws", conn = %Uuid::now_v7(), board = %board, user = %user.id);
+        run(app, socket, board, user.display_name).instrument(span)
+    })
 }
 
 struct Close(u16, String);
@@ -387,6 +392,8 @@ async fn run(app: AppState, socket: WebSocket, board: String, display_name: Stri
     let board = match Uuid::parse_str(&board) {
         Ok(id) if boards::exists(&app.db, &id).await.unwrap_or(false) => id,
         _ => {
+            tracing::debug!(reason = "unknown board", "socket refused");
+            // The client may already be gone; it is refused either way.
             let _ = sink
                 .send(close_message(POLICY_VIOLATION, "unknown board"))
                 .await;
@@ -397,6 +404,9 @@ async fn run(app: AppState, socket: WebSocket, board: String, display_name: Stri
     let (tx, rx) = mpsc::channel::<Message>(SEND_QUEUE);
     let too_slow = Arc::new(Notify::new());
     let writer = spawn_writer(sink, rx, too_slow.clone());
+    let opened = std::time::Instant::now();
+    tracing::info!("socket opened");
+    let mut from_client = None;
 
     let mut connection = Connection {
         app: app.clone(),
@@ -409,10 +419,14 @@ async fn run(app: AppState, socket: WebSocket, board: String, display_name: Stri
     while let Some(Ok(message)) = stream.next().await {
         let text = match message {
             Message::Text(text) => text,
-            Message::Close(_) => break,
+            Message::Close(frame) => {
+                from_client = Some(close_of(frame.as_ref()));
+                break;
+            }
             _ => continue,
         };
         if let Err(Close(code, reason)) = connection.handle(&text).await {
+            // If the writer is gone, so is the client: nothing to tell.
             let _ = tx.send(close_message(code, &reason)).await;
             break;
         }
@@ -425,31 +439,62 @@ async fn run(app: AppState, socket: WebSocket, board: String, display_name: Stri
     }
     drop(connection);
     drop(tx);
-    let _ = writer.await;
+    log_closed(writer.await.ok().flatten(), from_client, opened);
+}
+
+/// The code and reason of a close frame, 1005 when it carried none.
+fn close_of(frame: Option<&CloseFrame>) -> (u16, String) {
+    frame.map_or((1005, String::new()), |f| (f.code, f.reason.to_string()))
+}
+
+/// One line per socket: who closed it, how, and after how long.
+fn log_closed(
+    from_server: Option<(u16, String)>,
+    from_client: Option<(u16, String)>,
+    opened: std::time::Instant,
+) {
+    let duration_ms = opened.elapsed().as_millis() as u64;
+    let (by, (code, reason)) = match (from_server, from_client) {
+        (Some(close), _) => ("server", close),
+        (None, Some(close)) => ("client", close),
+        // 1006: gone without a close frame (a dropped network, a killed tab).
+        (None, None) => ("network", (1006, String::new())),
+    };
+    tracing::info!(by, code, reason, duration_ms, "socket closed");
 }
 
 /// Drains a connection's queue into its socket; ends it when the client falls
-/// too far behind or a close frame goes out.
+/// too far behind or a close frame goes out, and answers the close it sent.
 fn spawn_writer(
     mut sink: futures_util::stream::SplitSink<WebSocket, Message>,
     mut rx: mpsc::Receiver<Message>,
     too_slow: Arc<Notify>,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                message = rx.recv() => {
-                    let Some(message) = message else { break };
-                    let closing = matches!(message, Message::Close(_));
-                    if sink.send(message).await.is_err() || closing { break }
-                }
-                _ = too_slow.notified() => {
-                    let _ = sink.send(close_message(SERVER_ERROR, "too slow; resync")).await;
-                    break;
+) -> tokio::task::JoinHandle<Option<(u16, String)>> {
+    tokio::spawn(
+        async move {
+            loop {
+                tokio::select! {
+                    message = rx.recv() => {
+                        let message = message?;
+                        let closing = match &message {
+                            Message::Close(frame) => Some(close_of(frame.as_ref())),
+                            _ => None,
+                        };
+                        if sink.send(message).await.is_err() || closing.is_some() {
+                            return closing;
+                        }
+                    }
+                    _ = too_slow.notified() => {
+                        tracing::warn!(reason = "too slow", "dropping a client that fell behind");
+                        // Gone or not, the socket is closed from here on.
+                        let _ = sink.send(close_message(SERVER_ERROR, "too slow; resync")).await;
+                        return Some((SERVER_ERROR, "too slow; resync".into()));
+                    }
                 }
             }
         }
-    })
+        .in_current_span(),
+    )
 }
 
 // --- share-link viewers ------------------------------------------------------
@@ -468,12 +513,17 @@ pub async fn upgrade_viewer(
         return ApiError::forbidden("cross-origin socket refused").into_response();
     }
     ws.max_message_size(16 * 1024)
-        .on_upgrade(move |socket| run_viewer(app, socket, link))
+        .on_upgrade(move |socket| {
+            let span = tracing::info_span!("ws", conn = %Uuid::now_v7(), board = %link.canvas_id, share = %link.id);
+            run_viewer(app, socket, link).instrument(span)
+        })
 }
 
 async fn run_viewer(app: AppState, socket: WebSocket, link: ShareLink) {
     let (mut sink, mut stream) = socket.split();
     let Ok(board) = Uuid::parse_str(&link.canvas_id) else {
+        tracing::debug!(reason = "unknown board", "socket refused");
+        // The client may already be gone; it is refused either way.
         let _ = sink
             .send(close_message(POLICY_VIOLATION, "unknown board"))
             .await;
@@ -482,7 +532,10 @@ async fn run_viewer(app: AppState, socket: WebSocket, link: ShareLink) {
     let (tx, rx) = mpsc::channel::<Message>(SEND_QUEUE);
     let too_slow = Arc::new(Notify::new());
     let mut writer = spawn_writer(sink, rx, too_slow.clone());
-    let mut writer_done = false;
+    let mut writer_done = None;
+    let opened = std::time::Instant::now();
+    tracing::info!("socket opened");
+    let mut from_client = None;
     let id = Uuid::new_v4();
     let mut joined = false;
     let mut recheck = tokio::time::interval(std::time::Duration::from_secs(VIEWER_RECHECK_SECS));
@@ -492,7 +545,10 @@ async fn run_viewer(app: AppState, socket: WebSocket, link: ShareLink) {
             message = stream.next() => {
                 let Some(Ok(message)) = message else { break };
                 let Message::Text(text) = message else {
-                    if matches!(message, Message::Close(_)) { break }
+                    if let Message::Close(frame) = &message {
+                        from_client = Some(close_of(frame.as_ref()));
+                        break;
+                    }
                     continue;
                 };
                 if joined {
@@ -502,6 +558,8 @@ async fn run_viewer(app: AppState, socket: WebSocket, link: ShareLink) {
                 if frame.get("t").and_then(Value::as_str) != Some("hello") {
                     continue;
                 }
+                // A failed send below means the writer, and so the client, is
+                // gone: the loop ends on its own then.
                 if frame.get("protocolVersion").and_then(Value::as_i64) != Some(PROTOCOL_VERSION) {
                     let _ = tx.send(close_message(POLICY_VIOLATION, "protocol version not supported")).await;
                     break;
@@ -516,6 +574,7 @@ async fn run_viewer(app: AppState, socket: WebSocket, link: ShareLink) {
             }
             _ = recheck.tick() => {
                 if !matches!(crate::sharing::active_link(&app.db, &link.id).await, Ok(Some(_))) {
+                    // The client may be gone already; it is closed either way.
                     let _ = tx.send(close_message(POLICY_VIOLATION, "this link is no longer active")).await;
                     break;
                 }
@@ -523,8 +582,8 @@ async fn run_viewer(app: AppState, socket: WebSocket, link: ShareLink) {
             // The writer ends when it has sent a close (a revoke) or the client
             // is gone. Leave then, rather than waiting on a client that may
             // never answer the close.
-            _ = &mut writer => {
-                writer_done = true;
+            sent = &mut writer => {
+                writer_done = Some(sent.ok().flatten());
                 break;
             }
         }
@@ -533,9 +592,11 @@ async fn run_viewer(app: AppState, socket: WebSocket, link: ShareLink) {
         app.rooms.leave_viewer(&board, id);
     }
     drop(tx);
-    if !writer_done {
-        let _ = writer.await;
-    }
+    let from_server = match writer_done {
+        Some(sent) => sent,
+        None => writer.await.ok().flatten(),
+    };
+    log_closed(from_server, from_client, opened);
 }
 
 fn close_message(code: u16, reason: &str) -> Message {
@@ -655,7 +716,7 @@ impl Connection {
                     }
                 });
             }
-            other => tracing::debug!("ignoring unknown frame type '{other}'"),
+            other => tracing::debug!(frame = other, "ignoring an unknown frame type"),
         }
         Ok(())
     }

@@ -111,6 +111,7 @@ pub async fn find_board(db: &sqlx::SqlitePool, named: &str) -> Result<Board, Fai
 }
 
 pub fn db_fail(e: sqlx::Error) -> Fail {
+    tracing::error!(error = %e, "agent tool failed on the database");
     format!("The database could not answer ({e}). Try again.")
 }
 

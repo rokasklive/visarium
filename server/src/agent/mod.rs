@@ -224,6 +224,7 @@ async fn create_token(
             .bind(auth::hash_token(&token))
             .fetch_one(&app.db)
             .await?;
+    tracing::info!(token = %id, user = %me.id, "agent token created");
     Ok((
         StatusCode::CREATED,
         axum::Json(json!({ "id": id, "label": label, "token": token, "createdAt": created_at })),
@@ -278,6 +279,7 @@ async fn set_token_grant(
     if done.rows_affected() == 0 {
         return Err(ApiError::not_found(format!("no agent token {id}")));
     }
+    tracing::info!(token = %id, user = %me.id, manage_boards = body.manage_boards, "agent token grant changed");
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -344,6 +346,7 @@ async fn revoke_token(
     if done.rows_affected() == 0 {
         return Err(ApiError::not_found(format!("no agent token {id}")));
     }
+    tracing::info!(token = %id, user = %me.id, "agent token revoked");
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -593,7 +596,34 @@ fn discover() -> Value {
     })
 }
 
+/// One line per tool call: which tool, for whom, how it ended and how long it
+/// took. Never its arguments: they hold board titles and item text.
 async fn call(app: &AppState, caller: &Caller, params: &Value) -> Value {
+    use tracing::Instrument;
+    let name = params.get("name").and_then(Value::as_str).unwrap_or("");
+    // An unknown name is the client's text, so it is not recorded as is.
+    let tool = if TOOL_NAMES.contains(&name) || BOARD_TOOLS.contains(&name) {
+        name
+    } else {
+        "unknown"
+    };
+    let span = tracing::info_span!(
+        "tool",
+        tool,
+        agent = %caller.agent,
+        user = %caller.user.id,
+        board = tracing::field::Empty
+    );
+    let started = std::time::Instant::now();
+    let result = run_tool(app, caller, params).instrument(span.clone()).await;
+    let _entered = span.enter();
+    let duration_ms = started.elapsed().as_millis() as u64;
+    let ok = result.get("isError") != Some(&Value::Bool(true));
+    tracing::info!(ok, duration_ms, "tool call");
+    result
+}
+
+async fn run_tool(app: &AppState, caller: &Caller, params: &Value) -> Value {
     let name = params.get("name").and_then(Value::as_str).unwrap_or("");
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
     if BOARD_TOOLS.contains(&name) {
@@ -640,6 +670,7 @@ fn answer(app: &AppState, caller: &Caller, outcome: Result<Out, String>) -> Valu
     match outcome {
         Ok(out) => {
             if let Some((board, item, verb)) = &out.touched {
+                tracing::Span::current().record("board", tracing::field::display(board));
                 app.rooms.agent_seen(
                     board,
                     caller.presence_id(),

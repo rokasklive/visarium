@@ -17,6 +17,7 @@ fn main() {
         "check_for_updates",
         "install_update",
         "collect_diagnostics",
+        "log_client_error",
         "mark_library_opened",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(commands))

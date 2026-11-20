@@ -209,6 +209,7 @@ fn write_atomically(target: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let temp = target.with_extension(format!("building-{}", Uuid::new_v4().simple()));
     std::fs::write(&temp, bytes)?;
     std::fs::rename(&temp, target).inspect_err(|_| {
+        // The rename's error is the one returned; a stray temp is clutter.
         let _ = std::fs::remove_file(&temp);
     })
 }
@@ -268,6 +269,7 @@ async fn materialise(app: &AppState, asset: &Asset, widths: Vec<u32>) -> ApiResu
 struct TempFile(PathBuf);
 impl Drop for TempFile {
     fn drop(&mut self) {
+        // Already moved into place, or never written: nothing to clean up.
         let _ = std::fs::remove_file(&self.0);
     }
 }
@@ -413,8 +415,18 @@ async fn ingest(
         .into_iter()
         .filter(|w| (*w as i64) < asset.width)
         .collect();
-    if let Err(e) = materialise(app, &asset, ladder).await {
-        tracing::warn!(asset = %asset.id, "could not pre-generate derivatives: {}", e.detail);
+    let started = std::time::Instant::now();
+    let tiers = ladder.len();
+    match materialise(app, &asset, ladder).await {
+        Ok(_) => tracing::debug!(
+            asset = %asset.id,
+            tiers,
+            duration_ms = started.elapsed().as_millis() as u64,
+            "derivatives generated"
+        ),
+        Err(e) => {
+            tracing::warn!(asset = %asset.id, error = %e.detail, "could not pre-generate derivatives")
+        }
     }
     Ok(asset)
 }

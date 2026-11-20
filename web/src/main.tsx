@@ -1,5 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { reportErrorsToDesktop } from '~/api/desktop';
 import { AppProviders } from '~/app/providers';
 import './styles/app.css';
 
@@ -11,6 +12,8 @@ document.addEventListener('contextmenu', (event) => {
     event.target.closest('input, textarea, [contenteditable="true"]');
   if (!field) event.preventDefault();
 });
+
+reportErrorsToDesktop();
 
 const container = document.getElementById('root');
 if (!container) throw new Error('#root missing from index.html');

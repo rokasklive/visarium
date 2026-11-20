@@ -223,7 +223,7 @@ pub async fn session_user(
 /// Ends a device token on the server. Best effort: forgetting a connection
 /// must work when the server is gone.
 pub async fn revoke(http: &reqwest::Client, origin: &Url, token: &str) {
-    let _ = http
+    let sent = http
         .delete(origin.join("api/session").expect("relative path"))
         .header(
             header::COOKIE,
@@ -232,6 +232,9 @@ pub async fn revoke(http: &reqwest::Client, origin: &Url, token: &str) {
         .header("X-XSRF-TOKEN", CSRF)
         .send()
         .await;
+    if let Err(e) = sent.and_then(|r| r.error_for_status()) {
+        tracing::info!(origin = %origin, error = %e, "could not sign this device out on the server");
+    }
 }
 
 // --- signing in through the system browser (ADR-0027) -------------------------
@@ -424,6 +427,7 @@ async fn accept_code(listener: &tokio::net::TcpListener, state: &str) -> Result<
         } else {
             ("404 Not Found", "")
         };
+        // The browser tab may have closed; the hand-off goes on either way.
         let _ = socket
             .write_all(format!("HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes())
             .await;

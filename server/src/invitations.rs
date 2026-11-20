@@ -120,6 +120,7 @@ async fn create(
             .bind(&id)
             .fetch_one(&app.db)
             .await?;
+    tracing::info!(invitation = %id, purpose, by = %me.id, "invitation created");
     // The only time the token exists outside the invitee's hands.
     let mut out = serde_json::to_value(view).unwrap();
     out["link"] = json!(format!("/invite#{token}"));
@@ -154,6 +155,7 @@ async fn revoke(
     if done.rows_affected() == 0 {
         return Err(ApiError::not_found(format!("no unused invitation {id}")));
     }
+    tracing::info!(invitation = %id, by = %me.id, "invitation revoked");
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -264,6 +266,7 @@ pub async fn join_in(
     if used.rows_affected() != 1 {
         return Err(usable(Some(Row { used: true, ..row }), "join").unwrap_err());
     }
+    tracing::info!(invitation = %row.id, user = %user.id, "invitation accepted");
     Ok(user)
 }
 
@@ -310,6 +313,7 @@ async fn redeem(
         .await?;
         tx.commit().await?;
         auth::end_sessions_of(&app.db, &user_id, None).await?;
+        tracing::info!(invitation = %row.id, user = %user_id, "password reset; sessions ended");
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
     let username = body.username.unwrap_or_default();

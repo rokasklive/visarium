@@ -47,6 +47,7 @@ pub fn allow(app: &AppHandle, origin: &Url) -> tauri::Result<()> {
 
 /// What a previous run staged. Nothing is reading those files any more.
 pub fn clear() {
+    // Usually there is nothing to clear.
     let _ = std::fs::remove_dir_all(root());
 }
 
@@ -105,7 +106,7 @@ pub async fn drag_stage(asset: String, name: String, data: String) -> Result<Pat
         std::fs::write(&file, &bytes).map_err(|e| e.to_string())?;
         Ok(file)
     };
-    stage().inspect_err(|e| eprintln!("drag stage failed for {asset}: {e}"))
+    stage().inspect_err(|e| tracing::warn!(asset = %asset, error = %e, "drag stage failed"))
 }
 
 /// Starts a native drag of files `drag_stage` wrote, with the pointer still
@@ -122,7 +123,7 @@ pub fn drag_out(window: WebviewWindow, paths: Vec<PathBuf>) -> Result<(), String
     window
         .run_on_main_thread(move || {
             if let Err(e) = start(&target, paths, icon) {
-                eprintln!("drag out failed: {e}");
+                tracing::warn!(error = %e, "drag out failed");
             }
         })
         .map_err(|e| e.to_string())
