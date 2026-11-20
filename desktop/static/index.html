@@ -76,6 +76,8 @@
       .note { margin: 8px 0 0; color: var(--ink-dim); line-height: 1.5; }
       .problem { margin: 12px 0 0; line-height: 1.5; }
       .label.recent { margin: 32px 0 0; }
+      /* The release codename, as faint as the strip's in the app. */
+      #codename { position: fixed; bottom: 12px; left: 0; right: 0; text-align: center; font-size: 11px; letter-spacing: 0.025em; color: var(--ink-disabled); opacity: 0.6; }
       .or { margin: 16px 0 0; text-align: center; color: var(--ink-dim); font-size: 11px; }
     </style>
   </head>
@@ -221,8 +223,13 @@
         </div>
       </section>
     </main>
+    <p id="codename" aria-hidden="true"></p>
     <script>
       const { invoke } = window.__TAURI__.core;
+      // Same mapping as codenameFor in packages/api-client/src/meta.ts.
+      window.__TAURI__.app.getVersion().then((version) => {
+        document.getElementById('codename').textContent = version.startsWith('0.') ? 'Shirakawa' : version.startsWith('1.') ? 'Tokyo' : '';
+      });
       // No webview context menu (as in the app); text fields keep theirs.
       document.addEventListener('contextmenu', (event) => {
         if (!event.target.closest?.('input, textarea')) event.preventDefault();

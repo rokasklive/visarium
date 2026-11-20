@@ -1,4 +1,6 @@
+import { useQuery } from '@tanstack/react-query';
 import { Link, useMatchRoute, useNavigate } from '@tanstack/react-router';
+import { codenameFor, fetchServerInfo } from '@visarium/api-client';
 import { type ReactNode, useState } from 'react';
 import { useBoards, useRenameBoard } from '~/api/boards';
 import {
@@ -316,6 +318,8 @@ function StatusBar() {
   const sync = useUiStore((s) => s.sync);
   const connection = useUiStore((s) => s.connection);
   const outstanding = uploads.queued + uploads.active;
+  const server = useQuery({ queryKey: ['server-info'], queryFn: () => fetchServerInfo() });
+  const codename = codenameFor(server.data?.version);
 
   // Said only when it is not up: a permanent "backend: UP" is a developer readout.
   const backend = health.isPending
@@ -327,7 +331,16 @@ function StatusBar() {
         : (health.data?.status ?? 'unknown');
 
   return (
-    <footer className="flex h-[22px] shrink-0 items-center gap-3 border-t border-line bg-surface px-2 text-[11px] text-ink-dim">
+    <footer className="relative flex h-[22px] shrink-0 items-center gap-3 border-t border-line bg-surface px-2 text-[11px] text-ink-dim">
+      {codename && (
+        // The release's codename, centred and barely there: a signature, not a readout.
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute left-1/2 -translate-x-1/2 text-ink-disabled opacity-50"
+        >
+          {codename}
+        </span>
+      )}
       {outstanding > 0 && (
         // Tabular, because this counts down while the user watches and digits
         // that change width make it jitter. See DESIGN_SYSTEM.md.

@@ -15,3 +15,9 @@ export async function fetchServerInfo(client: ApiClient = api): Promise<ServerIn
   if (error || !data) throw new Error('Failed to load server info');
   return data;
 }
+
+/** Codename per major version; every pre-1.0 release is Shirakawa. */
+export function codenameFor(version: string | undefined) {
+  if (!version) return undefined;
+  return version.startsWith('0.') ? 'Shirakawa' : version.startsWith('1.') ? 'Tokyo' : undefined;
+}

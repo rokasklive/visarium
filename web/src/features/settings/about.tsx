@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useBlocker } from '@tanstack/react-router';
-import { fetchServerInfo } from '@visarium/api-client';
+import { codenameFor, fetchServerInfo } from '@visarium/api-client';
 import { type ComponentType, useState } from 'react';
 import { checkForUpdates, collectDiagnostics, installUpdate, localPort } from '~/api/desktop';
 import changelog from '../../../../CHANGELOG.md?raw';
@@ -120,7 +120,12 @@ export function About({
       <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-4 gap-y-2">
         <dt className="text-ink-dim">Version</dt>
         <dd className="flex flex-wrap items-center gap-3">
-          <span>{version ?? '—'}</span>
+          <span>
+            {version ?? '—'}
+            {codenameFor(version) ? (
+              <span className="ml-2 text-ink-dim italic">{codenameFor(version)}</span>
+            ) : null}
+          </span>
           <Button
             disabled={
               desktop.isPending || update?.type === 'checking' || update?.type === 'installing'
@@ -141,7 +146,10 @@ export function About({
         {update?.type === 'message' ? update.text : null}
         {update?.type === 'available' ? (
           <div className="flex flex-wrap items-center gap-2">
-            <span>Version {update.version} is available.</span>
+            <span>
+              Version {update.version}
+              {codenameFor(update.version) ? ` (${codenameFor(update.version)})` : ''} is available.
+            </span>
             {update.canInstall ? (
               <>
                 <Button onClick={() => void install(update.version)}>Install and Restart</Button>

@@ -9,6 +9,7 @@
     "allow-connect",
     "allow-connect-browser",
     "allow-connections",
-    "allow-forget"
+    "allow-forget",
+    "core:app:allow-version"
   ]
 }
