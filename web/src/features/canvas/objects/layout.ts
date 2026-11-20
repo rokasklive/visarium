@@ -264,9 +264,13 @@ async function layoutHtml(
     });
     const title = root.querySelector('[data-title]');
     if (title) hits.push({ kind: 'title', rect: local(title) });
+    // A checklist's tasks are link anchors by id (`t3`), like a diagram's elements.
+    const elements = new Map<string, LocalRect>();
+    for (const li of root.querySelectorAll<HTMLElement>('[data-task]')) {
+      if (li.dataset.task) elements.set(li.dataset.task, local(li));
+    }
     // A note's passages: named ones are link anchors, like a diagram's
     // elements; every one is a place a link can start from (canvas/text-anchors).
-    const elements = new Map<string, LocalRect>();
     const blocks: Block[] = [];
     for (const el of root.querySelectorAll<HTMLElement>('[data-block-index]')) {
       const rect = local(el);

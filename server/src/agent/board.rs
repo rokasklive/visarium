@@ -343,7 +343,8 @@ impl BoardData {
         r: &str,
         validate: bool,
     ) -> Result<(&ItemRow, Option<String>), Fail> {
-        let (item_ref, element) = match r.split_once('#') {
+        // `c1/t3` is a checklist task: the same anchor as `c1#t3`.
+        let (item_ref, element) = match r.split_once('#').or_else(|| r.split_once('/')) {
             Some((i, e)) => (i, Some(e.trim().to_string())),
             None => (r, None),
         };
@@ -365,9 +366,24 @@ impl BoardData {
             }
             return Ok((item, Some(element)));
         }
+        if item.kind == "checklist" {
+            let tasks = self.checklist(item)?.tasks;
+            if validate && !tasks.iter().any(|t| t.id == element) {
+                return Err(format!(
+                    "{} has no task '{element}'. Its tasks: {}.",
+                    item.short_ref(),
+                    if tasks.is_empty() {
+                        "none".into()
+                    } else {
+                        tasks.iter().map(|t| t.id.as_str()).collect::<Vec<_>>().join(", ")
+                    }
+                ));
+            }
+            return Ok((item, Some(element)));
+        }
         if item.kind != "diagram" {
             return Err(format!(
-                "{} is a {}; only a diagram's elements and a note's passages can be pointed at with #.",
+                "{} is a {}; only a diagram's elements, a note's passages and a checklist's tasks can be pointed at with #.",
                 item.short_ref(),
                 item.kind
             ));
@@ -410,6 +426,13 @@ impl BoardData {
             let names = crate::agent::blocks::block_names(note.body.as_deref().unwrap_or(""));
             return if names.iter().any(|n| n == element) { Anchored::Whole } else { Anchored::Broken };
         }
+        if let Some(list) = self.item(item_id).filter(|i| i.kind == "checklist") {
+            return match self.checklist(list) {
+                Ok(c) if c.tasks.iter().any(|t| t.id == element) => Anchored::Whole,
+                Ok(_) => Anchored::Broken,
+                Err(_) => Anchored::Unknown,
+            };
+        }
         match self.item(item_id).and_then(|i| self.structure(i)) {
             Some(Extracted::Known(s)) if s.elements.iter().any(|e| e == element) => Anchored::Whole,
             Some(Extracted::Known(_)) => Anchored::Broken,
@@ -432,6 +455,9 @@ impl BoardData {
     /// `d1#OpQueue`, or `d1` for a whole item.
     pub fn anchor_text(&self, item_id: &str, element: Option<&str>) -> String {
         match element {
+            Some(e) if self.item(item_id).is_some_and(|i| i.kind == "checklist") => {
+                format!("{}/{e}", self.ref_of(item_id))
+            }
             Some(e) => format!("{}#{e}", self.ref_of(item_id)),
             None => self.ref_of(item_id),
         }

@@ -13,6 +13,7 @@ import {
   distanceToSegment,
   elementAt,
   linkNear,
+  linkPoints,
   nearestPoints,
   nextLinkType,
   segmentBetween,
@@ -122,8 +123,31 @@ describe('links', () => {
     const note = r(100, -260, 500, -140);
     const lifeline = r(410, 0, 430, 800);
     const s = segmentBetween(note, lifeline, 1);
-    expect(s.to.x).toBe(420);
+    expect(Math.abs(s.to.x - 420)).toBeLessThan(6); // pad pulls the end back along the diagonal
     expect(s.to.y).toBeLessThan(0);
     expect(s.to.y).toBeGreaterThan(-10);
+    expect(s.from.x).toBeLessThan(310); // origin near the note's bottom-edge middle (300)
+  });
+
+  it('start at the middle of the source edge facing the target', () => {
+    const r = (minX: number, minY: number, maxX: number, maxY: number) => ({
+      minX,
+      minY,
+      maxX,
+      maxY,
+    });
+    expect(linkPoints(r(0, 0, 100, 50), r(60, 200, 200, 300))).toEqual({
+      from: { x: 50, y: 50 },
+      to: { x: 80, y: 200 },
+    });
+    expect(linkPoints(r(0, 0, 100, 100), r(300, 50, 400, 300))).toEqual({
+      from: { x: 100, y: 50 },
+      to: { x: 300, y: 75 },
+    });
+    // Apart on both axes: the wider gap's edge.
+    expect(linkPoints(r(0, 0, 100, 100), r(300, 150, 400, 250))).toEqual({
+      from: { x: 100, y: 50 },
+      to: { x: 300, y: 150 },
+    });
   });
 });

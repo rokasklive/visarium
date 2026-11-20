@@ -893,10 +893,10 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
                 // item.create refuses a missing asset.
                 let (kind, _) = item_kind(tx, board, &a.item_id).await?.ok_or_else(|| no_item(&a.item_id))?;
                 if let Some(e) = &a.element {
-                    // A diagram's elements, or a note's passages (canvas/text-anchors).
-                    if kind != "diagram" && kind != "note" {
+                    // A diagram's elements, a note's passages (canvas/text-anchors), a checklist's tasks.
+                    if kind != "diagram" && kind != "note" && kind != "checklist" {
                         return Err(ApiError::bad_request(format!(
-                            "link {end}: only a diagram or a note has named parts, and item {} is a {kind}",
+                            "link {end}: only a diagram, a note or a checklist has named parts, and item {} is a {kind}",
                             a.item_id
                         )));
                     }

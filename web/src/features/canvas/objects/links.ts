@@ -3,7 +3,7 @@
  * line between them, and finding the link under the pointer.
  *
  * All geometry is world units. An anchor is a whole item or one named element
- * inside a diagram; its box is the axis-aligned bounds of that area as the item
+ * inside it (a diagram element, a note passage, a checklist task); its box is the axis-aligned bounds of that area as the item
  * is placed now (rotated items get the bounds of their rotated box).
  */
 
@@ -48,8 +48,9 @@ export function elementAt(layout: Layout, point: Vec2): string | undefined {
 
 /** The anchor at a world point on an item: one of its elements, or the whole item. */
 export function anchorAt(item: CanvasItem, view: ObjectView | undefined, world: Vec2): Anchor {
-  // A diagram's elements, a note's named passages (canvas/text-anchors).
-  if ((item.content.kind !== 'diagram' && item.content.kind !== 'note') || !view)
+  // A diagram's elements, a note's named passages (canvas/text-anchors), a checklist's tasks.
+  const kind = item.content.kind;
+  if ((kind !== 'diagram' && kind !== 'note' && kind !== 'checklist') || !view)
     return { itemId: item.id, element: null };
   if (item.content.kind === 'note') {
     // A passage, by name; the note's opening heading is its title, and a link
@@ -161,6 +162,25 @@ export function nearestPoints(a: Rect, b: Rect): Segment {
   return { from: { x: ax, y: ay }, to: { x: bx, y: by } };
 }
 
+/**
+ * Like nearestPoints, but the origin sits at the middle of the source's facing
+ * edge: the edge across the gap, or across the wider gap when the boxes are
+ * apart on both axes. The target end is unchanged. Overlapping boxes have no
+ * facing edge and keep nearestPoints.
+ */
+export function linkPoints(a: Rect, b: Rect): Segment {
+  const s = nearestPoints(a, b);
+  const gapX = Math.max(b.minX - a.maxX, a.minX - b.maxX);
+  const gapY = Math.max(b.minY - a.maxY, a.minY - b.maxY);
+  if (gapX <= 0 && gapY <= 0) return s;
+  // s.from already lies on the facing edge; slide it to that edge's middle.
+  const from =
+    gapY >= gapX
+      ? { x: (a.minX + a.maxX) / 2, y: s.from.y }
+      : { x: s.from.x, y: (a.minY + a.maxY) / 2 };
+  return { from, to: s.to };
+}
+
 export interface Segment {
   readonly from: Vec2;
   readonly to: Vec2;
@@ -168,7 +188,7 @@ export interface Segment {
 
 /** Nearest point to nearest point, each end a few screen pixels off its box. */
 export function segmentBetween(from: Rect, to: Rect, zoom: number): Segment {
-  const s = nearestPoints(from, to);
+  const s = linkPoints(from, to);
   const dx = s.to.x - s.from.x;
   const dy = s.to.y - s.from.y;
   const len = Math.hypot(dx, dy);

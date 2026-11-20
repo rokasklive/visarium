@@ -1048,6 +1048,21 @@ async fn a_note_is_created_beside_its_subject_and_linked_in_one_call() {
     );
 }
 
+#[tokio::test]
+async fn a_link_can_end_at_one_checklist_task() {
+    let w = world().await;
+    let text = w
+        .ok("link", json!({ "board": "Offline sync", "from": "c1/t4", "to": "d1#OpQueue", "type": "implements" }))
+        .await;
+    assert!(text.contains("c1/t4 implements d1#OpQueue"), "{text}");
+    let b = w.data().await;
+    assert!(b.links.iter().any(|l| l.from_element.as_deref() == Some("t4")));
+    let err = w
+        .fails("link", json!({ "board": "Offline sync", "from": "c1#t99", "to": "d1", "type": "implements" }))
+        .await;
+    assert!(err.contains("has no task 't99'") && err.contains("t4"), "{err}");
+}
+
 fn person_note(id: &str, x: f64, y: f64, w: f64, h: f64) -> Value {
     json!({ "type": "item.create", "itemId": id, "z": 1.0,
         "transform": { "x": x, "y": y, "width": w, "height": h, "rotation": 0.0 },

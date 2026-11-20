@@ -661,7 +661,7 @@ pub const INSTRUCTIONS: &str = "Visarium is a shared desk of boards. A board hol
 
 Read in layers: desk lists boards; board_read gives a board's overview; item_read gives one item in full; trace follows one item or diagram element to everything linked to it. search finds text across boards. changes says what happened since a revision.
 
-Refs: every item has a short ref on its board — n (note), d (diagram), c (checklist), i (image), g (group or frame) and a number, e.g. d2. An element inside a diagram is d2#Server (the node, participant or class name). A task is c1/t3.
+Refs: every item has a short ref on its board — n (note), d (diagram), c (checklist), i (image), g (group or frame) and a number, e.g. d2. An element inside a diagram is d2#Server (the node, participant or class name). A task is c1/t3, and a link can end at one.
 
 Links have a type and a direction. A link from A to B of type `describes` means A describes B; `comments` means A comments on B; `implements` means A implements B; `depends-on` means A depends on B. Point a note at what it explains, a checklist at what it builds.
 

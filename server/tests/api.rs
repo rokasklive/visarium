@@ -533,7 +533,7 @@ async fn notes_diagrams_checklists_and_links() {
         (json!({ "type": "task.add", "itemId": note, "task": { "id": "t9", "text": "x" } }), "not a checklist"),
         (json!({ "type": "task.add", "itemId": list, "task": { "id": "t1", "text": "x" } }), "already in this checklist"),
         (json!({ "type": "link.add", "linkId": id(), "from": { "itemId": note }, "to": { "itemId": note }, "linkType": "describes" }), "two different ends"),
-        (json!({ "type": "link.add", "linkId": id(), "from": { "itemId": list, "element": "Pay" }, "to": { "itemId": flow }, "linkType": "describes" }), "only a diagram or a note has named parts"),
+        (json!({ "type": "link.add", "linkId": id(), "from": { "itemId": image, "element": "Pay" }, "to": { "itemId": flow }, "linkType": "describes" }), "only a diagram, a note or a checklist has named parts"),
         (json!({ "type": "link.add", "linkId": id(), "from": { "itemId": note }, "to": { "itemId": flow, "element": "x".repeat(201) }, "linkType": "describes" }), "element name is 1-200"),
         (json!({ "type": "link.add", "linkId": id(), "from": { "itemId": note }, "to": { "itemId": flow }, "linkType": "likes" }), "link type must be one of"),
         (json!({ "type": "link.add", "linkId": id(), "from": { "itemId": note }, "to": { "itemId": id() }, "linkType": "describes" }), "no item"),
