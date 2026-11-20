@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, type Page, test } from '@playwright/test';
-import { signedIn } from './session';
+import { sidebarOpen, signedIn } from './session';
 
 /**
  * An asset in the library becoming an item on a board.
@@ -140,6 +140,7 @@ const panel = (page: Page) => page.getByRole('region', { name: 'Library' });
 
 test.beforeEach(async ({ page }) => {
   await signedIn(page);
+  await sidebarOpen(page);
 });
 
 test('a dropped asset becomes an item without an upload or a placeholder', async ({ page }) => {

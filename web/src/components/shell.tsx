@@ -70,7 +70,7 @@ export function Shell({ children }: { children: ReactNode }) {
 
       <div className="flex min-h-0 flex-1">
         {sidebarOpen && (
-          <aside className="w-56 shrink-0 overflow-y-auto border-r border-line bg-surface p-2">
+          <aside className="flex w-56 shrink-0 flex-col border-r border-line bg-surface p-2">
             <Sidebar />
           </aside>
         )}
@@ -214,95 +214,101 @@ function Sidebar() {
 
   return (
     <>
-      {onBoard && <LibraryPanel />}
+      <div className="min-h-0 flex-1 overflow-y-auto">{onBoard && <LibraryPanel />}</div>
 
-      <nav aria-label="Collections">
-        <h2 className="mb-1 text-[11px] uppercase tracking-wide text-ink-dim">Collections</h2>
+      {/* Pinned to the bottom and folded with a native <details>: navigation
+          that stays put whatever the library above it is doing. */}
+      <nav aria-label="Collections" className="shrink-0 border-t border-line pt-2">
+        <details open>
+          <summary className="mb-1 cursor-pointer text-[11px] uppercase tracking-wide text-ink-dim hover:text-ink">
+            <h2 className="inline">Collections</h2>
+          </summary>
 
-        <form
-          className="mb-2 flex gap-1"
-          onSubmit={(event) => {
-            event.preventDefault();
-            const trimmed = name.trim();
-            if (!trimmed) return;
-            create.mutate(trimmed);
-            setName('');
-          }}
-        >
-          <input
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            placeholder="New collection"
-            aria-label="New collection name"
-            className="min-w-0 flex-1 rounded border border-line bg-surface-raised px-1.5 py-0.5 text-ink placeholder:text-ink-disabled focus:border-line-strong focus:outline-none"
-          />
-          <button
-            type="submit"
-            disabled={!name.trim() || create.isPending}
-            className="rounded border border-line px-1.5 py-0.5 text-ink-dim hover:bg-surface-raised hover:text-ink disabled:text-ink-disabled"
+          <form
+            className="mb-2 flex gap-1"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const trimmed = name.trim();
+              if (!trimmed) return;
+              create.mutate(trimmed);
+              setName('');
+            }}
           >
-            add
-          </button>
-        </form>
+            <input
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="New collection"
+              aria-label="New collection name"
+              className="min-w-0 flex-1 rounded border border-line bg-surface-raised px-1.5 py-0.5 text-ink placeholder:text-ink-disabled focus:border-line-strong focus:outline-none"
+            />
+            <button
+              type="submit"
+              disabled={!name.trim() || create.isPending}
+              className="rounded border border-line px-1.5 py-0.5 text-ink-dim hover:bg-surface-raised hover:text-ink disabled:text-ink-disabled"
+            >
+              add
+            </button>
+          </form>
 
-        {create.isError && <p className="mb-2 text-ink">{create.error.message}</p>}
-        {collections.isError && <p className="text-ink">collections could not be loaded</p>}
-        {collections.data?.length === 0 && (
-          // Stated plainly, with what a collection is — the word does not carry
-          // its own meaning here, because it is not a folder.
-          <p className="text-ink-dim">
-            No collections yet. They are logical, not folders: an image can be in several.
-          </p>
-        )}
+          {create.isError && <p className="mb-2 text-ink">{create.error.message}</p>}
+          {collections.isError && <p className="text-ink">collections could not be loaded</p>}
+          {collections.data?.length === 0 && (
+            // Stated plainly, with what a collection is — the word does not carry
+            // its own meaning here, because it is not a folder.
+            <p className="text-ink-dim">
+              No collections yet. They are logical, not folders: an image can be in several.
+            </p>
+          )}
 
-        <ul>
-          {collections.data?.map((collection) => (
-            <li key={collection.id} className="group flex items-center gap-1 py-0.5">
-              <button
-                type="button"
-                onClick={() =>
-                  void navigate({ to: '/library', search: { collection: collection.id } })
-                }
-                className="min-w-0 flex-1 truncate text-left text-ink-dim hover:text-ink"
-              >
-                {collection.name}
-              </button>
-              {/* Live text, so `ink-dim`: `ink-disabled` is for controls that are off. */}
-              <span className="shrink-0 tabular-nums text-[11px] text-ink-dim">
-                {collection.assetCount}
-              </span>
-              <button
-                type="button"
-                aria-label={`Rename ${collection.name}`}
-                onClick={() => {
-                  const next = globalThis.prompt('Rename collection', collection.name)?.trim();
-                  if (next && next !== collection.name) {
-                    rename.mutate({ id: collection.id, name: next });
+          <ul className="max-h-[40vh] overflow-y-auto">
+            {collections.data?.map((collection) => (
+              <li key={collection.id} className="group flex items-center gap-1 py-0.5">
+                <button
+                  type="button"
+                  onClick={() =>
+                    void navigate({ to: '/library', search: { collection: collection.id } })
                   }
-                }}
-                className="shrink-0 text-[11px] text-ink-dim opacity-0 hover:text-ink group-hover:opacity-100 group-focus-within:opacity-100"
-              >
-                rename
-              </button>
-              {/*
+                  className="min-w-0 flex-1 truncate text-left text-ink-dim hover:text-ink"
+                >
+                  {collection.name}
+                </button>
+                {/* Live text, so `ink-dim`: `ink-disabled` is for controls that are off. */}
+                <span className="shrink-0 tabular-nums text-[11px] text-ink-dim">
+                  {collection.assetCount}
+                </span>
+                <button
+                  type="button"
+                  aria-label={`Rename ${collection.name}`}
+                  onClick={() => {
+                    const next = globalThis.prompt('Rename collection', collection.name)?.trim();
+                    if (next && next !== collection.name) {
+                      rename.mutate({ id: collection.id, name: next });
+                    }
+                  }}
+                  className="shrink-0 text-[11px] text-ink-dim opacity-0 hover:text-ink group-hover:opacity-100 group-focus-within:opacity-100"
+                >
+                  rename
+                </button>
+                {/*
                 Deleting a collection deletes membership, never images. Said
                 out loud because the two are easy to confuse and only one of
                 them would be unrecoverable.
               */}
-              <ConfirmButton
-                label={`Delete ${collection.name}`}
-                question={`Delete "${collection.name}"? Its images are not deleted.`}
-                onConfirm={() => {
-                  remove.mutate(collection.id);
-                  void navigate({ to: '/library', search: {} });
-                }}
-                className="shrink-0 text-[11px] text-ink-dim opacity-0 hover:text-ink group-hover:opacity-100 group-focus-within:opacity-100"
-              >
-                delete
-              </ConfirmButton>
-            </li>
-          ))}
-        </ul>
+                <ConfirmButton
+                  label={`Delete ${collection.name}`}
+                  question={`Delete "${collection.name}"? Its images are not deleted.`}
+                  onConfirm={() => {
+                    remove.mutate(collection.id);
+                    void navigate({ to: '/library', search: {} });
+                  }}
+                  className="shrink-0 text-[11px] text-ink-dim opacity-0 hover:text-ink group-hover:opacity-100 group-focus-within:opacity-100"
+                >
+                  delete
+                </ConfirmButton>
+              </li>
+            ))}
+          </ul>
+        </details>
       </nav>
     </>
   );

@@ -2,7 +2,11 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, type Page, test } from '@playwright/test';
-import { SIGNED_IN_USER } from './session';
+import { SIGNED_IN_USER, sidebarOpen } from './session';
+
+test.beforeEach(async ({ page }) => {
+  await sidebarOpen(page);
+});
 
 /**
  * M07's exit criterion, as one walk.

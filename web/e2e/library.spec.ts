@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, type Page, test } from '@playwright/test';
-import { signedIn } from './session';
+import { sidebarOpen, signedIn } from './session';
 
 /**
  * The library at a size nobody would sit and create by hand.
@@ -111,6 +111,7 @@ const cells = (page: Page) => page.locator('[data-testid="library-scroller"] li'
 // spec that reaches a route has to answer that first.
 test.beforeEach(async ({ page }) => {
   await signedIn(page);
+  await sidebarOpen(page);
 });
 
 test('draws a bounded number of elements however large the library is', async ({ page }) => {

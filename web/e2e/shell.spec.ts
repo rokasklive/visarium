@@ -26,10 +26,15 @@ test('boots and navigates', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Library' })).toBeVisible();
 });
 
-test('sidebar collapses', async ({ page }) => {
+test('sidebar starts collapsed, opens, and remembers it', async ({ page }) => {
   await page.goto('/');
-  const toggle = page.getByRole('button', { name: 'Sidebar' });
-  await expect(page.getByRole('navigation', { name: 'Collections' })).toBeVisible();
-  await toggle.click();
-  await expect(page.getByRole('navigation', { name: 'Collections' })).toBeHidden();
+  const nav = page.getByRole('navigation', { name: 'Collections' });
+  await expect(nav).toBeHidden();
+  await page.getByRole('button', { name: 'Sidebar' }).click();
+  await expect(nav).toBeVisible();
+  await page.reload();
+  await expect(nav).toBeVisible();
+  // The collections fold to their heading.
+  await nav.getByRole('heading', { name: 'Collections' }).click();
+  await expect(nav.getByRole('textbox', { name: 'New collection name' })).toBeHidden();
 });

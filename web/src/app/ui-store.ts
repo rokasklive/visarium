@@ -162,9 +162,19 @@ interface UiState {
 export const AGENT_LINGER_MS = 10_000;
 let agentLinger: ReturnType<typeof setTimeout> | undefined;
 
+/** Sidebar starts collapsed; once someone opens it, it stays open on this device. */
+const SIDEBAR_KEY = 'visarium.sidebar';
+function readSidebar(): boolean {
+  try {
+    return localStorage.getItem(SIDEBAR_KEY) === 'open';
+  } catch {
+    return false;
+  }
+}
+
 export const useUiStore = create<UiState>((set) => ({
   tool: 'select',
-  sidebarOpen: true,
+  sidebarOpen: readSidebar(),
   libraryFilter: { q: '', collection: undefined },
   placeAssets: null,
   selectedItemIds: new Set(),
@@ -180,7 +190,16 @@ export const useUiStore = create<UiState>((set) => ({
   boardNotice: null,
   toolbarCollapsed: false,
   setTool: (tool) => set({ tool }),
-  toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
+  toggleSidebar: () =>
+    set((s) => {
+      const sidebarOpen = !s.sidebarOpen;
+      try {
+        localStorage.setItem(SIDEBAR_KEY, sidebarOpen ? 'open' : 'closed');
+      } catch {
+        // Storage refused (private window): it still applies until reload.
+      }
+      return { sidebarOpen };
+    }),
   setSelection: (ids) =>
     set((s) => {
       const selectedItemIds = new Set(ids);

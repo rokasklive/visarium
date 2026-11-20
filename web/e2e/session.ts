@@ -60,3 +60,8 @@ export async function signedIn(page: Page): Promise<void> {
     return route.fulfill({ json: { setupRequired: false, user: SIGNED_IN_USER } });
   });
 }
+
+/** The sidebar starts collapsed; specs that use it start with it open. */
+export async function sidebarOpen(page: Page): Promise<void> {
+  await page.addInitScript(() => localStorage.setItem('visarium.sidebar', 'open'));
+}
