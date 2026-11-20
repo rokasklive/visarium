@@ -11,6 +11,14 @@ import { defineConfig } from 'vite';
  */
 const BACKEND = process.env.VITE_BACKEND_URL ?? 'http://localhost:8080';
 
+// The same UTC build stamp travels with the embedded desktop and server bundle.
+const BUILD = new Date()
+  .toISOString()
+  .slice(0, 16)
+  .replace(/-/g, '.')
+  .replace('T', '.')
+  .replace(':', '');
+
 export default defineConfig(({ mode }) => ({
   plugins: [tanstackRouter({ target: 'react', autoCodeSplitting: true }), react(), tailwindcss()],
   resolve: {
@@ -57,5 +65,8 @@ export default defineConfig(({ mode }) => ({
   // Defined in EVERY mode, so `DEVTOOLS` is a literal at build time and Rollup
   // drops the inspector's dynamic import. Left undefined, it would be read at
   // run time, and the chunk would ship (check:bundle caught exactly that).
-  define: { 'import.meta.env.VITE_DEVTOOLS': JSON.stringify(mode === 'devtools' ? '1' : '') },
+  define: {
+    'import.meta.env.VITE_DEVTOOLS': JSON.stringify(mode === 'devtools' ? '1' : ''),
+    __VISARIUM_BUILD__: JSON.stringify(BUILD),
+  },
 }));

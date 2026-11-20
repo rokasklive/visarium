@@ -22,6 +22,9 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg(all(target_os = "macos", feature = "alpha-updater"))]
+mod alpha_update;
+mod about;
 mod connect;
 mod drag_out;
 mod local_port;
@@ -41,7 +44,10 @@ const GREETING: &str = "http://tauri.localhost/";
 const GREETING: &str = "tauri://localhost/";
 
 /// The keychain service every device token is filed under.
+#[cfg(not(all(target_os = "macos", feature = "alpha-updater")))]
 const KEYCHAIN: &str = "dev.visarium.desktop";
+#[cfg(all(target_os = "macos", feature = "alpha-updater"))]
+const KEYCHAIN: &str = "dev.visarium.desktop.alpha";
 
 struct Desktop {
     http: reqwest::Client,
@@ -283,16 +289,21 @@ fn main() {
             drag_out::drag_stage,
             drag_out::drag_out,
             local_port::local_port,
-            local_port::set_local_port
+            local_port::set_local_port,
+            about::check_for_updates,
+            about::install_update,
+            about::collect_diagnostics,
+            about::mark_library_opened
         ])
         .setup(|app| {
+            about::setup(app)?;
             let data = app.path().app_data_dir()?;
             let cache = app.path().app_cache_dir()?;
             let config = visarium::Config {
                 database: data.join("visarium.db"),
                 assets: data.join("assets"),
                 derivatives: cache.join("derivatives"),
-                version: env!("CARGO_PKG_VERSION").into(),
+                version: app.package_info().version.to_string(),
                 single_user: true,
                 ..Default::default()
             };
@@ -333,12 +344,18 @@ fn main() {
 
             let handle = app.handle().clone();
             WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
-                .on_navigation(move |url| match connect::provider_link(url) {
-                    Some(link) => {
-                        provider_link_in_browser(&handle, link);
-                        false
+                .on_navigation(move |url| {
+                    #[cfg(all(target_os = "macos", feature = "alpha-updater"))]
+                    if !alpha_update::allow_navigation(&handle, url) {
+                        return false;
                     }
-                    None => true,
+                    match connect::provider_link(url) {
+                        Some(link) => {
+                            provider_link_in_browser(&handle, link);
+                            false
+                        }
+                        None => true,
+                    }
                 })
                 .title("Visarium")
                 .inner_size(1440.0, 900.0)
@@ -360,6 +377,10 @@ fn main() {
                 "local" => app.state::<local_port::LocalPort>().library(),
                 _ => return,
             };
+            #[cfg(all(target_os = "macos", feature = "alpha-updater"))]
+            if !alpha_update::allow_navigation(app, &target) {
+                return;
+            }
             let _ = window.set_title("Visarium");
             let _ = window.navigate(target);
         })

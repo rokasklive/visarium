@@ -177,6 +177,7 @@
         <p id="no-boards" class="note" hidden>No boards yet.</p>
         <p id="local-problem" class="problem" role="alert" hidden></p>
         <button id="library" type="button">Open library</button>
+        <button id="settings" type="button">Settings</button>
       </section>
 
       <div class="rule" aria-hidden="true"></div>
@@ -262,6 +263,7 @@
 
       let library = null;
       $('library').addEventListener('click', () => { if (library) location.href = library; });
+      $('settings').addEventListener('click', () => { if (library) location.href = new URL('settings', library).href; });
       invoke('local_boards')
         .then((local) => {
           library = local.library;

@@ -67,3 +67,40 @@ export async function copyText(text: string): Promise<boolean> {
     return done;
   }
 }
+
+export type UpdateStatus =
+  | { status: 'available'; version: string; canInstall: boolean }
+  | { status: 'current' | 'unconfigured' };
+
+async function desktopCommand<T>(command: string, args?: unknown): Promise<T> {
+  const app = tauri();
+  if (!app) throw new Error('Open the desktop library to use this action.');
+  try {
+    return (await app.invoke(command, args)) as T;
+  } catch (error) {
+    throw new Error(
+      typeof error === 'string' ? error : 'The desktop action could not be completed.',
+    );
+  }
+}
+
+export function checkForUpdates() {
+  return desktopCommand<UpdateStatus>('check_for_updates');
+}
+
+export function installUpdate(version: string) {
+  return desktopCommand<void>('install_update', { version });
+}
+
+export function collectDiagnostics(build: string) {
+  return desktopCommand<string>('collect_diagnostics', { build });
+}
+
+export function markLibraryOpened() {
+  // The native permission applies only to the embedded library.
+  if (window.location.hostname === '127.0.0.1') {
+    void tauri()
+      ?.invoke('mark_library_opened')
+      .catch(() => {});
+  }
+}

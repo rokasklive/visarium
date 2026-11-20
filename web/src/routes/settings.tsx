@@ -25,6 +25,7 @@ import {
 import { copyText, type LocalPort, localPort, setLocalPort } from '~/api/desktop';
 import { type Account, providerStart, useSession } from '~/api/session';
 import { ConfirmButton } from '~/components/confirm-button';
+import { About } from '~/features/settings/about';
 
 export const Route = createFileRoute('/settings')({ component: Settings });
 
@@ -47,6 +48,7 @@ function Settings() {
   return (
     <div className="mx-auto w-full max-w-2xl p-6">
       <h1 className="mb-6 text-base">Settings</h1>
+      {me ? <About Heading={SectionHeading} Button={GhostButton} /> : null}
       {me ? <SelfSection me={me} /> : null}
       {me && !session.data?.singleUser ? <SignInMethods /> : null}
       {me && !session.data?.singleUser ? <SessionsSection /> : null}

@@ -155,6 +155,7 @@ pub async fn set_local_port(app: AppHandle, port: State<'_, LocalPort>, value: u
 /// Lets the embedded library at `origin` read and move its port. The grant's
 /// one id means a move replaces it rather than adding another.
 pub fn allow(app: &AppHandle, origin: &Url) -> tauri::Result<()> {
+    crate::about::allow(app, origin)?;
     app.add_capability(
         CapabilityBuilder::new("local-port")
             .local(false)
