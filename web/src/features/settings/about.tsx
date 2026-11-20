@@ -43,8 +43,6 @@ export function About({
     shouldBlockFn: () => update?.type === 'installing',
     enableBeforeUnload: false,
   });
-  const [collecting, setCollecting] = useState(false);
-  const [bundleMessage, setBundleMessage] = useState('');
   const version = server.data?.version;
   const notes = notesFor(version);
 
@@ -74,43 +72,6 @@ export function About({
       await installUpdate(offeredVersion);
     } catch (error) {
       setUpdate({ type: 'message', text: (error as Error).message });
-    }
-  }
-
-  async function collect() {
-    setCollecting(true);
-    setBundleMessage('');
-    try {
-      if (desktop.data) {
-        const name = await collectDiagnostics(__VISARIUM_BUILD__);
-        setBundleMessage(`Saved ${name} in Downloads.`);
-      } else {
-        const data = {
-          version,
-          build: __VISARIUM_BUILD__,
-          protocolVersion: server.data?.protocolVersion,
-          events: [
-            {
-              time: new Date().toISOString(),
-              source: 'settings.collect_diagnostics',
-              level: 'info',
-            },
-          ],
-        };
-        const url = URL.createObjectURL(
-          new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }),
-        );
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = 'visarium-diagnostics.json';
-        link.click();
-        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-        setBundleMessage('Downloaded visarium-diagnostics.json.');
-      }
-    } catch (error) {
-      setBundleMessage(error instanceof Error ? error.message : 'Could not collect diagnostics.');
-    } finally {
-      setCollecting(false);
     }
   }
 
@@ -161,15 +122,7 @@ export function About({
           </div>
         ) : null}
       </div>
-      <div className="my-4 flex flex-wrap items-center gap-3">
-        <Button disabled={collecting || desktop.isPending} onClick={() => void collect()}>
-          Collect bundle
-        </Button>
-        <span className="text-ink-dim" role="status">
-          {bundleMessage}
-        </span>
-      </div>
-      <h3 className="mb-2 text-[11px] uppercase tracking-wide text-ink-dim">Changelog</h3>
+      <h3 className="mt-4 mb-2 text-[11px] uppercase tracking-wide text-ink-dim">Changelog</h3>
       {notes?.length ? (
         <ul className="list-disc space-y-1 pl-5">
           {notes.map((note) => (
@@ -181,6 +134,84 @@ export function About({
           {server.isPending ? 'Loading changelog…' : 'No changelog is available for this version.'}
         </p>
       )}
+    </section>
+  );
+}
+
+/**
+ * A file to attach to a bug report, saved here and sent nowhere. Says what is in
+ * it, because "diagnostics" alone reads like it could be anything.
+ */
+export function Diagnostics({
+  Heading,
+  Button,
+}: {
+  Heading: ComponentType<{ children: string }>;
+  Button: ComponentType<{ children: string; onClick: () => void; disabled?: boolean }>;
+}) {
+  const server = useQuery({ queryKey: ['server-info'], queryFn: () => fetchServerInfo() });
+  const desktop = useQuery({
+    queryKey: ['desktop-library'],
+    queryFn: async () => (await localPort()) !== undefined,
+  });
+  const [collecting, setCollecting] = useState(false);
+  const [bundleMessage, setBundleMessage] = useState('');
+  const version = server.data?.version;
+
+  async function collect() {
+    setCollecting(true);
+    setBundleMessage('');
+    try {
+      if (desktop.data) {
+        const name = await collectDiagnostics(__VISARIUM_BUILD__);
+        setBundleMessage(`Saved ${name} in Downloads.`);
+      } else {
+        const data = {
+          version,
+          build: __VISARIUM_BUILD__,
+          protocolVersion: server.data?.protocolVersion,
+          events: [
+            {
+              time: new Date().toISOString(),
+              source: 'settings.collect_diagnostics',
+              level: 'info',
+            },
+          ],
+        };
+        const url = URL.createObjectURL(
+          new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }),
+        );
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'visarium-diagnostics.json';
+        link.click();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+        setBundleMessage('Downloaded visarium-diagnostics.json.');
+      }
+    } catch (error) {
+      setBundleMessage(error instanceof Error ? error.message : 'Could not collect diagnostics.');
+    } finally {
+      setCollecting(false);
+    }
+  }
+
+  return (
+    <section className="mb-6 border-b border-line pb-6" aria-label="Diagnostics">
+      <Heading>Diagnostics</Heading>
+      <p className="mb-3 text-ink-dim">
+        If something goes wrong, save a diagnostic file and attach it to your report.{' '}
+        {desktop.data
+          ? 'It holds the version, build and system, and when and where recent warnings and errors happened — never their text, and nothing from your boards. It is saved to Downloads and sent nowhere.'
+          : 'It holds the version and build, and nothing from your boards. Your browser downloads it; it is sent nowhere.'}
+      </p>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button disabled={collecting || desktop.isPending} onClick={() => void collect()}>
+          Save diagnostic file
+        </Button>
+        <span className="text-ink-dim" role="status">
+          {bundleMessage}
+        </span>
+      </div>
     </section>
   );
 }

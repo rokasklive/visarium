@@ -26,7 +26,7 @@ import { copyText, type LocalPort, localPort, setLocalPort } from '~/api/desktop
 import { type Account, providerStart, useSession } from '~/api/session';
 import { ConfirmButton } from '~/components/confirm-button';
 import { useShortcutLegend } from '~/features/canvas/shortcut-legend';
-import { About } from '~/features/settings/about';
+import { About, Diagnostics } from '~/features/settings/about';
 
 export const Route = createFileRoute('/settings')({ component: Settings });
 
@@ -53,6 +53,7 @@ function Settings() {
     ['agents', 'Agents', !!me],
     ['canvas', 'Canvas', true],
     ['accounts', 'Accounts', !!me?.admin && shared],
+    ['diagnostics', 'Diagnostics', !!me],
     ['about', 'About', !!me],
   ];
 
@@ -92,6 +93,11 @@ function Settings() {
         {me ? <AgentsSection singleUser={!shared} /> : null}
         <CanvasSection />
         {me?.admin && shared ? <AdminSection meId={me.id} /> : null}
+        {me ? (
+          <div id="diagnostics" className="scroll-mt-6">
+            <Diagnostics Heading={SectionHeading} Button={GhostButton} />
+          </div>
+        ) : null}
         {me ? (
           <div id="about" className="scroll-mt-6">
             <About Heading={SectionHeading} Button={GhostButton} />
