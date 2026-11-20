@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { SYNCED, type SyncStatus } from '~/features/canvas/board-sync';
 import type { DraggedAsset } from '~/features/canvas/capture';
 import type { ConnectionState } from '~/features/canvas/realtime';
+import type { SearchResult } from '~/features/canvas/search';
 import { IDLE, type UploadFailure, type UploadStatus } from '~/features/canvas/upload';
 
 /**
@@ -118,6 +119,22 @@ interface UiState {
    */
   cropItemId: string | null;
   setCropItemId: (id: string | null) => void;
+  /**
+   * Quick search on the open board (canvas/quick-search): `null` while closed.
+   * `results` are occurrences in board order; `current` indexes them.
+   * `focus` counts open requests, so opening it again refocuses the field.
+   */
+  search: {
+    readonly query: string;
+    readonly results: readonly SearchResult[];
+    readonly current: number;
+    readonly focus: number;
+  } | null;
+  openSearch: () => void;
+  setSearchQuery: (query: string) => void;
+  setSearchResults: (results: readonly SearchResult[]) => void;
+  stepSearch: (delta: 1 | -1) => void;
+  closeSearch: () => void;
   setTool: (tool: Tool) => void;
   toggleSidebar: () => void;
   setSelection: (ids: Iterable<string>) => void;
@@ -152,6 +169,7 @@ export const useUiStore = create<UiState>((set) => ({
   placeAssets: null,
   selectedItemIds: new Set(),
   cropItemId: null,
+  search: null,
   uploads: IDLE,
   uploadFailures: [],
   sync: SYNCED,
@@ -171,6 +189,23 @@ export const useUiStore = create<UiState>((set) => ({
       return { selectedItemIds, cropItemId: keep ? s.cropItemId : null };
     }),
   setCropItemId: (cropItemId) => set({ cropItemId }),
+  openSearch: () =>
+    set((s) => ({
+      search: s.search
+        ? { ...s.search, focus: s.search.focus + 1 }
+        : { query: '', results: [], current: 0, focus: 1 },
+    })),
+  setSearchQuery: (query) => set((s) => (s.search ? { search: { ...s.search, query } } : {})),
+  // A new result list starts at its first result (canvas/quick-search).
+  setSearchResults: (results) =>
+    set((s) => (s.search ? { search: { ...s.search, results, current: 0 } } : {})),
+  stepSearch: (delta) =>
+    set((s) => {
+      const n = s.search?.results.length ?? 0;
+      if (!s.search || n === 0) return {};
+      return { search: { ...s.search, current: (s.search.current + delta + n) % n } };
+    }),
+  closeSearch: () => set({ search: null }),
   setLibraryFilter: (libraryFilter) => set({ libraryFilter }),
   // Wrapped: zustand reads a bare function argument as an updater, and this
   // value IS a function.

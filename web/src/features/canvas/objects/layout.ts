@@ -12,6 +12,7 @@
  */
 
 import { type CanvasItem, type DiagramLang, textScaleOf } from '@visarium/canvas-core';
+import { measureIn, textIndex } from '../search';
 import { slug } from './blocks';
 import { loadMarkdown, loadMermaid, loadPlantUml, type MermaidPalette } from './loaders';
 import { type ObjectPalette, objectCss } from './style';
@@ -41,6 +42,14 @@ export interface Layout {
   readonly elements: ReadonlyMap<string, LocalRect>;
   /** A note's passages in reading order, named or not (canvas/text-anchors). */
   readonly blocks?: readonly Block[];
+  /** The drawn text, passages separated by `\n` (canvas/quick-search). */
+  readonly text: string;
+  /**
+   * Where each occurrence of `query` is drawn, item-local, several rects for
+   * one that wraps. Mounts the markup off-screen again for the length of the
+   * call, so it is for the few items a search matches, not for every frame.
+   */
+  measure(query: string): LocalRect[][];
 }
 
 export interface Block {
@@ -144,20 +153,35 @@ export function layoutSource(source: string, width: number): Promise<Layout> {
 
 async function layoutNote(source: string, width: number): Promise<Layout> {
   const md = await loadMarkdown();
-  return layoutHtml(md.sanitize(md.parse(source)), width, (root) => {
-    // Task checkboxes become drawn boxes: a native input rasterises in the
-    // platform's grey, and a span takes the palette and becomes a hit region.
-    // Matched as plain `input`: marked only emits inputs for task items, and
-    // the browser build of DOMPurify drops their `type` attribute.
-    root.querySelectorAll('input').forEach((input, index) => {
-      const box = document.createElement('span');
-      box.className = `vo-box${input.hasAttribute('checked') ? ' on' : ''}`;
-      box.dataset.box = String(index);
-      input.closest('li')?.classList.add('vo-task');
-      input.replaceWith(box);
-    });
-    nameBlocks(root);
+  return layoutHtml(md.sanitize(md.parse(source)), width, prepareNote);
+}
+
+/**
+ * A note's drawn markup without laying it out: what search reads for a note
+ * that is not on screen, so its text is the same as once it is drawn.
+ */
+export function noteHtml(md: { parse(s: string): string; sanitize(h: string): string }) {
+  return (source: string): string => {
+    const root = document.createElement('div');
+    root.innerHTML = md.sanitize(md.parse(source));
+    prepareNote(root);
+    return root.innerHTML;
+  };
+}
+
+function prepareNote(root: HTMLElement): void {
+  // Task checkboxes become drawn boxes: a native input rasterises in the
+  // platform's grey, and a span takes the palette and becomes a hit region.
+  // Matched as plain `input`: marked only emits inputs for task items, and
+  // the browser build of DOMPurify drops their `type` attribute.
+  root.querySelectorAll('input').forEach((input, index) => {
+    const box = document.createElement('span');
+    box.className = `vo-box${input.hasAttribute('checked') ? ' on' : ''}`;
+    box.dataset.box = String(index);
+    input.closest('li')?.classList.add('vo-task');
+    input.replaceWith(box);
   });
+  nameBlocks(root);
 }
 
 /**
@@ -284,6 +308,7 @@ async function layoutHtml(
       });
     }
 
+    const text = textIndex(root).text;
     const markup = new XMLSerializer().serializeToString(root);
     const body = `<foreignObject x="0" y="0" width="${width}" height="${height}"><div xmlns="${XHTML}"><style>${escapeXml(css)}</style>${markup}</div></foreignObject>`;
     return {
@@ -292,6 +317,21 @@ async function layoutHtml(
       hits,
       elements,
       blocks,
+      text,
+      measure: (query) => {
+        const again = document.createElement('div');
+        const sheet = document.createElement('style');
+        sheet.textContent = css;
+        again.append(sheet);
+        again.insertAdjacentHTML('beforeend', markup);
+        offscreen().append(again);
+        try {
+          const laid = again.lastElementChild as HTMLElement;
+          return measureIn(laid, laid.getBoundingClientRect(), query);
+        } finally {
+          again.remove();
+        }
+      },
       svg: (scale) =>
         `<svg xmlns="${SVG}" width="${width * scale}" height="${height * scale}" viewBox="0 0 ${width} ${height}">${body}</svg>`,
     };
@@ -327,8 +367,10 @@ async function layoutDiagram(lang: DiagramLang, source: string, width: number): 
   const live = document.importNode(svg, true) as unknown as SVGSVGElement;
   offscreen().append(live);
   const elements = new Map<string, LocalRect>();
+  let text = '';
   try {
     const origin = live.getBoundingClientRect();
+    text = textIndex(live).text;
     for (const [name, els] of elementsOf(live, lang)) {
       // An element drawn in parts (a sequence participant's head, lifeline and
       // foot) is the box around all of them.
@@ -354,6 +396,17 @@ async function layoutDiagram(lang: DiagramLang, source: string, width: number): 
     height,
     hits: [],
     elements,
+    text,
+    measure: (query) => {
+      const parsed = new DOMParser().parseFromString(serialised, 'image/svg+xml').documentElement;
+      const again = document.importNode(parsed, true) as unknown as SVGSVGElement;
+      offscreen().append(again);
+      try {
+        return measureIn(again, again.getBoundingClientRect(), query);
+      } finally {
+        again.remove();
+      }
+    },
     svg: (scale) =>
       serialised.replace(
         /^<svg([^>]*?)\swidth="[^"]*"([^>]*?)\sheight="[^"]*"/,

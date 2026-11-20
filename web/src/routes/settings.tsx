@@ -25,6 +25,7 @@ import {
 import { copyText, type LocalPort, localPort, setLocalPort } from '~/api/desktop';
 import { type Account, providerStart, useSession } from '~/api/session';
 import { ConfirmButton } from '~/components/confirm-button';
+import { useShortcutLegend } from '~/features/canvas/shortcut-legend';
 import { About } from '~/features/settings/about';
 
 export const Route = createFileRoute('/settings')({ component: Settings });
@@ -53,8 +54,24 @@ function Settings() {
       {me && !session.data?.singleUser ? <SessionsSection /> : null}
       {me ? <AgentsSection singleUser={session.data?.singleUser ?? false} /> : null}
       {me?.admin && !session.data?.singleUser ? <AdminSection meId={me.id} /> : null}
+      <CanvasSection />
       {me ? <About Heading={SectionHeading} Button={GhostButton} /> : null}
     </div>
+  );
+}
+
+/** How the canvas looks on this device; kept in this browser, not the account. */
+function CanvasSection() {
+  const [legend, setLegend] = useShortcutLegend();
+  return (
+    <section className="mb-6 border-b border-line pb-6">
+      <SectionHeading>Canvas</SectionHeading>
+      <label className="flex items-center gap-2 text-ink" data-testid="shortcut-legend-setting">
+        <input type="checkbox" checked={legend} onChange={(e) => setLegend(e.target.checked)} />
+        Show shortcut legend
+        <span className="text-ink-dim">(lower-left of the board, on this device)</span>
+      </label>
+    </section>
   );
 }
 

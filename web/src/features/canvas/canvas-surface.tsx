@@ -113,7 +113,7 @@ import {
 import { useGifs } from './gif';
 import { copySelection, NO_ORIGINALS, NOTICES } from './interchange';
 import { nameBlock } from './objects/blocks';
-import type { Block, Layout } from './objects/layout';
+import { type Block, type Layout, noteHtml } from './objects/layout';
 import {
   anchorAt,
   anchorBox,
@@ -129,7 +129,7 @@ import {
   nextLinkType,
   segmentBetween,
 } from './objects/links';
-import { loaded as objectRenderersLoaded } from './objects/loaders';
+import { loadMarkdown, loaded as objectRenderersLoaded } from './objects/loaders';
 import { drawnHeight, isObject, layoutKey, ObjectLayouts, type ObjectView } from './objects/store';
 import { useObjectEditing } from './objects/use-editing';
 import {
@@ -141,6 +141,9 @@ import {
   remoteSelectionMarks,
 } from './presence-layer';
 import { agentIsWorking, BoardRealtime, EMPTY_PRESENCE, type RemotePresence } from './realtime';
+import { fallbackText, findResults, type SearchTarget, targetKey } from './search';
+import { SearchBar } from './search-bar';
+import { SearchMarks } from './search-marks';
 import {
   cropTargetOf,
   duplicateSelection,
@@ -148,6 +151,8 @@ import {
   SelectionToolbar,
   soleGroupId,
 } from './selection-toolbar';
+import { ShortcutLegend } from './shortcut-legend';
+import { SpaceTap } from './shortcuts';
 import { type UploadedAsset, UploadQueue } from './upload';
 
 /**
@@ -336,6 +341,8 @@ export function CanvasSurface({
   /** Derived group contours, invalidated by the geometry signature inside each entry. */
   const frameCacheRef = useRef(new Map<GroupId, FrameEntry>());
   const spaceHeld = useRef(false);
+  /** Tells a tap of Space (search) from a hold (pan), canvas/quick-search. */
+  const spaceTap = useRef(new SpaceTap());
 
   const [camera, setCamera] = useState<Camera>(DEFAULT_CAMERA);
   const [marquee, setMarqueeState] = useState<Rect | null>(null);
@@ -423,6 +430,12 @@ export function CanvasSurface({
     if (!DEVTOOLS) return;
     const hook = {
       layout: (id: string) => objects.debug(asItemId(id)),
+      /** What search reads and where it would highlight (canvas/quick-search). */
+      search: (id: string, query: string) => {
+        const item = doc.item(asItemId(id));
+        const layout = item && objects.view(item)?.layout;
+        return layout ? { text: layout.text, rects: layout.measure(query) } : undefined;
+      },
       loaded: objectRenderersLoaded,
       apply: (...bodies: CanvasOperationBody[]) => {
         const changed = history.apply(...bodies);
@@ -507,6 +520,11 @@ export function CanvasSurface({
   // Bitmaps follow the active set: what is drawn is pinned, what has left is
   // aborted, and the tier each item wants comes from its size on screen.
   const bitmaps = useBitmaps(active.visible, camera.zoom, bitmapBudgetBytes, objects);
+  // What a search may mark or measure: only what is on screen (canvas/quick-search).
+  const visibleIds = useMemo(
+    () => new Set<ItemId>(active.visible.map((v) => v.item.id)),
+    [active.visible],
+  );
   // Only what is on screen plays (the active set has no preload margin); a
   // frame repaints the items layer without a React render.
   const gifs = useGifs(
@@ -1324,6 +1342,11 @@ export function CanvasSurface({
    * transforms, so it costs the same on a 100,000-item board as on an empty one.
    * `fitRect` clamps, so framing one 64px icon does not zoom to 32x.
    */
+  /** Fit a world rectangle to the canvas: framing and search both land this way. */
+  const fitBounds = useCallback((bounds: Rect) => {
+    setCamera(fitRect(view.current.size, bounds));
+  }, []);
+
   const frameView = useCallback(() => {
     const selected = selectionRef.current;
     const target =
@@ -1337,8 +1360,84 @@ export function CanvasSurface({
         : // Nothing selected: the board's centerpiece, when it has one (canvas/centerpiece).
           (doc.centerpieceBounds() ?? doc.index.bounds());
     if (!target) return;
-    setCamera(fitRect(view.current.size, target));
-  }, [doc]);
+    fitBounds(target);
+  }, [doc, fitBounds]);
+
+  /** Fit one search target the way framing fits a selection (canvas/quick-search). */
+  const fitTarget = useCallback(
+    (target: SearchTarget) => {
+      const bounds =
+        target.kind === 'item' ? doc.index.boundsOf(target.id) : doc.groupBounds(target.id);
+      if (bounds) fitBounds(bounds);
+    },
+    [doc, fitBounds],
+  );
+
+  /*
+   * Quick search (canvas/quick-search). Never over other work: not while an
+   * object is being edited in place, a crop is open, or a gesture is under way.
+   * A focused text field is handled where the keys arrive (`isTyping`).
+   */
+  const editingId = useRef<string | null | undefined>(null);
+  editingId.current = objectEditing.editingId;
+  const openSearch = useUiStore((s) => s.openSearch);
+  const canSearch = useCallback(
+    () =>
+      !editingId.current && !useUiStore.getState().cropItemId && gesture.current.kind === 'none',
+    [],
+  );
+  /** Esc: close on the current result, which becomes the selection. */
+  const closeSearchOnResult = useCallback(() => {
+    const state = useUiStore.getState();
+    const result = state.search?.results[state.search.current];
+    state.closeSearch();
+    if (!result) return;
+    const { target } = result;
+    if (target.kind === 'item') setSelection([target.id]);
+    else setSelection([...doc.items()].filter((i) => i.groupId === target.id).map((i) => i.id));
+  }, [doc, setSelection]);
+
+  const search = useUiStore((s) => s.search);
+  const searchQuery = search?.query;
+  // Results once per query, a beat after typing stops. A note not laid out
+  // yet is read through the same renderer its drawing will use.
+  useEffect(() => {
+    if (searchQuery === undefined) return;
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      const unlaid = [...doc.items()].some((i) => i.content.kind === 'note' && !objects.view(i));
+      const markdown = unlaid ? noteHtml(await loadMarkdown()) : undefined;
+      if (cancelled) return;
+      const results = findResults(
+        doc,
+        searchQuery,
+        (item) => objects.view(item)?.layout.text ?? fallbackText(item, markdown),
+      );
+      useUiStore.getState().setSearchResults(results);
+    }, 80);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [doc, objects, searchQuery]);
+
+  // The camera follows the current result only when it moves to another item.
+  const currentResult = search?.results[search.current];
+  const currentKey = currentResult ? targetKey(currentResult.target) : undefined;
+  const fittedKey = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (currentKey === undefined || currentKey === fittedKey.current) return;
+    fittedKey.current = currentKey;
+    const state = useUiStore.getState().search;
+    const result = state?.results[state.current];
+    if (result) fitTarget(result.target);
+  }, [currentKey, fitTarget]);
+  useEffect(() => {
+    if (!search) fittedKey.current = undefined;
+  }, [search]);
+  // Another board, or leaving this one: nothing found here stays open.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: closing on a document change is the point
+  useEffect(() => () => useUiStore.getState().closeSearch(), [doc]);
 
   /*
    * Opening a board lands on its centerpiece, fitted to the canvas, once the
@@ -1362,8 +1461,18 @@ export function CanvasSurface({
       // cluster "40s cinema" sets its opacity to 40% and deletes it.
       if (isTyping(event.target)) return;
 
-      if (event.code === 'Space') spaceHeld.current = true;
+      if (event.code === 'Space') {
+        spaceHeld.current = true;
+        spaceTap.current.down(performance.now(), event.repeat);
+      } else spaceTap.current.interrupt();
       const mod = event.ctrlKey || event.metaKey;
+
+      // The browser's own find cannot see canvas text, so the key is ours.
+      if (mod && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'f') {
+        event.preventDefault();
+        if (canSearch()) openSearch();
+        return;
+      }
 
       if (mod && event.key.toLowerCase() === 'z') {
         event.preventDefault();
@@ -1380,6 +1489,11 @@ export function CanvasSurface({
       if ((event.key === 'Escape' || event.key === 'Enter') && useUiStore.getState().cropItemId) {
         event.preventDefault();
         setCropItemId(null);
+        return;
+      }
+      if (event.key === 'Escape' && useUiStore.getState().search) {
+        event.preventDefault();
+        closeSearchOnResult();
         return;
       }
       if (event.key === 'Escape') {
@@ -1517,21 +1631,36 @@ export function CanvasSurface({
       }
     };
     const onKeyUp = (event: KeyboardEvent) => {
-      if (event.code === 'Space') spaceHeld.current = false;
+      if (event.code === 'Space') {
+        spaceHeld.current = false;
+        // A tap rather than a hold: search, unless something else has the keys.
+        if (spaceTap.current.up(performance.now()) && !isTyping(event.target) && canSearch())
+          openSearch();
+      }
       setCropHeld(event.ctrlKey && event.altKey);
     };
+    // A press while Space is down makes it a pan, never a tap.
+    const onPointer = () => spaceTap.current.interrupt();
     // A keyup that happens in another window never arrives here.
-    const onBlur = () => setCropHeld(false);
+    const onBlur = () => {
+      setCropHeld(false);
+      spaceTap.current.interrupt();
+    };
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('pointerdown', onPointer, true);
     window.addEventListener('blur', onBlur);
     return () => {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('pointerdown', onPointer, true);
       window.removeEventListener('blur', onBlur);
     };
   }, [
     abandonGesture,
+    canSearch,
+    closeSearchOnResult,
+    openSearch,
     commit,
     doc,
     frameView,
@@ -2491,6 +2620,19 @@ export function CanvasSurface({
                 perfectDrawEnabled={false}
               />
             ))}
+            {search && search.results.length > 0 && (
+              <SearchMarks
+                doc={doc}
+                query={search.query}
+                results={search.results}
+                current={search.current}
+                visible={visibleIds}
+                viewport={visibleWorldRect(camera, size)}
+                viewOf={(item) => objects.view(item)}
+                zoom={camera.zoom}
+                accent={theme.accent}
+              />
+            )}
             {focusMarks.map((mark) => (
               <KonvaRect
                 key={mark.key}
@@ -2593,6 +2735,8 @@ export function CanvasSurface({
           theme={theme}
         />
         {!readOnly && <CanvasToolbar history={history} onHistory={redraw} onFrame={frameView} />}
+        <SearchBar onClose={closeSearchOnResult} />
+        <ShortcutLegend readOnly={readOnly} width={width} />
         {!readOnly && (
           <SelectionToolbar
             doc={doc}
