@@ -115,7 +115,7 @@ export function About({
   }
 
   return (
-    <section className="mb-6 border-b border-line pb-6" aria-label="About">
+    <section className="mt-6" aria-label="About">
       <Heading>About</Heading>
       <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-4 gap-y-2">
         <dt className="text-ink-dim">Version</dt>

@@ -48,12 +48,12 @@ function Settings() {
   return (
     <div className="mx-auto w-full max-w-2xl p-6">
       <h1 className="mb-6 text-base">Settings</h1>
-      {me ? <About Heading={SectionHeading} Button={GhostButton} /> : null}
       {me ? <SelfSection me={me} /> : null}
       {me && !session.data?.singleUser ? <SignInMethods /> : null}
       {me && !session.data?.singleUser ? <SessionsSection /> : null}
       {me ? <AgentsSection singleUser={session.data?.singleUser ?? false} /> : null}
       {me?.admin && !session.data?.singleUser ? <AdminSection meId={me.id} /> : null}
+      {me ? <About Heading={SectionHeading} Button={GhostButton} /> : null}
     </div>
   );
 }
