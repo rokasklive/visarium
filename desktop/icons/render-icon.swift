@@ -19,8 +19,8 @@ NSBezierPath(roundedRect: rect, xRadius: 185, yRadius: 185).fill()
 
 let vRows = ["##..##", "##..##", "##..##", "##..##", "##..##", "######", ".####.", "..##.."]
 let rowColors = [0xffffff, 0xffffff, 0xffffff, 0xffffff, 0xf5e3b5, 0xf9c59a, 0xf87562, 0x31c5b7]
-let pitch = 50.4
-let dot = 25.2
+let pitch = 60.0
+let dot = 30.0
 let left = (size - (5 * pitch + dot)) / 2
 let bottom = (size - (7 * pitch + dot)) / 2
 let rows = zip(vRows, rowColors).enumerated().map { row, pair in
