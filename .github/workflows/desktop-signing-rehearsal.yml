@@ -50,7 +50,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '26'
+          node-version: "26"
 
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 
@@ -71,7 +71,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         env:
-          AWS_LC_SYS_PREBUILT_NASM: '1'
+          AWS_LC_SYS_PREBUILT_NASM: "1"
         run: pnpm run desktop:build --ci --target "$TARGET" --bundles nsis --no-sign -- --locked
 
       - name: Build the unsigned Linux packages
@@ -184,7 +184,6 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-
   notarized-alpha:
     if: inputs.notarized_alpha
     name: Notarized macOS alpha pair (Apple Silicon)
@@ -197,7 +196,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '26'
+          node-version: "26"
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       - name: Install build tools and dependencies
         run: |

@@ -73,20 +73,16 @@ pub fn setup(app: &mut tauri::App) -> tauri::Result<()> {
 }
 
 pub fn allow(app: &AppHandle, origin: &Url) -> tauri::Result<()> {
+    // The custom IPC transport supplies only the origin. Each About command
+    // checks the webview's current Settings path before doing any work.
     app.add_capability(
         CapabilityBuilder::new("desktop-about")
             .local(false)
-            .remote(format!("{origin}settings"))
+            .remote(format!("{origin}*"))
             .window("main")
             .permission("allow-check-for-updates")
             .permission("allow-install-update")
-            .permission("allow-collect-diagnostics"),
-    )?;
-    app.add_capability(
-        CapabilityBuilder::new("desktop-library-opened")
-            .local(false)
-            .remote(format!("{origin}*"))
-            .window("main")
+            .permission("allow-collect-diagnostics")
             .permission("allow-mark-library-opened"),
     )
 }

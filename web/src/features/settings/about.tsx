@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { useBlocker } from '@tanstack/react-router';
 import { fetchServerInfo } from '@visarium/api-client';
 import { type ComponentType, useState } from 'react';
 import { checkForUpdates, collectDiagnostics, installUpdate, localPort } from '~/api/desktop';
@@ -38,6 +39,10 @@ export function About({
     queryFn: async () => (await localPort()) !== undefined,
   });
   const [update, setUpdate] = useState<UpdateView>();
+  useBlocker({
+    shouldBlockFn: () => update?.type === 'installing',
+    enableBeforeUnload: false,
+  });
   const [collecting, setCollecting] = useState(false);
   const [bundleMessage, setBundleMessage] = useState('');
   const version = server.data?.version;
@@ -126,9 +131,7 @@ export function About({
           </Button>
         </dd>
         <dt className="text-ink-dim">Build</dt>
-        <dd>
-          <time>{__VISARIUM_BUILD__}</time>
-        </dd>
+        <dd>{__VISARIUM_BUILD__}</dd>
       </dl>
       <div className="mt-2 text-ink-dim" role="status" aria-live="polite">
         {update?.type === 'checking' ? 'Checking for updates…' : null}
