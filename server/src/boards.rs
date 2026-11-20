@@ -419,7 +419,10 @@ pub enum Op {
         #[serde(default)]
         z: f64,
         content: Content,
+        // Absent, not null, on the wire: the client's frame check drops a null.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         group_id: Option<Uuid>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         appearance: Option<Appearance>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         crop: Option<Crop>,
@@ -463,8 +466,11 @@ pub enum Op {
     #[serde(rename = "group.create", rename_all = "camelCase")]
     GroupCreate {
         group_id: Uuid,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         member_ids: Option<Vec<Uuid>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         label: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         frame: Option<bool>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         collides: Option<bool>,

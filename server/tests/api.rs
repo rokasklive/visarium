@@ -892,7 +892,7 @@ async fn realtime_presence_previews_and_announced_ops() {
     );
     assert_eq!(
         op["operations"][0],
-        json!({ "type": "group.create", "groupId": group, "memberIds": null, "label": "x", "frame": null })
+        json!({ "type": "group.create", "groupId": group, "label": "x" })
     );
 
     // Attribution is the server's: a peer hears the stamped body, whatever the author claimed.
@@ -923,6 +923,9 @@ async fn realtime_presence_previews_and_announced_ops() {
         heard["operations"][0]["content"]["tasks"][0]["by"],
         me.as_str()
     );
+    // The web client drops a frame with `"groupId": null`, so absent stays absent.
+    let created = heard["operations"][0].as_object().unwrap();
+    assert!(!created.contains_key("groupId") && !created.contains_key("appearance"));
     assert_ne!(heard["operations"][0]["content"]["tasks"][0]["at"], "1999");
 
     drop(a);
