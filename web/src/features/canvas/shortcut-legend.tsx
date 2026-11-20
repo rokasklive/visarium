@@ -68,7 +68,7 @@ function Rows({ shortcuts }: { shortcuts: readonly Shortcut[] }) {
     <div key={`${s.keys.join('+')}:${s.label}`} className="contents">
       <dt className="flex gap-0.5">
         {s.keys.map((k) =>
-          k === 'drag' ? (
+          k === 'drag' || k === 'hold' ? (
             <span key={k} className="px-0.5">
               drag
             </span>
