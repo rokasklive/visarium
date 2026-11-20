@@ -26,8 +26,21 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { keys: ['Mod', 'Z'], label: 'Undo', needsEdit: true, handles: "key.toLowerCase() === 'z'" },
   { keys: ['Mod', 'A'], label: 'Select all', handles: "key.toLowerCase() === 'a'" },
   { keys: ['Esc'], label: 'Deselect', handles: "key === 'Escape'" },
-  // Not a key, but undiscoverable otherwise: a click selects the whole group.
-  { keys: ['hold'], label: 'Edit one in a group', needsEdit: true, handles: 'holdToPick(' },
+  // Pointer gestures, not keys, but undiscoverable otherwise. A key with a
+  // space in it is shown as words, not a keycap.
+  {
+    keys: ['Double-click empty space'],
+    label: 'New note',
+    needsEdit: true,
+    handles: 'startNewNote.current(world)',
+  },
+  // A click selects the whole group.
+  {
+    keys: ['Hold click + drag'],
+    label: 'Edit one in a group',
+    needsEdit: true,
+    handles: 'holdToPick(',
+  },
   {
     keys: ['Mod', 'D'],
     label: 'Duplicate',
