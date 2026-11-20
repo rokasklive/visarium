@@ -23,7 +23,12 @@ pub const GROUP_PAD: f64 = GRID;
 /// Bounds of a stored transform, rotation (radians) included.
 pub fn bounds(x: f64, y: f64, w: f64, h: f64, rotation: f64) -> Rect {
     let (c, s) = (rotation.cos().abs(), rotation.sin().abs());
-    Rect { x, y, w: w * c + h * s, h: w * s + h * c }
+    Rect {
+        x,
+        y,
+        w: w * c + h * s,
+        h: w * s + h * c,
+    }
 }
 
 /// One item as the solver sees it.
@@ -50,7 +55,11 @@ fn snap_out(d: f64) -> f64 {
 }
 
 fn shifted(r: Rect, (dx, dy): (f64, f64)) -> Rect {
-    Rect { x: r.x + dx, y: r.y + dy, ..r }
+    Rect {
+        x: r.x + dx,
+        y: r.y + dy,
+        ..r
+    }
 }
 
 /// Moves for every moving body a cause overlaps, breadth-first. Causes, and
@@ -63,14 +72,22 @@ fn push(bodies: &[Body], causes: &[usize]) -> HashMap<usize, (f64, f64)> {
     let mut pushes = 0;
     while let Some(c) = queue.pop_front() {
         for j in 0..bodies.len() {
-            if j == c || pinned.contains(&j) || !bodies[j].moving || !rects[c].overlaps(&rects[j], 0.0) {
+            if j == c
+                || pinned.contains(&j)
+                || !bodies[j].moving
+                || !rects[c].overlaps(&rects[j], 0.0)
+            {
                 continue;
             }
             if pushes == MAX_PUSHES {
                 return moved;
             }
             let blocked = |r: &Rect| {
-                (0..bodies.len()).any(|k| k != j && (pinned.contains(&k) || !bodies[k].moving) && r.overlaps(&rects[k], 0.0))
+                (0..bodies.len()).any(|k| {
+                    k != j
+                        && (pinned.contains(&k) || !bodies[k].moving)
+                        && r.overlaps(&rects[k], 0.0)
+                })
             };
             let (a, b) = (rects[c], rects[j]);
             // Down, right, up, left: the tie order (reading order).
@@ -82,12 +99,18 @@ fn push(bodies: &[Body], causes: &[usize]) -> HashMap<usize, (f64, f64)> {
             ]
             .map(|(dx, dy)| (snap_out(dx), snap_out(dy)));
             options.sort_by(|p, q| (p.0.abs() + p.1.abs()).total_cmp(&(q.0.abs() + q.1.abs())));
-            let delta = options.into_iter().find(|d| !blocked(&shifted(b, *d))).unwrap_or_else(|| {
-                // Boxed in by things that do not move: the nearest free space.
-                let others: Vec<Rect> = (0..bodies.len()).filter(|k| *k != j).map(|k| rects[k]).collect();
-                let spot = place::place(b, Side::Near, (b.w, b.h), &others);
-                (spot.x - b.x, spot.y - b.y)
-            });
+            let delta = options
+                .into_iter()
+                .find(|d| !blocked(&shifted(b, *d)))
+                .unwrap_or_else(|| {
+                    // Boxed in by things that do not move: the nearest free space.
+                    let others: Vec<Rect> = (0..bodies.len())
+                        .filter(|k| *k != j)
+                        .map(|k| rects[k])
+                        .collect();
+                    let spot = place::place(b, Side::Near, (b.w, b.h), &others);
+                    (spot.x - b.x, spot.y - b.y)
+                });
             rects[j] = shifted(b, delta);
             let m = moved.entry(j).or_default();
             *m = (m.0 + delta.0, m.1 + delta.1);
@@ -103,20 +126,36 @@ fn push(bodies: &[Body], causes: &[usize]) -> HashMap<usize, (f64, f64)> {
 /// in this batch, nearest-to-home first so one return does not block another.
 /// All the way home when that is free (home was a fine place once); else the
 /// furthest grid step along the way that keeps a gap from everything.
-fn ret(bodies: &[Body], homes: &[Option<(f64, f64)>], fixed: &HashSet<usize>) -> HashMap<usize, (f64, f64)> {
+fn ret(
+    bodies: &[Body],
+    homes: &[Option<(f64, f64)>],
+    fixed: &HashSet<usize>,
+) -> HashMap<usize, (f64, f64)> {
     let mut rects: Vec<Rect> = bodies.iter().map(|b| b.rect).collect();
     let mut order: Vec<(usize, (f64, f64))> = (0..bodies.len())
         .filter(|j| bodies[*j].moving && !fixed.contains(j))
-        .filter_map(|j| homes[j].filter(|(dx, dy)| dx.abs() >= 0.5 || dy.abs() >= 0.5).map(|d| (j, d)))
+        .filter_map(|j| {
+            homes[j]
+                .filter(|(dx, dy)| dx.abs() >= 0.5 || dy.abs() >= 0.5)
+                .map(|d| (j, d))
+        })
         .collect();
     order.sort_by(|a, b| a.1.0.hypot(a.1.1).total_cmp(&b.1.0.hypot(b.1.1)));
     let mut moved = HashMap::new();
     for (j, (dx, dy)) in order {
-        let free = |r: &Rect, gap: f64| !(0..bodies.len()).any(|k| k != j && r.overlaps(&rects[k], gap));
+        let free =
+            |r: &Rect, gap: f64| !(0..bodies.len()).any(|k| k != j && r.overlaps(&rects[k], gap));
         let steps = (dx.abs().max(dy.abs()) / GRID).ceil().max(1.0) as usize;
         let snap = |v: f64| (v / GRID).round() * GRID;
         let found = (1..=steps).rev().find_map(|k| {
-            let d = if k == steps { (dx, dy) } else { (snap(dx * k as f64 / steps as f64), snap(dy * k as f64 / steps as f64)) };
+            let d = if k == steps {
+                (dx, dy)
+            } else {
+                (
+                    snap(dx * k as f64 / steps as f64),
+                    snap(dy * k as f64 / steps as f64),
+                )
+            };
             let gap = if k == steps { 0.0 } else { GAP };
             (d != (0.0, 0.0) && free(&shifted(rects[j], d), gap)).then_some(d)
         });
@@ -139,18 +178,29 @@ fn shared_offset(pieces: &[Piece], members: &[usize]) -> Option<(f64, f64)> {
     let first = home_offset(&pieces[*members.first()?])?;
     members
         .iter()
-        .all(|i| home_offset(&pieces[*i]).is_some_and(|o| (o.0 - first.0).abs() < 0.5 && (o.1 - first.1).abs() < 0.5))
+        .all(|i| {
+            home_offset(&pieces[*i])
+                .is_some_and(|o| (o.0 - first.0).abs() < 0.5 && (o.1 - first.1).abs() < 0.5)
+        })
         .then_some(first)
 }
 
 fn padded(r: Rect) -> Rect {
-    Rect { w: r.w + 2.0 * GROUP_PAD, h: r.h + 2.0 * GROUP_PAD, ..r }
+    Rect {
+        w: r.w + 2.0 * GROUP_PAD,
+        h: r.h + 2.0 * GROUP_PAD,
+        ..r
+    }
 }
 
 /// How far each item must move, given the items and groups on a board, each
 /// group's collision setting, and the ids (item or group) a batch changed.
 /// Items not listed stay put.
-pub fn settle(pieces: &[Piece], groups: &HashMap<String, bool>, causes: &HashSet<String>) -> Vec<(String, f64, f64)> {
+pub fn settle(
+    pieces: &[Piece],
+    groups: &HashMap<String, bool>,
+    causes: &HashSet<String>,
+) -> Vec<(String, f64, f64)> {
     let mut delta: HashMap<usize, (f64, f64)> = HashMap::new();
     let member_of = |i: usize| pieces[i].group.as_ref().filter(|g| groups.contains_key(*g));
 
@@ -161,12 +211,22 @@ pub fn settle(pieces: &[Piece], groups: &HashMap<String, bool>, causes: &HashSet
         if !groups[g] {
             continue;
         }
-        let members: Vec<usize> = (0..pieces.len()).filter(|i| member_of(*i) == Some(g)).collect();
-        let cause: Vec<usize> = (0..members.len()).filter(|m| causes.contains(&pieces[members[*m]].id)).collect();
+        let members: Vec<usize> = (0..pieces.len())
+            .filter(|i| member_of(*i) == Some(g))
+            .collect();
+        let cause: Vec<usize> = (0..members.len())
+            .filter(|m| causes.contains(&pieces[members[*m]].id))
+            .collect();
         if cause.is_empty() {
             continue;
         }
-        let bodies: Vec<Body> = members.iter().map(|i| Body { rect: pieces[*i].rect, moving: true }).collect();
+        let bodies: Vec<Body> = members
+            .iter()
+            .map(|i| Body {
+                rect: pieces[*i].rect,
+                moving: true,
+            })
+            .collect();
         for (m, d) in push(&bodies, &cause) {
             delta.insert(members[m], d);
         }
@@ -180,15 +240,25 @@ pub fn settle(pieces: &[Piece], groups: &HashMap<String, bool>, causes: &HashSet
     let mut ids: Vec<&String> = groups.keys().collect();
     ids.sort();
     for g in ids {
-        let members: Vec<usize> = (0..pieces.len()).filter(|i| member_of(*i) == Some(g)).collect();
+        let members: Vec<usize> = (0..pieces.len())
+            .filter(|i| member_of(*i) == Some(g))
+            .collect();
         if !groups[g] || shared_offset(pieces, &members).is_some() {
             continue;
         }
-        let bodies: Vec<Body> =
-            members.iter().map(|i| Body { rect: shifted(pieces[*i].rect, delta.get(i).copied().unwrap_or_default()), moving: true }).collect();
+        let bodies: Vec<Body> = members
+            .iter()
+            .map(|i| Body {
+                rect: shifted(pieces[*i].rect, delta.get(i).copied().unwrap_or_default()),
+                moving: true,
+            })
+            .collect();
         let homes: Vec<_> = members.iter().map(|i| home_offset(&pieces[*i])).collect();
-        let fixed: HashSet<usize> =
-            (0..members.len()).filter(|m| causes.contains(&pieces[members[*m]].id) || delta.contains_key(&members[*m])).collect();
+        let fixed: HashSet<usize> = (0..members.len())
+            .filter(|m| {
+                causes.contains(&pieces[members[*m]].id) || delta.contains_key(&members[*m])
+            })
+            .collect();
         for (m, d) in ret(&bodies, &homes, &fixed) {
             delta.insert(members[m], d);
         }
@@ -202,19 +272,30 @@ pub fn settle(pieces: &[Piece], groups: &HashMap<String, bool>, causes: &HashSet
     let mut group_ids: Vec<&String> = groups.keys().collect();
     group_ids.sort();
     for g in group_ids {
-        let members: Vec<usize> = (0..pieces.len()).filter(|i| member_of(*i) == Some(g)).collect();
-        let Some(around) = Rect::around(&members.iter().map(|i| rect(*i)).collect::<Vec<_>>()) else { continue };
+        let members: Vec<usize> = (0..pieces.len())
+            .filter(|i| member_of(*i) == Some(g))
+            .collect();
+        let Some(around) = Rect::around(&members.iter().map(|i| rect(*i)).collect::<Vec<_>>())
+        else {
+            continue;
+        };
         if causes.contains(g) || members.iter().any(|i| causes.contains(&pieces[*i].id)) {
             cause.push(bodies.len());
         }
-        bodies.push(Body { rect: padded(around), moving: groups[g] });
+        bodies.push(Body {
+            rect: padded(around),
+            moving: groups[g],
+        });
         owners.push(members);
     }
     for i in (0..pieces.len()).filter(|i| member_of(*i).is_none()) {
         if causes.contains(&pieces[i].id) {
             cause.push(bodies.len());
         }
-        bodies.push(Body { rect: rect(i), moving: pieces[i].collides });
+        bodies.push(Body {
+            rect: rect(i),
+            moving: pieces[i].collides,
+        });
         owners.push(vec![i]);
     }
     let pushed = push(&bodies, &cause);
@@ -229,11 +310,20 @@ pub fn settle(pieces: &[Piece], groups: &HashMap<String, bool>, causes: &HashSet
     let now: Vec<Body> = bodies
         .iter()
         .enumerate()
-        .map(|(b, body)| Body { rect: shifted(body.rect, pushed.get(&b).copied().unwrap_or_default()), moving: body.moving })
+        .map(|(b, body)| Body {
+            rect: shifted(body.rect, pushed.get(&b).copied().unwrap_or_default()),
+            moving: body.moving,
+        })
         .collect();
     let homes: Vec<_> = owners
         .iter()
-        .map(|o| if o.len() == 1 && member_of(o[0]).is_none() { home_offset(&pieces[o[0]]) } else { shared_offset(pieces, o) })
+        .map(|o| {
+            if o.len() == 1 && member_of(o[0]).is_none() {
+                home_offset(&pieces[o[0]])
+            } else {
+                shared_offset(pieces, o)
+            }
+        })
         .collect();
     let mut fixed: HashSet<usize> = cause.iter().copied().collect();
     fixed.extend(pushed.keys().copied());
@@ -244,8 +334,11 @@ pub fn settle(pieces: &[Piece], groups: &HashMap<String, bool>, causes: &HashSet
         }
     }
 
-    let mut out: Vec<(String, f64, f64)> =
-        delta.into_iter().filter(|(_, d)| *d != (0.0, 0.0)).map(|(i, (dx, dy))| (pieces[i].id.clone(), dx, dy)).collect();
+    let mut out: Vec<(String, f64, f64)> = delta
+        .into_iter()
+        .filter(|(_, d)| *d != (0.0, 0.0))
+        .map(|(i, (dx, dy))| (pieces[i].id.clone(), dx, dy))
+        .collect();
     out.sort_by(|a, b| a.0.cmp(&b.0));
     out
 }
@@ -255,7 +348,13 @@ mod tests {
     use super::*;
 
     fn piece(id: &str, x: f64, y: f64, w: f64, h: f64, collides: bool) -> Piece {
-        Piece { id: id.into(), rect: Rect { x, y, w, h }, group: None, collides, home: None }
+        Piece {
+            id: id.into(),
+            rect: Rect { x, y, w, h },
+            group: None,
+            collides,
+            home: None,
+        }
     }
 
     fn moved(out: &[(String, f64, f64)], id: &str) -> Option<(f64, f64)> {
@@ -263,7 +362,9 @@ mod tests {
     }
 
     fn after(p: &[Piece], out: &[(String, f64, f64)]) -> Vec<Rect> {
-        p.iter().map(|q| shifted(q.rect, moved(out, &q.id).unwrap_or_default())).collect()
+        p.iter()
+            .map(|q| shifted(q.rect, moved(out, &q.id).unwrap_or_default()))
+            .collect()
     }
 
     fn causes(ids: &[&str]) -> HashSet<String> {
@@ -279,7 +380,10 @@ mod tests {
     #[test]
     fn a_grown_checklist_pushes_the_note_below_down() {
         // The checklist grew from 200 to 300 tall and now overlaps the note.
-        let p = [piece("c", 0.0, 0.0, 320.0, 300.0, true), piece("n", 0.0, 200.0, 320.0, 120.0, true)];
+        let p = [
+            piece("c", 0.0, 0.0, 320.0, 300.0, true),
+            piece("n", 0.0, 200.0, 320.0, 120.0, true),
+        ];
         let out = settle(&p, &HashMap::new(), &causes(&["c"]));
         assert_eq!(moved(&out, "c"), None, "the cause stays where it was put");
         let (dx, dy) = moved(&out, "n").unwrap();
@@ -291,7 +395,10 @@ mod tests {
 
     #[test]
     fn collision_off_is_never_moved() {
-        let p = [piece("c", 0.0, 0.0, 320.0, 300.0, true), piece("n", 0.0, 200.0, 320.0, 120.0, false)];
+        let p = [
+            piece("c", 0.0, 0.0, 320.0, 300.0, true),
+            piece("n", 0.0, 200.0, 320.0, 120.0, false),
+        ];
         assert!(settle(&p, &HashMap::new(), &causes(&["c"])).is_empty());
     }
 
@@ -318,8 +425,14 @@ mod tests {
     fn boxed_in_by_fixed_items_relocates_to_free_space() {
         // The note sits in a slot walled by fixed items on every side but the
         // cause's; every short move would land on something fixed.
-        let mut p = vec![piece("cause", 0.0, 0.0, 300.0, 300.0, true), piece("n", 0.0, 0.0, 200.0, 200.0, true)];
-        for (i, (x, y)) in [(0.0, 400.0), (0.0, -400.0), (400.0, 0.0), (-400.0, 0.0)].iter().enumerate() {
+        let mut p = vec![
+            piece("cause", 0.0, 0.0, 300.0, 300.0, true),
+            piece("n", 0.0, 0.0, 200.0, 200.0, true),
+        ];
+        for (i, (x, y)) in [(0.0, 400.0), (0.0, -400.0), (400.0, 0.0), (-400.0, 0.0)]
+            .iter()
+            .enumerate()
+        {
             p.push(piece(&format!("w{i}"), *x, *y, 500.0, 500.0, false));
         }
         let out = settle(&p, &HashMap::new(), &causes(&["cause"]));
@@ -344,8 +457,14 @@ mod tests {
         }
         let groups = HashMap::from([("g".to_string(), true)]);
         let out = settle(&p, &groups, &causes(&["d"]));
-        let shifts: Vec<_> = ["a", "b", "c"].iter().map(|id| moved(&out, id).unwrap()).collect();
-        assert!(shifts.windows(2).all(|w| w[0] == w[1]), "members move by the same amount: {shifts:?}");
+        let shifts: Vec<_> = ["a", "b", "c"]
+            .iter()
+            .map(|id| moved(&out, id).unwrap())
+            .collect();
+        assert!(
+            shifts.windows(2).all(|w| w[0] == w[1]),
+            "members move by the same amount: {shifts:?}"
+        );
         let r = after(&p, &out);
         let outline = padded(Rect::around(&r[1..]).unwrap());
         assert!(!r[0].overlaps(&outline, 0.0));
@@ -353,13 +472,20 @@ mod tests {
 
     #[test]
     fn outsiders_keep_clear_of_a_groups_outline_and_a_fixed_group_holds_its_members() {
-        let mut p = vec![piece("a", 0.0, 0.0, 100.0, 100.0, true), piece("b", 300.0, 0.0, 100.0, 100.0, true)];
+        let mut p = vec![
+            piece("a", 0.0, 0.0, 100.0, 100.0, true),
+            piece("b", 300.0, 0.0, 100.0, 100.0, true),
+        ];
         for q in &mut p {
             q.group = Some("g".into());
         }
         // A note dropped into the gap between members, outside both.
         p.push(piece("n", 150.0, 0.0, 80.0, 80.0, true));
-        let out = settle(&p, &HashMap::from([("g".to_string(), false)]), &causes(&["g"]));
+        let out = settle(
+            &p,
+            &HashMap::from([("g".to_string(), false)]),
+            &causes(&["g"]),
+        );
         assert_eq!(moved(&out, "a"), None);
         let r = after(&p, &out);
         assert!(!r[2].overlaps(&padded(Rect::around(&r[..2]).unwrap()), 0.0));
@@ -369,27 +495,43 @@ mod tests {
     fn the_push_is_bounded_on_a_packed_board() {
         let mut p = vec![piece("cause", 0.0, 0.0, 4000.0, 4000.0, true)];
         for i in 0..400 {
-            p.push(piece(&format!("n{i}"), (i % 20) as f64 * 100.0 - 1000.0, (i / 20) as f64 * 100.0 - 1000.0, 96.0, 96.0, true));
+            p.push(piece(
+                &format!("n{i}"),
+                (i % 20) as f64 * 100.0 - 1000.0,
+                (i / 20) as f64 * 100.0 - 1000.0,
+                96.0,
+                96.0,
+                true,
+            ));
         }
         let out = settle(&p, &HashMap::new(), &causes(&["cause"]));
         assert!(out.len() <= MAX_PUSHES);
     }
 
     fn homed(id: &str, x: f64, y: f64, w: f64, h: f64, home: (f64, f64)) -> Piece {
-        Piece { home: Some(home), ..piece(id, x, y, w, h, true) }
+        Piece {
+            home: Some(home),
+            ..piece(id, x, y, w, h, true)
+        }
     }
 
     #[test]
     fn a_pushed_note_returns_home_once_the_space_frees() {
         // The checklist shrank back to 200 tall; the note was pushed from y=200 to y=360.
-        let p = [piece("c", 0.0, 0.0, 320.0, 200.0, true), homed("n", 0.0, 360.0, 320.0, 120.0, (0.0, 200.0))];
+        let p = [
+            piece("c", 0.0, 0.0, 320.0, 200.0, true),
+            homed("n", 0.0, 360.0, 320.0, 120.0, (0.0, 200.0)),
+        ];
         let out = settle(&p, &HashMap::new(), &causes(&["c"]));
         assert_eq!(moved(&out, "n"), Some((0.0, -160.0)), "all the way home");
     }
 
     #[test]
     fn a_pushed_note_stays_while_home_is_taken() {
-        let p = [piece("c", 0.0, 100.0, 320.0, 400.0, true), homed("n", 0.0, 400.0, 320.0, 120.0, (0.0, 200.0))];
+        let p = [
+            piece("c", 0.0, 100.0, 320.0, 400.0, true),
+            homed("n", 0.0, 400.0, 320.0, 120.0, (0.0, 200.0)),
+        ];
         // A deletion elsewhere triggers settling; the checklist still covers home.
         let out = settle(&p, &HashMap::new(), &causes(&[]));
         assert_eq!(moved(&out, "n"), None);
@@ -398,17 +540,26 @@ mod tests {
     #[test]
     fn a_return_stops_short_of_what_is_in_the_way() {
         // Home is at y=0; a fixed item now sits at y=0..100 (centre 50).
-        let p = [piece("f", 0.0, 50.0, 320.0, 100.0, false), homed("n", 0.0, 600.0, 320.0, 120.0, (0.0, 60.0))];
+        let p = [
+            piece("f", 0.0, 50.0, 320.0, 100.0, false),
+            homed("n", 0.0, 600.0, 320.0, 120.0, (0.0, 60.0)),
+        ];
         let out = settle(&p, &HashMap::new(), &causes(&[]));
         let (_, dy) = moved(&out, "n").expect("it comes part of the way");
         let r = after(&p, &out);
-        assert!(dy < 0.0 && r[1].top() >= r[0].bottom() + GAP, "never past what blocks it, a gap kept");
+        assert!(
+            dy < 0.0 && r[1].top() >= r[0].bottom() + GAP,
+            "never past what blocks it, a gap kept"
+        );
         assert!(r[1].y > 60.0, "never past home");
     }
 
     #[test]
     fn something_pushed_in_this_batch_does_not_bounce_back() {
-        let p = [piece("c", 0.0, 0.0, 320.0, 300.0, true), homed("n", 0.0, 200.0, 320.0, 120.0, (0.0, 100.0))];
+        let p = [
+            piece("c", 0.0, 0.0, 320.0, 300.0, true),
+            homed("n", 0.0, 200.0, 320.0, 120.0, (0.0, 100.0)),
+        ];
         let out = settle(&p, &HashMap::new(), &causes(&["c"]));
         let (_, dy) = moved(&out, "n").unwrap();
         assert!(dy > 0.0, "pushed further, not returned into the cause");

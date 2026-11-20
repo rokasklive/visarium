@@ -18,7 +18,12 @@ pub type ApiResult<T> = Result<T, ApiError>;
 
 impl ApiError {
     pub fn new(status: StatusCode, detail: impl Into<String>) -> Self {
-        Self { status, title: None, detail: detail.into(), extra: Map::new() }
+        Self {
+            status,
+            title: None,
+            detail: detail.into(),
+            extra: Map::new(),
+        }
     }
     pub fn titled(mut self, title: &str) -> Self {
         self.title = Some(title.into());
@@ -60,7 +65,12 @@ impl IntoResponse for ApiError {
             "detail": self.detail,
         });
         body.as_object_mut().unwrap().extend(self.extra);
-        (self.status, [(header::CONTENT_TYPE, "application/problem+json")], body.to_string()).into_response()
+        (
+            self.status,
+            [(header::CONTENT_TYPE, "application/problem+json")],
+            body.to_string(),
+        )
+            .into_response()
     }
 }
 
@@ -77,11 +87,13 @@ impl From<std::io::Error> for ApiError {
 }
 
 pub fn is_unique_violation(e: &sqlx::Error) -> bool {
-    e.as_database_error().is_some_and(|d| d.is_unique_violation())
+    e.as_database_error()
+        .is_some_and(|d| d.is_unique_violation())
 }
 
 pub fn is_foreign_key_violation(e: &sqlx::Error) -> bool {
-    e.as_database_error().is_some_and(|d| d.is_foreign_key_violation())
+    e.as_database_error()
+        .is_some_and(|d| d.is_foreign_key_violation())
 }
 
 /// A JSON body that answers 400 problem+json when malformed, instead of axum's

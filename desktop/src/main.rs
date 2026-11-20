@@ -22,9 +22,9 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod about;
 #[cfg(all(target_os = "macos", feature = "alpha-updater"))]
 mod alpha_update;
-mod about;
 mod connect;
 mod drag_out;
 mod local_port;
@@ -101,7 +101,10 @@ struct LocalBoards {
 }
 
 #[tauri::command]
-async fn local_boards(desktop: State<'_, Desktop>, port: State<'_, local_port::LocalPort>) -> Result<LocalBoards, Problem> {
+async fn local_boards(
+    desktop: State<'_, Desktop>,
+    port: State<'_, local_port::LocalPort>,
+) -> Result<LocalBoards, Problem> {
     let library = port.library();
     let boards = connect::recent_boards(&desktop.http, &library).await?;
     Ok(LocalBoards { library, boards })
@@ -139,12 +142,28 @@ async fn connect(
     if username.is_empty() {
         return Err(Problem::new("invalid", "enter a username"));
     }
-    let entry = Connection { origin: origin.to_string(), username: username.clone() };
+    let entry = Connection {
+        origin: origin.to_string(),
+        username: username.clone(),
+    };
     let typed = password.filter(|p| !p.is_empty());
     let saved_token = keychain(&entry).and_then(|k| k.get_password()).ok();
     let token = match (typed, saved_token) {
-        (Some(password), _) => match connect::sign_in(&desktop.http, &origin, &username, &password, &device_label()).await? {
-            SignIn::Setup => return Ok(Connected { open: origin, warning: None }),
+        (Some(password), _) => match connect::sign_in(
+            &desktop.http,
+            &origin,
+            &username,
+            &password,
+            &device_label(),
+        )
+        .await?
+        {
+            SignIn::Setup => {
+                return Ok(Connected {
+                    open: origin,
+                    warning: None,
+                });
+            }
             SignIn::Session(token) => token,
         },
         (None, Some(token)) => match connect::session_user(&desktop.http, &origin, &token).await? {
@@ -160,8 +179,14 @@ async fn connect(
             let legacy = saved_password(&entry).and_then(|k| k.get_password()).map_err(|_| {
                 Problem::new("no-password", "this connection has no saved sign-in; enter the password or sign in with the browser")
             })?;
-            let SignIn::Session(token) = connect::sign_in(&desktop.http, &origin, &username, &legacy, &device_label()).await? else {
-                return Ok(Connected { open: origin, warning: None });
+            let SignIn::Session(token) =
+                connect::sign_in(&desktop.http, &origin, &username, &legacy, &device_label())
+                    .await?
+            else {
+                return Ok(Connected {
+                    open: origin,
+                    warning: None,
+                });
             };
             let _ = saved_password(&entry).and_then(|k| k.delete_credential());
             token
@@ -180,13 +205,31 @@ async fn connect_browser(
     address: String,
     provider: Option<String>,
 ) -> Result<Connected, Problem> {
-    browser_sign_in(&window, &desktop, connect::normalise(&address)?, provider.as_deref()).await
+    browser_sign_in(
+        &window,
+        &desktop,
+        connect::normalise(&address)?,
+        provider.as_deref(),
+    )
+    .await
 }
 
-async fn browser_sign_in(window: &WebviewWindow, desktop: &Desktop, origin: Url, provider: Option<&str>) -> Result<Connected, Problem> {
+async fn browser_sign_in(
+    window: &WebviewWindow,
+    desktop: &Desktop,
+    origin: Url,
+    provider: Option<&str>,
+) -> Result<Connected, Problem> {
     let handoff = connect::start_handoff(&origin, &device_label(), provider).await?;
-    open_in_browser(&handoff.url).map_err(|e| Problem::new("local", format!("could not open the browser: {e}")))?;
-    let (token, username) = connect::finish_handoff(&desktop.http, &origin, handoff, connect::BROWSER_SIGN_IN_TIMEOUT).await?;
+    open_in_browser(&handoff.url)
+        .map_err(|e| Problem::new("local", format!("could not open the browser: {e}")))?;
+    let (token, username) = connect::finish_handoff(
+        &desktop.http,
+        &origin,
+        handoff,
+        connect::BROWSER_SIGN_IN_TIMEOUT,
+    )
+    .await?;
     let _ = window.set_focus();
     open_signed_in(window, desktop, origin, username, token).await
 }
@@ -200,7 +243,11 @@ async fn browser_sign_in(window: &WebviewWindow, desktop: &Desktop, origin: Url,
 fn provider_link_in_browser(app: &tauri::AppHandle, link: connect::ProviderLink) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        let (Some(window), Some(desktop)) = (app.get_webview_window("main"), app.try_state::<Desktop>()) else { return };
+        let (Some(window), Some(desktop)) =
+            (app.get_webview_window("main"), app.try_state::<Desktop>())
+        else {
+            return;
+        };
         if link.intent == "link" {
             let _ = open_in_browser(&link.origin.join("settings").expect("relative path"));
             return;
@@ -223,7 +270,10 @@ async fn open_signed_in(
     username: String,
     token: String,
 ) -> Result<Connected, Problem> {
-    let entry = Connection { origin: origin.to_string(), username };
+    let entry = Connection {
+        origin: origin.to_string(),
+        username,
+    };
     let host = origin.host_str().unwrap_or_default().to_string();
     let cookie = Cookie::build((connect::SESSION_COOKIE, token.clone()))
         .domain(host.clone())
@@ -232,26 +282,36 @@ async fn open_signed_in(
         .same_site(SameSite::Lax)
         .secure(origin.scheme() == "https")
         .build();
-    window
-        .set_cookie(cookie)
-        .map_err(|e| Problem::new("no-session", format!("signed in, but the window would not take the session: {e}")))?;
+    window.set_cookie(cookie).map_err(|e| {
+        Problem::new(
+            "no-session",
+            format!("signed in, but the window would not take the session: {e}"),
+        )
+    })?;
     if let Err(e) = drag_out::allow(window.app_handle(), &origin) {
         eprintln!("drag out stays off for {origin}: {e}");
     }
 
     let mut warning = None;
     if let Err(e) = keychain(&entry).and_then(|k| k.set_password(&token)) {
-        warning = Some(format!("connected, but this computer could not keep the sign-in, so you will be asked again next time ({e})"));
+        warning = Some(format!(
+            "connected, but this computer could not keep the sign-in, so you will be asked again next time ({e})"
+        ));
     }
     let (list, dropped) = connect::remember(connect::load(&desktop.connections), entry);
     for gone in &dropped {
         let _ = keychain(gone).and_then(|k| k.delete_credential());
     }
     if let Err(e) = connect::save(&desktop.connections, &list) {
-        warning.get_or_insert(format!("connected, but this connection could not be remembered ({e})"));
+        warning.get_or_insert(format!(
+            "connected, but this connection could not be remembered ({e})"
+        ));
     }
     let _ = window.set_title(&format!("Visarium — {host}"));
-    Ok(Connected { open: origin, warning })
+    Ok(Connected {
+        open: origin,
+        warning,
+    })
 }
 
 #[tauri::command]
@@ -263,17 +323,31 @@ fn connections(desktop: State<'_, Desktop>) -> Vec<Connection> {
 /// be reached), and deletes the token — and any password an older version
 /// left behind.
 #[tauri::command]
-async fn forget(desktop: State<'_, Desktop>, origin: String, username: String) -> Result<(), Problem> {
+async fn forget(
+    desktop: State<'_, Desktop>,
+    origin: String,
+    username: String,
+) -> Result<(), Problem> {
     let entry = Connection { origin, username };
-    let list: Vec<_> = connect::load(&desktop.connections).into_iter().filter(|c| *c != entry).collect();
-    connect::save(&desktop.connections, &list).map_err(|e| Problem::new("local", format!("could not update the list: {e}")))?;
-    if let (Ok(token), Ok(origin)) = (keychain(&entry).and_then(|k| k.get_password()), entry.origin.parse::<Url>()) {
+    let list: Vec<_> = connect::load(&desktop.connections)
+        .into_iter()
+        .filter(|c| *c != entry)
+        .collect();
+    connect::save(&desktop.connections, &list)
+        .map_err(|e| Problem::new("local", format!("could not update the list: {e}")))?;
+    if let (Ok(token), Ok(origin)) = (
+        keychain(&entry).and_then(|k| k.get_password()),
+        entry.origin.parse::<Url>(),
+    ) {
         connect::revoke(&desktop.http, &origin, &token).await;
     }
     let _ = saved_password(&entry).and_then(|k| k.delete_credential());
     match keychain(&entry).and_then(|k| k.delete_credential()) {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(Problem::new("keychain", format!("removed from the list, but the saved sign-in could not be deleted ({e})"))),
+        Err(e) => Err(Problem::new(
+            "keychain",
+            format!("removed from the list, but the saved sign-in could not be deleted ({e})"),
+        )),
     }
 }
 
@@ -321,7 +395,8 @@ fn main() {
                 Ok::<_, Box<dyn std::error::Error + Send + Sync>>((state, listener))
             })
             .map_err(|e| e.to_string())?;
-            let library: Url = format!("http://127.0.0.1:{}/", listener.local_addr()?.port()).parse()?;
+            let library: Url =
+                format!("http://127.0.0.1:{}/", listener.local_addr()?.port()).parse()?;
             drag_out::clear();
             drag_out::allow(app.handle(), &library)?;
             local_port::allow(app.handle(), &library)?;
@@ -333,7 +408,13 @@ fn main() {
                 true,
                 &[
                     &MenuItem::with_id(app, "home", "Home", true, Some("CmdOrCtrl+Shift+H"))?,
-                    &MenuItem::with_id(app, "local", "Local Library", true, Some("CmdOrCtrl+Shift+L"))?,
+                    &MenuItem::with_id(
+                        app,
+                        "local",
+                        "Local Library",
+                        true,
+                        Some("CmdOrCtrl+Shift+L"),
+                    )?,
                 ],
             )?;
             // The default menu carries Edit ▸ Copy/Paste, without which the
@@ -371,7 +452,9 @@ fn main() {
             Ok(())
         })
         .on_menu_event(|app, event| {
-            let Some(window) = app.get_webview_window("main") else { return };
+            let Some(window) = app.get_webview_window("main") else {
+                return;
+            };
             let target = match event.id().as_ref() {
                 "home" => GREETING.parse().unwrap(),
                 "local" => app.state::<local_port::LocalPort>().library(),

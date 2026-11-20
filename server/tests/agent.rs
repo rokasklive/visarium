@@ -180,9 +180,14 @@ async fn apply_as(app: &visarium::AppState, board: &str, user: &str, mut ops: Ve
     for op in &mut ops {
         op.stamp(&actor, "2026-11-19T10:00:00.000Z");
     }
-    boards::apply(app, &uuid::Uuid::parse_str(board).unwrap(), &mut ops, &actor)
-        .await
-        .unwrap();
+    boards::apply(
+        app,
+        &uuid::Uuid::parse_str(board).unwrap(),
+        &mut ops,
+        &actor,
+    )
+    .await
+    .unwrap();
 }
 
 async fn world() -> World {
@@ -482,16 +487,25 @@ async fn the_protocol_is_stateless_json_rpc() {
     // anything mid-call (design.md, the fresh-session run).
     let found = w.rpc("server/discover", json!({})).await;
     assert_eq!(found["resultType"], "complete");
-    assert_eq!(found["supportedVersions"], json!([visarium::agent::PROTOCOL]));
+    assert_eq!(
+        found["supportedVersions"],
+        json!([visarium::agent::PROTOCOL])
+    );
     assert!(found["capabilities"]["tools"].is_object());
     assert!(found["ttlMs"].is_u64());
     assert_eq!(found["cacheScope"], "public");
-    assert_eq!(found["_meta"]["io.modelcontextprotocol/serverInfo"]["name"], "visarium");
+    assert_eq!(
+        found["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
+        "visarium"
+    );
     assert!(found.get("protocolVersion").is_none() && found.get("serverInfo").is_none());
     // Every result says it is complete; lists say how they may be cached.
     let listed = w.rpc("tools/list", json!({})).await;
     assert_eq!(listed["resultType"], "complete");
-    assert_eq!(listed["cacheScope"], "private", "the list depends on the caller's grant");
+    assert_eq!(
+        listed["cacheScope"], "private",
+        "the list depends on the caller's grant"
+    );
     assert_eq!(w.rpc("ping", json!({})).await["resultType"], "complete");
 
     let (status, _) = post(
@@ -544,7 +558,10 @@ async fn the_agent_is_told_how_to_work() {
     let instructions = init["instructions"].as_str().unwrap();
     assert!(instructions.contains("A link from A to B of type `describes` means A describes B"));
     assert!(instructions.contains("d2#Server"));
-    assert!(instructions.contains("whole interface") && instructions.contains("which capability is missing"));
+    assert!(
+        instructions.contains("whole interface")
+            && instructions.contains("which capability is missing")
+    );
     let listed = w.rpc("resources/list", json!({})).await;
     assert_eq!(listed["resources"][0]["uri"], "visarium://guide");
     let guide = w
@@ -552,7 +569,10 @@ async fn the_agent_is_told_how_to_work() {
         .await;
     let guide = guide["contents"][0]["text"].as_str().unwrap();
     assert!(guide.contains("## When a tool is missing") && guide.contains("For example:"));
-    assert!(guide.contains("\"centerpiece\": \"g1\""), "the guide shows setting a centerpiece");
+    assert!(
+        guide.contains("\"centerpiece\": \"g1\""),
+        "the guide shows setting a centerpiece"
+    );
     // Every tool, the granted ones included, has an example call.
     w.grant(true).await;
     for t in w.rpc("tools/list", json!({})).await["tools"]
@@ -946,11 +966,29 @@ async fn changes_narrate_collision_and_the_pushes_it_causes() {
     if let Some(g) = &n1.group_id {
         on.push(json!({ "type": "group.collides", "groupId": g, "collides": true }));
     }
-    apply_as(&w.app, &w.board, &w.user, serde_json::from_value(json!(on)).unwrap()).await;
+    apply_as(
+        &w.app,
+        &w.board,
+        &w.user,
+        serde_json::from_value(json!(on)).unwrap(),
+    )
+    .await;
     // d1 is dropped right on top of n1.
-    apply_as(&w.app, &w.board, &w.user, serde_json::from_value(json!([{ "type": "item.transform", "itemId": d1_id,
-        "transform": { "x": x, "y": y, "width": 480.0, "height": 360.0, "rotation": 0.0 } }])).unwrap()).await;
-    let c = w.ok("changes", json!({ "board": "Offline sync", "since_rev": since })).await;
+    apply_as(
+        &w.app,
+        &w.board,
+        &w.user,
+        serde_json::from_value(json!([{ "type": "item.transform", "itemId": d1_id,
+        "transform": { "x": x, "y": y, "width": 480.0, "height": 360.0, "rotation": 0.0 } }]))
+        .unwrap(),
+    )
+    .await;
+    let c = w
+        .ok(
+            "changes",
+            json!({ "board": "Offline sync", "since_rev": since }),
+        )
+        .await;
     assert!(c.contains("turned collision on for n1"), "{c}");
     assert!(c.contains("moved or resized d1") && c.contains("n1"), "{c}");
     let after = w.data().await;
@@ -1013,7 +1051,10 @@ async fn a_note_is_created_beside_its_subject_and_linked_in_one_call() {
         .ok("item_create", json!({ "board": "Offline sync", "kind": "note", "source": "OpQueue drains on reconnect.", "near": "d1",
             "link": { "type": "describes", "to": "d1#OpQueue" } }))
         .await;
-    assert!(text.starts_with("Created n6 (note) ") && text.contains(" d1 · link to d1#OpQueue "), "{text}");
+    assert!(
+        text.starts_with("Created n6 (note) ") && text.contains(" d1 · link to d1#OpQueue "),
+        "{text}"
+    );
     assert!(text.contains("crosses nothing"), "{text}");
     assert!(text.contains("Linked n6 describes d1#OpQueue."), "{text}");
     let b = w.data().await;
@@ -1056,11 +1097,21 @@ async fn a_link_can_end_at_one_checklist_task() {
         .await;
     assert!(text.contains("c1/t4 implements d1#OpQueue"), "{text}");
     let b = w.data().await;
-    assert!(b.links.iter().any(|l| l.from_element.as_deref() == Some("t4")));
+    assert!(
+        b.links
+            .iter()
+            .any(|l| l.from_element.as_deref() == Some("t4"))
+    );
     let err = w
-        .fails("link", json!({ "board": "Offline sync", "from": "c1#t99", "to": "d1", "type": "implements" }))
+        .fails(
+            "link",
+            json!({ "board": "Offline sync", "from": "c1#t99", "to": "d1", "type": "implements" }),
+        )
         .await;
-    assert!(err.contains("has no task 't99'") && err.contains("t4"), "{err}");
+    assert!(
+        err.contains("has no task 't99'") && err.contains("t4"),
+        "{err}"
+    );
 }
 
 fn person_note(id: &str, x: f64, y: f64, w: f64, h: f64) -> Value {
@@ -1085,9 +1136,15 @@ async fn a_note_linked_to_an_element_is_placed_beside_where_it_is_drawn() {
         .ok("item_create", json!({ "board": "Offline sync", "kind": "note", "source": "Drains on reconnect.", "near": "d1",
             "link": { "type": "describes", "to": "d1#BoardSync" } }))
         .await;
-    assert!(text.contains("link to d1#BoardSync") && text.contains("crosses nothing"), "{text}");
+    assert!(
+        text.contains("link to d1#BoardSync") && text.contains("crosses nothing"),
+        "{text}"
+    );
     let n = w.data().await.resolve_item("n6").unwrap().x;
-    assert!(n < 0.0, "on BoardSync's side of d1, not the right: x = {n}\n{text}");
+    assert!(
+        n < 0.0,
+        "on BoardSync's side of d1, not the right: x = {n}\n{text}"
+    );
 }
 
 #[tokio::test]
@@ -1096,12 +1153,19 @@ async fn a_note_near_a_frame_is_outside_its_outline() {
     w.ok("item_create", json!({ "board": "Offline sync", "kind": "note", "source": "About the flow.", "near": "g2" })).await;
     let b = w.data().await;
     let g2 = b.resolve_group("g2").unwrap().id.clone();
-    let members: Vec<_> = b.items.iter().filter(|i| i.group_id.as_deref() == Some(g2.as_str())).map(visarium::agent::place::Rect::of).collect();
+    let members: Vec<_> = b
+        .items
+        .iter()
+        .filter(|i| i.group_id.as_deref() == Some(g2.as_str()))
+        .map(visarium::agent::place::Rect::of)
+        .collect();
     let outline = visarium::agent::place::Rect::around(&members).unwrap();
     let pad = visarium::collision::GROUP_PAD;
     let n = visarium::agent::place::Rect::of(b.resolve_item("n6").unwrap());
-    let outside = n.right() <= outline.left() - pad || n.left() >= outline.right() + pad
-        || n.bottom() <= outline.top() - pad || n.top() >= outline.bottom() + pad;
+    let outside = n.right() <= outline.left() - pad
+        || n.left() >= outline.right() + pad
+        || n.bottom() <= outline.top() - pad
+        || n.top() >= outline.bottom() + pad;
     assert!(outside, "{n:?} is inside g2's outline {outline:?}");
 }
 
@@ -1117,28 +1181,55 @@ async fn an_unavoidable_crossing_is_reported() {
         person_note(&ids[3], 9776.0, 0.0, 200.0, 548.0),
         person_note(&ids[4], 10224.0, 0.0, 200.0, 548.0),
     ]);
-    apply_as(&w.app, &w.board, &w.user, serde_json::from_value(ops).unwrap()).await;
+    apply_as(
+        &w.app,
+        &w.board,
+        &w.user,
+        serde_json::from_value(ops).unwrap(),
+    )
+    .await;
     let text = w
-        .ok("item_create", json!({ "board": "Offline sync", "kind": "note", "source": "Walled.", "near": "n6",
-            "link": { "type": "comments", "to": "n6" } }))
+        .ok(
+            "item_create",
+            json!({ "board": "Offline sync", "kind": "note", "source": "Walled.", "near": "n6",
+            "link": { "type": "comments", "to": "n6" } }),
+        )
         .await;
-    assert!(text.contains("link to n6") && text.contains("crosses n"), "{text}");
-    assert!(text.contains("no nearby spot was free of crossings"), "{text}");
+    assert!(
+        text.contains("link to n6") && text.contains("crosses n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("no nearby spot was free of crossings"),
+        "{text}"
+    );
 }
 
 #[tokio::test]
 async fn an_agents_items_collide_until_fixed_in_place() {
     let w = world().await;
-    w.ok("item_create", json!({ "board": "Offline sync", "kind": "note", "source": "Mine.", "near": "c1" })).await;
+    w.ok(
+        "item_create",
+        json!({ "board": "Offline sync", "kind": "note", "source": "Mine.", "near": "c1" }),
+    )
+    .await;
     let b = w.data().await;
     let n6 = b.resolve_item("n6").unwrap();
     assert!(n6.collides, "an agent's note has collision on");
     let (x, y) = (n6.x, n6.y);
-    let text = w.ok("arrange", json!({ "board": "Offline sync", "refs": ["n6"], "collides": false })).await;
+    let text = w
+        .ok(
+            "arrange",
+            json!({ "board": "Offline sync", "refs": ["n6"], "collides": false }),
+        )
+        .await;
     assert!(text.contains("collision off"), "{text}");
     let after = w.data().await;
     let n6 = after.resolve_item("n6").unwrap();
-    assert!(!n6.collides && (n6.x, n6.y) == (x, y), "fixed, and not moved");
+    assert!(
+        !n6.collides && (n6.x, n6.y) == (x, y),
+        "fixed, and not moved"
+    );
 }
 
 #[tokio::test]
@@ -1149,15 +1240,29 @@ async fn six_notes_are_laid_out_as_a_grid_of_three() {
     }
     let refs: Vec<String> = (6..12).map(|n| format!("n{n}")).collect();
     let text = w.ok("arrange", json!({ "board": "Offline sync", "refs": refs, "layout": "grid", "columns": 3, "below": "c1" })).await;
-    assert!(text.contains("laid out in a grid of 3 columns below c1"), "{text}");
+    assert!(
+        text.contains("laid out in a grid of 3 columns below c1"),
+        "{text}"
+    );
     let b = w.data().await;
-    let rects: Vec<_> = refs.iter().map(|r| visarium::agent::place::Rect::of(b.resolve_item(r).unwrap())).collect();
-    let tops: std::collections::BTreeSet<i64> = rects.iter().map(|r| r.top().round() as i64).collect();
+    let rects: Vec<_> = refs
+        .iter()
+        .map(|r| visarium::agent::place::Rect::of(b.resolve_item(r).unwrap()))
+        .collect();
+    let tops: std::collections::BTreeSet<i64> =
+        rects.iter().map(|r| r.top().round() as i64).collect();
     assert_eq!(tops.len(), 2, "two rows, top-aligned: {rects:?}");
-    let mut row: Vec<_> = rects.iter().filter(|r| r.top().round() as i64 == *tops.first().unwrap()).collect();
+    let mut row: Vec<_> = rects
+        .iter()
+        .filter(|r| r.top().round() as i64 == *tops.first().unwrap())
+        .collect();
     row.sort_by(|a, b| a.x.total_cmp(&b.x));
     assert_eq!(row.len(), 3);
-    assert_eq!((row[1].left() - row[0].right()).round(), (row[2].left() - row[1].right()).round(), "an even gap");
+    assert_eq!(
+        (row[1].left() - row[0].right()).round(),
+        (row[2].left() - row[1].right()).round(),
+        "an even gap"
+    );
     let c1 = visarium::agent::place::Rect::of(b.resolve_item("c1").unwrap());
     assert!(rects.iter().all(|r| r.top() >= c1.bottom()), "below c1");
 }
@@ -1170,25 +1275,49 @@ async fn group_create_frames_packs_and_pushes_aside() {
     let text = w
         .ok("group_create", json!({ "board": "Offline sync", "refs": ["c1", "i1"], "title": "Moodboard", "layout": "column" }))
         .await;
-    assert!(text.starts_with("Grouped c1, i1 as g3 \"Moodboard\" (framed), laid out in a column"), "{text}");
+    assert!(
+        text.starts_with("Grouped c1, i1 as g3 \"Moodboard\" (framed), laid out in a column"),
+        "{text}"
+    );
     assert!(text.contains("Moved aside: n6"), "{text}");
     let b = w.data().await;
     let g3 = b.resolve_group("g3").unwrap();
     assert!(g3.frame && g3.collides && g3.label.as_deref() == Some("Moodboard"));
-    let members: Vec<_> = b.items.iter().filter(|i| i.group_id.as_deref() == Some(g3.id.as_str())).collect();
+    let members: Vec<_> = b
+        .items
+        .iter()
+        .filter(|i| i.group_id.as_deref() == Some(g3.id.as_str()))
+        .collect();
     assert_eq!(members.len(), 2);
     let n6 = visarium::agent::place::Rect::of(b.resolve_item("n6").unwrap());
     for m in &members {
-        assert!(!n6.overlaps(&visarium::agent::place::Rect::of(m), 0.0), "n6 still overlaps {}", m.short_ref());
+        assert!(
+            !n6.overlaps(&visarium::agent::place::Rect::of(m), 0.0),
+            "n6 still overlaps {}",
+            m.short_ref()
+        );
     }
 
     // Taken from another group, and kept off what never moves.
-    let text = w.ok("group_create", json!({ "board": "Offline sync", "refs": ["n1"], "title": "Solo" })).await;
+    let text = w
+        .ok(
+            "group_create",
+            json!({ "board": "Offline sync", "refs": ["n1"], "title": "Solo" }),
+        )
+        .await;
     assert!(text.contains("n1 left g1"), "{text}");
     let b = w.data().await;
     let n1 = visarium::agent::place::Rect::of(b.resolve_item("n1").unwrap());
-    for fixed in b.items.iter().filter(|i| !i.collides && i.short_ref() != "n1") {
-        assert!(!n1.overlaps(&visarium::agent::place::Rect::of(fixed), 0.0), "n1 lands on {}", fixed.short_ref());
+    for fixed in b
+        .items
+        .iter()
+        .filter(|i| !i.collides && i.short_ref() != "n1")
+    {
+        assert!(
+            !n1.overlaps(&visarium::agent::place::Rect::of(fixed), 0.0),
+            "n1 lands on {}",
+            fixed.short_ref()
+        );
     }
 }
 
@@ -1701,18 +1830,39 @@ const ELICIT: &str = "io.modelcontextprotocol/clientCapabilities";
 async fn board_tools_need_the_grant_and_say_where_to_turn_it_on() {
     let w = world().await;
     let names = |r: Value| -> Vec<String> {
-        r["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap().to_string()).collect()
+        r["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_string())
+            .collect()
     };
     let off = names(w.rpc("tools/list", json!({})).await);
-    assert!(!off.iter().any(|n| n.starts_with("board_") && n != "board_read"), "{off:?}");
+    assert!(
+        !off.iter()
+            .any(|n| n.starts_with("board_") && n != "board_read"),
+        "{off:?}"
+    );
     let refused = w.fails("board_create", json!({ "title": "Demo" })).await;
-    assert!(refused.contains("Manage boards") && refused.contains("Settings → Agents"), "{refused}");
-    assert_eq!(w.titles().await, ["Offline sync"], "the refusal changed nothing");
+    assert!(
+        refused.contains("Manage boards") && refused.contains("Settings → Agents"),
+        "{refused}"
+    );
+    assert_eq!(
+        w.titles().await,
+        ["Offline sync"],
+        "the refusal changed nothing"
+    );
 
     // The grant applies from the next call, with no new token.
     w.grant(true).await;
     let on = names(w.rpc("tools/list", json!({})).await);
-    for t in ["board_create", "board_rename", "board_duplicate", "board_delete"] {
+    for t in [
+        "board_create",
+        "board_rename",
+        "board_duplicate",
+        "board_delete",
+    ] {
         assert!(on.contains(&t.to_string()), "{t} in {on:?}");
     }
     let delete = w.rpc("tools/list", json!({})).await["tools"]
@@ -1730,7 +1880,10 @@ async fn an_agent_creates_renames_and_duplicates_boards() {
     let w = world().await;
     w.grant(true).await;
     let made = w.ok("board_create", json!({ "title": "Demo" })).await;
-    assert!(made.contains("Created board \"Demo\"") && !made.contains("Another board"), "{made}");
+    assert!(
+        made.contains("Created board \"Demo\"") && !made.contains("Another board"),
+        "{made}"
+    );
     let (owner, agent): (String, Option<String>) =
         sqlx::query_as("SELECT owner_id, created_by_agent FROM canvas WHERE title = 'Demo'")
             .fetch_one(&w.app.db)
@@ -1738,21 +1891,37 @@ async fn an_agent_creates_renames_and_duplicates_boards() {
             .unwrap();
     assert_eq!(owner, w.user, "owned by the agent's person");
     assert_eq!(agent.as_deref(), Some("Claude Code on laptop"));
-    assert!(w.ok("desk", json!({})).await.contains("made by Claude Code on laptop for Ada"));
+    assert!(
+        w.ok("desk", json!({}))
+            .await
+            .contains("made by Claude Code on laptop for Ada")
+    );
 
     // A shared title is made, and the agent is told to use the id.
     let again = w.ok("board_create", json!({ "title": "demo" })).await;
-    assert!(again.contains("Another board is also called") && again.contains("by its id"), "{again}");
+    assert!(
+        again.contains("Another board is also called") && again.contains("by its id"),
+        "{again}"
+    );
 
-    let renamed = w.ok("board_rename", json!({ "board": "Offline sync", "title": "Sync, offline" })).await;
-    assert!(renamed.contains("\"Offline sync\" to \"Sync, offline\""), "{renamed}");
+    let renamed = w
+        .ok(
+            "board_rename",
+            json!({ "board": "Offline sync", "title": "Sync, offline" }),
+        )
+        .await;
+    assert!(
+        renamed.contains("\"Offline sync\" to \"Sync, offline\""),
+        "{renamed}"
+    );
 
     let copied = w.ok("board_duplicate", json!({ "board": w.board })).await;
     assert!(copied.contains("\"Sync, offline copy\""), "{copied}");
-    let copy: String = sqlx::query_scalar("SELECT id FROM canvas WHERE title = 'Sync, offline copy'")
-        .fetch_one(&w.app.db)
-        .await
-        .unwrap();
+    let copy: String =
+        sqlx::query_scalar("SELECT id FROM canvas WHERE title = 'Sync, offline copy'")
+            .fetch_one(&w.app.db)
+            .await
+            .unwrap();
     let overview = w.ok("board_read", json!({ "board": copy })).await;
     assert!(overview.contains("d2"), "refs are kept: {overview}");
 }
@@ -1761,9 +1930,30 @@ async fn an_agent_creates_renames_and_duplicates_boards() {
 async fn a_retried_board_create_makes_one_board() {
     let w = world().await;
     w.grant(true).await;
-    let first = w.ok("board_create", json!({ "title": "Once", "request_id": "r-1" })).await;
-    let second = w.ok("board_create", json!({ "title": "Once", "request_id": "r-1" })).await;
-    assert!(second.contains("Already done") && second.contains(first.split("(id ").nth(1).unwrap().split(')').next().unwrap()));
+    let first = w
+        .ok(
+            "board_create",
+            json!({ "title": "Once", "request_id": "r-1" }),
+        )
+        .await;
+    let second = w
+        .ok(
+            "board_create",
+            json!({ "title": "Once", "request_id": "r-1" }),
+        )
+        .await;
+    assert!(
+        second.contains("Already done")
+            && second.contains(
+                first
+                    .split("(id ")
+                    .nth(1)
+                    .unwrap()
+                    .split(')')
+                    .next()
+                    .unwrap()
+            )
+    );
     assert_eq!(w.titles().await.iter().filter(|t| *t == "Once").count(), 1);
 }
 
@@ -1772,17 +1962,31 @@ async fn deleting_a_board_asks_the_person_and_needs_a_yes() {
     let w = world().await;
     w.grant(true).await;
     let call = |extra: Value| {
-        let mut params = json!({ "name": "board_delete", "arguments": { "board": "Offline sync" } });
-        params.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        let mut params =
+            json!({ "name": "board_delete", "arguments": { "board": "Offline sync" } });
+        params
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
         params
     };
 
     // A client that cannot ask: refused, nothing deleted.
     let r = w.rpc("tools/call", call(json!({}))).await;
     assert_eq!(r["isError"], true);
-    assert!(r["content"][0]["text"].as_str().unwrap().contains("in the Visarium app"), "{r}");
+    assert!(
+        r["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("in the Visarium app"),
+        "{r}"
+    );
     let url_only = json!({ "_meta": { ELICIT: { "elicitation": { "url": {} } } } });
-    assert_eq!(w.rpc("tools/call", call(url_only)).await["isError"], true, "url mode cannot confirm");
+    assert_eq!(
+        w.rpc("tools/call", call(url_only)).await["isError"],
+        true,
+        "url mode cannot confirm"
+    );
 
     // A client that can: it is asked, and nothing is deleted yet.
     let meta = json!({ ELICIT: { "elicitation": {} } });
@@ -1792,9 +1996,23 @@ async fn deleting_a_board_asks_the_person_and_needs_a_yes() {
     assert_eq!(req["method"], "elicitation/create");
     assert_eq!(req["params"]["mode"], "form");
     let message = req["params"]["message"].as_str().unwrap();
-    assert!(message.contains("Offline sync") && message.contains("cannot be undone") && message.contains("diagram"), "{message}");
-    assert_eq!(req["params"]["requestedSchema"]["properties"]["confirm"]["type"], "boolean");
-    assert!(ask["content"][0]["text"].as_str().unwrap().contains("Nothing is deleted"), "a fallback for clients that ignore resultType");
+    assert!(
+        message.contains("Offline sync")
+            && message.contains("cannot be undone")
+            && message.contains("diagram"),
+        "{message}"
+    );
+    assert_eq!(
+        req["params"]["requestedSchema"]["properties"]["confirm"]["type"],
+        "boolean"
+    );
+    assert!(
+        ask["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Nothing is deleted"),
+        "a fallback for clients that ignore resultType"
+    );
     assert_eq!(w.titles().await, ["Offline sync"]);
 
     // Declined, cancelled, or accepted without the box ticked: kept.
@@ -1803,9 +2021,20 @@ async fn deleting_a_board_asks_the_person_and_needs_a_yes() {
         json!({ "action": "cancel" }),
         json!({ "action": "accept", "content": { "confirm": false } }),
     ] {
-        let r = w.rpc("tools/call", call(json!({ "_meta": meta, "inputResponses": { "confirm_delete": answer } }))).await;
+        let r = w
+            .rpc(
+                "tools/call",
+                call(json!({ "_meta": meta, "inputResponses": { "confirm_delete": answer } })),
+            )
+            .await;
         assert_eq!(r["isError"], false, "{r}");
-        assert!(r["content"][0]["text"].as_str().unwrap().contains("Nothing was deleted"), "{r}");
+        assert!(
+            r["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("Nothing was deleted"),
+            "{r}"
+        );
         assert_eq!(w.titles().await, ["Offline sync"]);
     }
 
@@ -1813,7 +2042,13 @@ async fn deleting_a_board_asks_the_person_and_needs_a_yes() {
     let yes = json!({ "_meta": meta, "inputResponses": { "confirm_delete": { "action": "accept", "content": { "confirm": true } } } });
     let done = w.rpc("tools/call", call(yes)).await;
     assert_eq!(done["isError"], false, "{done}");
-    assert!(done["content"][0]["text"].as_str().unwrap().contains("Deleted the board \"Offline sync\""), "{done}");
+    assert!(
+        done["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Deleted the board \"Offline sync\""),
+        "{done}"
+    );
     assert!(w.titles().await.is_empty());
 }
 
@@ -1829,11 +2064,20 @@ async fn only_an_owner_or_admins_agent_deletes_a_board() {
         .await
         .unwrap();
     let r = w
-        .rpc("tools/call", json!({ "name": "board_delete", "arguments": { "board": w.board },
-             "_meta": { ELICIT: { "elicitation": {} } } }))
+        .rpc(
+            "tools/call",
+            json!({ "name": "board_delete", "arguments": { "board": w.board },
+             "_meta": { ELICIT: { "elicitation": {} } } }),
+        )
         .await;
     assert_eq!(r["isError"], true, "refused before asking anyone: {r}");
-    assert!(r["content"][0]["text"].as_str().unwrap().contains("owner or an admin"), "{r}");
+    assert!(
+        r["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("owner or an admin"),
+        "{r}"
+    );
     assert_eq!(w.titles().await, ["Offline sync"]);
 }
 
@@ -1847,9 +2091,13 @@ async fn people_on_a_board_see_it_renamed_and_deleted_and_by_whom() {
     let browser = auth::create_session(&w.app.db, Kind::Browser, Some(&w.user), None, None, None)
         .await
         .unwrap();
-    let mut req = format!("ws://{addr}/ws/canvas/{}", w.board).into_client_request().unwrap();
-    req.headers_mut()
-        .insert("cookie", format!("VISARIUM_SESSION={browser}").parse().unwrap());
+    let mut req = format!("ws://{addr}/ws/canvas/{}", w.board)
+        .into_client_request()
+        .unwrap();
+    req.headers_mut().insert(
+        "cookie",
+        format!("VISARIUM_SESSION={browser}").parse().unwrap(),
+    );
     let (mut member, _) = tokio_tungstenite::connect_async(req).await.unwrap();
     member
         .send(json!({ "t": "hello", "protocolVersion": visarium::PROTOCOL_VERSION, "sinceRevision": 0 }).to_string().into())
@@ -1857,7 +2105,11 @@ async fn people_on_a_board_see_it_renamed_and_deleted_and_by_whom() {
         .unwrap();
     assert_eq!(next(&mut member).await["t"], "welcome");
 
-    w.ok("board_rename", json!({ "board": w.board, "title": "Feature tour" })).await;
+    w.ok(
+        "board_rename",
+        json!({ "board": w.board, "title": "Feature tour" }),
+    )
+    .await;
     assert_eq!(
         next_frame(&mut member).await,
         json!({ "t": "board", "title": "Feature tour", "by": "Claude Code on laptop for Ada" })
@@ -1888,7 +2140,11 @@ fn animated_gif() -> Vec<u8> {
     {
         let mut encoder = image::codecs::gif::GifEncoder::new(&mut out);
         let frames = [0u8, 200].map(|shade| {
-            image::Frame::new(image::RgbaImage::from_pixel(64, 32, image::Rgba([shade, 0, 0, 255])))
+            image::Frame::new(image::RgbaImage::from_pixel(
+                64,
+                32,
+                image::Rgba([shade, 0, 0, 255]),
+            ))
         });
         encoder.encode_frames(frames).unwrap();
     }
@@ -1908,7 +2164,9 @@ async fn image_server() -> u16 {
     let picture = png(300, 150, 7);
     tokio::spawn(async move {
         loop {
-            let Ok((mut socket, _)) = listener.accept().await else { return };
+            let Ok((mut socket, _)) = listener.accept().await else {
+                return;
+            };
             let picture = picture.clone();
             tokio::spawn(async move {
                 let mut buf = [0u8; 2048];
@@ -1916,11 +2174,26 @@ async fn image_server() -> u16 {
                 let request = String::from_utf8_lossy(&buf[..n]);
                 let path = request.split_whitespace().nth(1).unwrap_or("/");
                 let (head, body): (String, Vec<u8>) = match path {
-                    "/x.png" => (format!("HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\n", picture.len()), picture),
-                    "/redir" => ("HTTP/1.1 302 Found\r\nLocation: /x.png\r\nContent-Length: 0\r\n".into(), vec![]),
-                    _ => ("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 13\r\n".into(), b"<html></html>".to_vec()),
+                    "/x.png" => (
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\n",
+                            picture.len()
+                        ),
+                        picture,
+                    ),
+                    "/redir" => (
+                        "HTTP/1.1 302 Found\r\nLocation: /x.png\r\nContent-Length: 0\r\n".into(),
+                        vec![],
+                    ),
+                    _ => (
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 13\r\n"
+                            .into(),
+                        b"<html></html>".to_vec(),
+                    ),
                 };
-                let _ = socket.write_all(format!("{head}Connection: close\r\n\r\n").as_bytes()).await;
+                let _ = socket
+                    .write_all(format!("{head}Connection: close\r\n\r\n").as_bytes())
+                    .await;
                 let _ = socket.write_all(&body).await;
             });
         }
@@ -1929,7 +2202,10 @@ async fn image_server() -> u16 {
 }
 
 async fn assets(w: &World) -> i64 {
-    sqlx::query_scalar("SELECT count(*) FROM asset").fetch_one(&w.app.db).await.unwrap()
+    sqlx::query_scalar("SELECT count(*) FROM asset")
+        .fetch_one(&w.app.db)
+        .await
+        .unwrap()
 }
 
 #[tokio::test]
@@ -1943,11 +2219,19 @@ async fn an_image_from_data_is_stored_like_an_upload_and_placed() {
     assert!(text.starts_with("Created i2 (image)"), "{text}");
     let b = w.data().await;
     let i2 = b.resolve_item("i2").unwrap();
-    assert_eq!((i2.width, i2.height), (200.0, 100.0), "shown at its own size");
+    assert_eq!(
+        (i2.width, i2.height),
+        (200.0, 100.0),
+        "shown at its own size"
+    );
     assert!(i2.collides);
     assert_eq!(assets(&w).await, before + 1);
     // The same bytes again: a second item, still one file.
-    w.ok("item_create", json!({ "board": "Offline sync", "kind": "image", "data": b64(&picture), "near": "i2" })).await;
+    w.ok(
+        "item_create",
+        json!({ "board": "Offline sync", "kind": "image", "data": b64(&picture), "near": "i2" }),
+    )
+    .await;
     assert_eq!(assets(&w).await, before + 1, "same bytes, same asset");
     assert!(w.data().await.resolve_item("i3").is_ok());
 }
@@ -1957,7 +2241,10 @@ async fn an_animated_gif_stays_a_gif() {
     let w = world().await;
     w.ok("item_create", json!({ "board": "Offline sync", "kind": "image", "data": b64(&animated_gif()), "near": "n1" })).await;
     let b = w.data().await;
-    assert_eq!(b.resolve_item("i2").unwrap().mime_type.as_deref(), Some("image/gif"));
+    assert_eq!(
+        b.resolve_item("i2").unwrap().mime_type.as_deref(),
+        Some("image/gif")
+    );
 }
 
 #[tokio::test]
@@ -1965,14 +2252,29 @@ async fn too_much_data_points_to_a_url() {
     let w = world().await;
     // Over the 8 MB image limit, inside what one call may carry.
     let big = "A".repeat(12 * 1024 * 1024);
-    let err = w.fails("item_create", json!({ "board": "Offline sync", "kind": "image", "data": big })).await;
+    let err = w
+        .fails(
+            "item_create",
+            json!({ "board": "Offline sync", "kind": "image", "data": big }),
+        )
+        .await;
     assert!(err.contains("at most 8 MB") && err.contains("url"), "{err}");
-    let err = w.fails("item_create", json!({ "board": "Offline sync", "kind": "image", "data": b64(b"not a picture") })).await;
+    let err = w
+        .fails(
+            "item_create",
+            json!({ "board": "Offline sync", "kind": "image", "data": b64(b"not a picture") }),
+        )
+        .await;
     assert!(err.contains("not an image"), "{err}");
     // A 6 MB image passes as data.
     let mut big_png = png(1200, 1200, 3);
     big_png.resize(6 * 1024 * 1024, 0);
-    let text = w.ok("item_create", json!({ "board": "Offline sync", "kind": "image", "data": b64(&big_png) })).await;
+    let text = w
+        .ok(
+            "item_create",
+            json!({ "board": "Offline sync", "kind": "image", "data": b64(&big_png) }),
+        )
+        .await;
     assert!(text.starts_with("Created i2 (image)"), "{text}");
 }
 
@@ -1980,12 +2282,17 @@ async fn too_much_data_points_to_a_url() {
 async fn an_image_from_a_url_follows_redirects_and_refuses_what_is_not_an_image() {
     let w = world().await;
     let port = image_server().await;
-    w.app.allow_private_imports.store(true, std::sync::atomic::Ordering::Relaxed);
+    w.app
+        .allow_private_imports
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     let text = w
         .ok("item_create", json!({ "board": "Offline sync", "kind": "image", "url": format!("http://127.0.0.1:{port}/redir"), "near": "n2",
             "link": { "type": "comments", "to": "n2" } }))
         .await;
-    assert!(text.contains("Created i2 (image)") && text.contains("Linked i2 comments n2"), "{text}");
+    assert!(
+        text.contains("Created i2 (image)") && text.contains("Linked i2 comments n2"),
+        "{text}"
+    );
     let b = w.data().await;
     assert_eq!(b.resolve_item("i2").unwrap().width, 300.0);
     let err = w
@@ -2005,10 +2312,20 @@ async fn a_url_on_a_private_address_is_never_fetched() {
         "http://192.168.1.10/image.png".to_string(),
         "http://[::ffff:10.0.0.5]/image.png".to_string(),
     ] {
-        let err = w.fails("item_create", json!({ "board": "Offline sync", "kind": "image", "url": url })).await;
+        let err = w
+            .fails(
+                "item_create",
+                json!({ "board": "Offline sync", "kind": "image", "url": url }),
+            )
+            .await;
         assert!(err.contains("private address"), "{url}: {err}");
     }
-    let err = w.fails("item_create", json!({ "board": "Offline sync", "kind": "image", "url": "ftp://example.com/x.png" })).await;
+    let err = w
+        .fails(
+            "item_create",
+            json!({ "board": "Offline sync", "kind": "image", "url": "ftp://example.com/x.png" }),
+        )
+        .await;
     assert!(err.contains("Only http and https"), "{err}");
     assert_eq!(w.revision().await, before, "nothing was created");
 }
@@ -2019,26 +2336,46 @@ async fn a_url_on_a_private_address_is_never_fetched() {
 async fn the_overview_names_layout_problems_but_not_a_persons_own_overlaps() {
     let w = world().await;
     let read = || w.ok("board_read", json!({ "board": "Offline sync" }));
-    assert!(read().await.contains("Layout: no overlaps or crossings"), "the fixture is tidy");
+    assert!(
+        read().await.contains("Layout: no overlaps or crossings"),
+        "the fixture is tidy"
+    );
 
     // A person stacks two of their own notes on purpose: not a problem.
     let b = w.data().await;
     let n1 = b.resolve_item("n1").unwrap().id.clone();
-    apply_as(&w.app, &w.board, &w.user, serde_json::from_value(json!([{ "type": "item.transform", "itemId": n1,
-        "transform": { "x": 0.0, "y": 0.0, "width": 280.0, "height": 200.0, "rotation": 0.0 } }])).unwrap()).await;
+    apply_as(
+        &w.app,
+        &w.board,
+        &w.user,
+        serde_json::from_value(json!([{ "type": "item.transform", "itemId": n1,
+        "transform": { "x": 0.0, "y": 0.0, "width": 280.0, "height": 200.0, "rotation": 0.0 } }]))
+        .unwrap(),
+    )
+    .await;
     assert!(read().await.contains("Layout: no overlaps or crossings"));
 
     // The agent's linked note is dragged onto d1 by a person.
-    w.ok("item_create", json!({ "board": "Offline sync", "kind": "note", "source": "Mine.", "near": "c1",
-        "link": { "type": "comments", "to": "c1" } })).await;
+    w.ok(
+        "item_create",
+        json!({ "board": "Offline sync", "kind": "note", "source": "Mine.", "near": "c1",
+        "link": { "type": "comments", "to": "c1" } }),
+    )
+    .await;
     let n6 = w.data().await.resolve_item("n6").unwrap().id.clone();
     apply_as(&w.app, &w.board, &w.user, serde_json::from_value(json!([{ "type": "item.transform", "itemId": n6,
         "transform": { "x": -100.0, "y": 100.0, "width": 200.0, "height": 100.0, "rotation": 0.0 } }])).unwrap()).await;
     let text = read().await;
     assert!(text.contains("## Layout"), "{text}");
-    assert!(text.contains("d1 overlaps n6") || text.contains("n6 overlaps d1"), "{text}");
+    assert!(
+        text.contains("d1 overlaps n6") || text.contains("n6 overlaps d1"),
+        "{text}"
+    );
     assert!(text.contains("n6 → c1 crosses"), "{text}");
-    assert!(!text.contains("n1 overlaps d1") && !text.contains("d1 overlaps n1"), "{text}");
+    assert!(
+        !text.contains("n1 overlaps d1") && !text.contains("d1 overlaps n1"),
+        "{text}"
+    );
 }
 
 // --- canvas-polish ------------------------------------------------------------------
@@ -2049,17 +2386,35 @@ async fn a_scaled_note_reads_with_its_text_scale() {
     let id = uuid::Uuid::now_v7();
     let mut op = note_op(id, 0.0, 9000.0, "Big words", None);
     op["textScale"] = json!(2.5);
-    apply_as(&w.app, &w.board, &w.user, serde_json::from_value(json!([op])).unwrap()).await;
-    let read = w.ok("item_read", json!({ "board": "Offline sync", "ref": "n6" })).await;
-    assert!(read.contains("Text shown at 2.5× its normal size."), "{read}");
-    let plain = w.ok("item_read", json!({ "board": "Offline sync", "ref": "n1" })).await;
+    apply_as(
+        &w.app,
+        &w.board,
+        &w.user,
+        serde_json::from_value(json!([op])).unwrap(),
+    )
+    .await;
+    let read = w
+        .ok("item_read", json!({ "board": "Offline sync", "ref": "n6" }))
+        .await;
+    assert!(
+        read.contains("Text shown at 2.5× its normal size."),
+        "{read}"
+    );
+    let plain = w
+        .ok("item_read", json!({ "board": "Offline sync", "ref": "n1" }))
+        .await;
     assert!(!plain.contains("Text shown at"), "{plain}");
 }
 
 #[tokio::test]
 async fn an_agent_sets_and_clears_the_centerpiece_and_reads_it_back() {
     let w = world().await;
-    let set = w.ok("arrange", json!({ "board": "Offline sync", "centerpiece": "d2" })).await;
+    let set = w
+        .ok(
+            "arrange",
+            json!({ "board": "Offline sync", "centerpiece": "d2" }),
+        )
+        .await;
     assert!(set.contains("d2 is now the centerpiece"), "{set}");
     let o = w.ok("board_read", json!({ "board": "Offline sync" })).await;
     assert!(o.contains("Centerpiece: d2"), "{o}");
@@ -2069,11 +2424,21 @@ async fn an_agent_sets_and_clears_the_centerpiece_and_reads_it_back() {
         .await
         .unwrap();
     assert!(snap.is_some_and(|c| c.starts_with("item:")));
-    let cleared = w.ok("arrange", json!({ "board": "Offline sync", "centerpiece": "" })).await;
+    let cleared = w
+        .ok(
+            "arrange",
+            json!({ "board": "Offline sync", "centerpiece": "" }),
+        )
+        .await;
     assert!(cleared.contains("no centerpiece"), "{cleared}");
     let o = w.ok("board_read", json!({ "board": "Offline sync" })).await;
     assert!(!o.contains("Centerpiece:"), "{o}");
-    let bad = w.fails("arrange", json!({ "board": "Offline sync", "centerpiece": "g99" })).await;
+    let bad = w
+        .fails(
+            "arrange",
+            json!({ "board": "Offline sync", "centerpiece": "g99" }),
+        )
+        .await;
     assert!(bad.contains("does not exist"), "{bad}");
 }
 
@@ -2081,20 +2446,51 @@ async fn an_agent_sets_and_clears_the_centerpiece_and_reads_it_back() {
 async fn an_agent_links_a_passage_of_a_note_and_is_told_which_exist() {
     let w = world().await;
     let id = uuid::Uuid::now_v7();
-    let op = note_op(id, 0.0, 9000.0, "# Evidence\n\nHow a request becomes evidence. ^evidence\n\n## Fallbacks\n\nPlain.", None);
-    apply_as(&w.app, &w.board, &w.user, serde_json::from_value(json!([op])).unwrap()).await;
-    let read = w.ok("item_read", json!({ "board": "Offline sync", "ref": "n6" })).await;
-    assert!(read.contains("Passages (2): ^evidence, fallbacks"), "{read}");
+    let op = note_op(
+        id,
+        0.0,
+        9000.0,
+        "# Evidence\n\nHow a request becomes evidence. ^evidence\n\n## Fallbacks\n\nPlain.",
+        None,
+    );
+    apply_as(
+        &w.app,
+        &w.board,
+        &w.user,
+        serde_json::from_value(json!([op])).unwrap(),
+    )
+    .await;
+    let read = w
+        .ok("item_read", json!({ "board": "Offline sync", "ref": "n6" }))
+        .await;
+    assert!(
+        read.contains("Passages (2): ^evidence, fallbacks"),
+        "{read}"
+    );
     let linked = w
         .ok("link", json!({ "board": "Offline sync", "from": "n6#^evidence", "to": "d2#Server", "type": "describes" }))
         .await;
     assert!(linked.contains("n6#^evidence"), "{linked}");
     let o = w.ok("board_read", json!({ "board": "Offline sync" })).await;
-    assert!(o.contains("7 links · 1 broken"), "the new passage link is whole, not broken: {o}");
+    assert!(
+        o.contains("7 links · 1 broken"),
+        "the new passage link is whole, not broken: {o}"
+    );
     let refused = w
-        .fails("link", json!({ "board": "Offline sync", "from": "n6#^nope", "to": "d2", "type": "describes" }))
+        .fails(
+            "link",
+            json!({ "board": "Offline sync", "from": "n6#^nope", "to": "d2", "type": "describes" }),
+        )
         .await;
-    assert!(refused.contains("Its passages: ^evidence, fallbacks"), "{refused}");
-    let unlinked = w.ok("unlink", json!({ "board": "Offline sync", "from": "n6#^evidence", "to": "d2#Server" })).await;
+    assert!(
+        refused.contains("Its passages: ^evidence, fallbacks"),
+        "{refused}"
+    );
+    let unlinked = w
+        .ok(
+            "unlink",
+            json!({ "board": "Offline sync", "from": "n6#^evidence", "to": "d2#Server" }),
+        )
+        .await;
     assert!(!unlinked.is_empty());
 }

@@ -46,7 +46,11 @@ pub fn block_names(source: &str) -> Vec<String> {
             }
             let base = slug(text);
             let seen = slugs.entry(base.clone()).or_insert(0);
-            let name = if *seen > 0 { format!("{base}-{seen}") } else { base };
+            let name = if *seen > 0 {
+                format!("{base}-{seen}")
+            } else {
+                base
+            };
             *seen += 1;
             if !title && !name.is_empty() {
                 names.push(name);
@@ -80,13 +84,19 @@ fn marker(line: &str) -> Option<&str> {
     let at = t.rfind('^')?;
     let id = &t[at + 1..];
     let before = t[..at].chars().last();
-    (!id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') && matches!(before, Some(' ' | '\t')))
-        .then_some(id)
+    (!id.is_empty()
+        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        && matches!(before, Some(' ' | '\t')))
+    .then_some(id)
 }
 
 /// An ATX heading's text, without its `#`s.
 fn heading(line: &str) -> Option<&str> {
-    let t = line.strip_prefix("   ").or_else(|| line.strip_prefix("  ")).or_else(|| line.strip_prefix(' ')).unwrap_or(line);
+    let t = line
+        .strip_prefix("   ")
+        .or_else(|| line.strip_prefix("  "))
+        .or_else(|| line.strip_prefix(' '))
+        .unwrap_or(line);
     let hashes = t.chars().take_while(|c| *c == '#').count();
     if !(1..=6).contains(&hashes) {
         return None;
@@ -102,7 +112,9 @@ fn is_item(line: &str) -> bool {
     let t = line.trim_start();
     let bullet = t.starts_with(['-', '*', '+']) && t[1..].starts_with([' ', '\t']);
     let digits = t.chars().take_while(char::is_ascii_digit).count();
-    let numbered = digits > 0 && t[digits..].starts_with(['.', ')']) && t[digits + 1..].starts_with([' ', '\t']);
+    let numbered = digits > 0
+        && t[digits..].starts_with(['.', ')'])
+        && t[digits + 1..].starts_with([' ', '\t']);
     bullet || numbered
 }
 
@@ -121,8 +133,19 @@ mod tests {
     #[test]
     fn names_passages_as_the_browser_does() {
         let note = "## Title\n\nThe adapter retries twice. ^retry\n\nThen it gives up,\nand says why.\n\n- First item ^one\n- Second item\n  continues here\n\n```\nNot a block ^nope\n```\n\n## Bounds and fallbacks\n\n## Bounds and fallbacks";
-        assert_eq!(block_names(note), vec!["^retry", "^one", "bounds-and-fallbacks", "bounds-and-fallbacks-1"]);
+        assert_eq!(
+            block_names(note),
+            vec![
+                "^retry",
+                "^one",
+                "bounds-and-fallbacks",
+                "bounds-and-fallbacks-1"
+            ]
+        );
         assert_eq!(slug("Bounds, and *fallbacks*!"), "bounds-and-fallbacks");
-        assert!(block_names("Price is 2^10").is_empty(), "a caret mid-word is not a marker");
+        assert!(
+            block_names("Price is 2^10").is_empty(),
+            "a caret mid-word is not a marker"
+        );
     }
 }

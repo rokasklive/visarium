@@ -113,7 +113,10 @@ pub async fn desk(app: &AppState) -> Result<Out, Fail> {
                 .await
                 .map_err(db_fail)?;
                 made.map_or(String::new(), |(agent, owner)| {
-                    format!(" · made by {agent} for {}", owner.unwrap_or_else(|| "someone".into()))
+                    format!(
+                        " · made by {agent} for {}",
+                        owner.unwrap_or_else(|| "someone".into())
+                    )
                 })
             }
         };
@@ -315,7 +318,9 @@ pub async fn board_read(app: &AppState, caller: &Caller, args: &Value) -> Result
         text.push_str(&format!("Last change {last}.\n"));
     }
     if let Some(c) = b.centerpiece_ref() {
-        text.push_str(&format!("Centerpiece: {c} — people open the board framed on it.\n"));
+        text.push_str(&format!(
+            "Centerpiece: {c} — people open the board framed on it.\n"
+        ));
     }
     text.push_str(&format!(
         "You are {} for {}. item_read(ref) reads one thing in full; trace(ref) follows it. `d2#Server` names an element inside a diagram.\n",
@@ -431,7 +436,9 @@ pub async fn board_read(app: &AppState, caller: &Caller, args: &Value) -> Result
         text.push_str(&layout_section(&b));
     }
     if b.items.is_empty() {
-        text.push_str("\nThe board is empty. item_create adds a note, diagram, checklist or image.\n");
+        text.push_str(
+            "\nThe board is empty. item_create adds a note, diagram, checklist or image.\n",
+        );
     }
     Ok(Out::text(text)
         .touch(b.id, None, "reading")
@@ -461,15 +468,23 @@ fn layout_section(b: &BoardData) -> String {
             if ra.overlaps(&rc, 0.0) {
                 let w = ra.right().min(rc.right()) - ra.left().max(rc.left());
                 let h = ra.bottom().min(rc.bottom()) - ra.top().max(rc.top());
-                problems.push((1e9 + w * h, format!("{} overlaps {}", a.short_ref(), c.short_ref())));
+                problems.push((
+                    1e9 + w * h,
+                    format!("{} overlaps {}", a.short_ref(), c.short_ref()),
+                ));
             }
         }
     }
     let mut lengths = vec![];
     let mut drawn = vec![];
     for l in &b.links {
-        let (Some(from), Some(to)) = (b.item(&l.from_item), b.item(&l.to_item)) else { continue };
-        let s = place::segment(&place::anchor_box(from, l.from_element.as_deref()), &place::anchor_box(to, l.to_element.as_deref()));
+        let (Some(from), Some(to)) = (b.item(&l.from_item), b.item(&l.to_item)) else {
+            continue;
+        };
+        let s = place::segment(
+            &place::anchor_box(from, l.from_element.as_deref()),
+            &place::anchor_box(to, l.to_element.as_deref()),
+        );
         lengths.push(place::length(&s));
         drawn.push((l, from, to, s));
     }
@@ -491,22 +506,43 @@ fn layout_section(b: &BoardData) -> String {
             .map(|i| i.short_ref())
             .collect();
         for g in &b.groups {
-            let members: Vec<&crate::boards::ItemRow> = b.items.iter().filter(|i| i.group_id.as_deref() == Some(g.id.as_str())).collect();
+            let members: Vec<&crate::boards::ItemRow> = b
+                .items
+                .iter()
+                .filter(|i| i.group_id.as_deref() == Some(g.id.as_str()))
+                .collect();
             if members.iter().any(|m| m.id == from.id || m.id == to.id) {
                 continue;
             }
             if let Some(r) = Rect::around(&members.iter().map(|m| Rect::of(m)).collect::<Vec<_>>())
-                && place::hits(&s, &Rect { w: r.w + 2.0 * pad, h: r.h + 2.0 * pad, ..r })
+                && place::hits(
+                    &s,
+                    &Rect {
+                        w: r.w + 2.0 * pad,
+                        h: r.h + 2.0 * pad,
+                        ..r
+                    },
+                )
             {
                 crossed.push(g.short_ref());
             }
         }
         if !crossed.is_empty() {
-            problems.push((1e6 * crossed.len() as f64, format!("{label} crosses {}", crossed.join(", "))));
+            problems.push((
+                1e6 * crossed.len() as f64,
+                format!("{label} crosses {}", crossed.join(", ")),
+            ));
         }
         let len = place::length(&s);
         if lengths.len() >= 3 && typical > 0.0 && len > 3.0 * typical {
-            problems.push((len, format!("{label} is {}px long (typical {}px)", len.round(), typical.round())));
+            problems.push((
+                len,
+                format!(
+                    "{label} is {}px long (typical {}px)",
+                    len.round(),
+                    typical.round()
+                ),
+            ));
         }
     }
     if problems.is_empty() {
@@ -553,7 +589,10 @@ pub async fn item_read(app: &AppState, args: &Value) -> Result<Out, Fail> {
     }
     if let Some(scale) = i.text_scale {
         // canvas/text-scaling: the text is drawn this much larger than at 1.
-        text.push_str(&format!("Text shown at {}× its normal size.\n", (scale * 100.0).round() / 100.0));
+        text.push_str(&format!(
+            "Text shown at {}× its normal size.\n",
+            (scale * 100.0).round() / 100.0
+        ));
     }
     let links = links_of_item(&b, i);
     if !links.is_empty() {
@@ -1086,12 +1125,20 @@ pub fn describe(b: &BoardData, op: &Value) -> String {
         "group.frame" => "framed or unframed a group".into(),
         "item.collides" => format!(
             "turned collision {} for {}",
-            if op.get("collides").and_then(Value::as_bool) == Some(true) { "on" } else { "off" },
+            if op.get("collides").and_then(Value::as_bool) == Some(true) {
+                "on"
+            } else {
+                "off"
+            },
             item()
         ),
         "group.collides" => format!(
             "turned collision {} for a group",
-            if op.get("collides").and_then(Value::as_bool) == Some(true) { "on" } else { "off" }
+            if op.get("collides").and_then(Value::as_bool) == Some(true) {
+                "on"
+            } else {
+                "off"
+            }
         ),
         other => format!("did {other}"),
     }
@@ -1166,7 +1213,12 @@ pub async fn changes(app: &AppState, args: &Value) -> Result<Out, Fail> {
                 .iter()
                 .filter_map(|r| serde_json::from_str::<Value>(&r.4).ok())
                 .filter_map(|o| o.get("itemId").and_then(Value::as_str).map(str::to_string))
-                .filter_map(|id| b.items.iter().find(|it| it.id == id).map(|it| it.short_ref()))
+                .filter_map(|id| {
+                    b.items
+                        .iter()
+                        .find(|it| it.id == id)
+                        .map(|it| it.short_ref())
+                })
                 .collect();
             if refs.len() == j - i && refs.len() <= 6 {
                 format!("{verb} {}", refs.join(", "))

@@ -22,17 +22,20 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get};
 use axum_extra::extract::CookieJar;
-use openidconnect::core::{CoreAuthenticationFlow, CoreClient, CoreIdTokenClaims, CoreProviderMetadata};
+use openidconnect::core::{
+    CoreAuthenticationFlow, CoreClient, CoreIdTokenClaims, CoreProviderMetadata,
+};
 use openidconnect::{
-    AsyncHttpClient, AuthorizationCode, ClientId, ClientSecret, CsrfToken, HttpClientError, HttpRequest, HttpResponse, IssuerUrl,
-    Nonce, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
+    AsyncHttpClient, AuthorizationCode, ClientId, ClientSecret, CsrfToken, HttpClientError,
+    HttpRequest, HttpResponse, IssuerUrl, Nonce, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl,
+    Scope, TokenResponse,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
+use crate::AppState;
 use crate::auth::{self, FLOW, Kind, Principal, SESSION, User};
 use crate::error::{ApiError, ApiResult};
-use crate::AppState;
 
 /// An OIDC attempt has this long from leaving for the provider to coming back.
 pub const FLOW_TTL: Duration = Duration::from_secs(600);
@@ -53,28 +56,54 @@ pub struct ProviderConfig {
 
 /// Reads `VISARIUM_OIDC_{ID}_{ISSUER|CLIENT_ID|CLIENT_SECRET|NAME}`. `GOOGLE`
 /// needs no issuer or name.
-pub fn providers_from_env(vars: impl IntoIterator<Item = (String, String)>) -> Result<Vec<ProviderConfig>, String> {
+pub fn providers_from_env(
+    vars: impl IntoIterator<Item = (String, String)>,
+) -> Result<Vec<ProviderConfig>, String> {
     const FIELDS: [&str; 4] = ["_CLIENT_SECRET", "_CLIENT_ID", "_ISSUER", "_NAME"];
     let mut found: HashMap<String, HashMap<&str, String>> = HashMap::new();
     for (key, value) in vars {
-        let Some(rest) = key.strip_prefix("VISARIUM_OIDC_") else { continue };
-        let Some(field) = FIELDS.iter().find(|f| rest.ends_with(*f)) else {
-            return Err(format!("{key}: expected it to end in one of {}", FIELDS.join(", ")));
+        let Some(rest) = key.strip_prefix("VISARIUM_OIDC_") else {
+            continue;
         };
-        let id = rest[..rest.len() - field.len()].to_ascii_lowercase().replace('_', "-");
-        if id.is_empty() || !id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') {
-            return Err(format!("{key}: a provider id may hold letters, digits and underscores"));
+        let Some(field) = FIELDS.iter().find(|f| rest.ends_with(*f)) else {
+            return Err(format!(
+                "{key}: expected it to end in one of {}",
+                FIELDS.join(", ")
+            ));
+        };
+        let id = rest[..rest.len() - field.len()]
+            .to_ascii_lowercase()
+            .replace('_', "-");
+        if id.is_empty()
+            || !id
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        {
+            return Err(format!(
+                "{key}: a provider id may hold letters, digits and underscores"
+            ));
         }
         if !value.trim().is_empty() {
-            found.entry(id).or_default().insert(field, value.trim().to_string());
+            found
+                .entry(id)
+                .or_default()
+                .insert(field, value.trim().to_string());
         }
     }
     let mut providers = found
         .into_iter()
         .map(|(id, mut f)| {
             let google = id == "google";
-            let var = |field: &str| format!("VISARIUM_OIDC_{}{field}", id.to_ascii_uppercase().replace('-', "_"));
-            let mut need = |field: &'static str| f.remove(field).ok_or_else(|| format!("{} is required", var(field)));
+            let var = |field: &str| {
+                format!(
+                    "VISARIUM_OIDC_{}{field}",
+                    id.to_ascii_uppercase().replace('-', "_")
+                )
+            };
+            let mut need = |field: &'static str| {
+                f.remove(field)
+                    .ok_or_else(|| format!("{} is required", var(field)))
+            };
             let client_id = need("_CLIENT_ID")?;
             let client_secret = need("_CLIENT_SECRET")?;
             let issuer = match f.remove("_ISSUER") {
@@ -82,8 +111,16 @@ pub fn providers_from_env(vars: impl IntoIterator<Item = (String, String)>) -> R
                 None if google => GOOGLE_ISSUER.into(),
                 None => return Err(format!("{} is required", var("_ISSUER"))),
             };
-            let name = f.remove("_NAME").unwrap_or_else(|| if google { "Google".into() } else { id.clone() });
-            Ok(ProviderConfig { id, name, issuer, client_id, client_secret })
+            let name = f
+                .remove("_NAME")
+                .unwrap_or_else(|| if google { "Google".into() } else { id.clone() });
+            Ok(ProviderConfig {
+                id,
+                name,
+                issuer,
+                client_id,
+                client_secret,
+            })
         })
         .collect::<Result<Vec<_>, String>>()?;
     providers.sort_by(|a, b| (a.id != "google", &a.id).cmp(&(b.id != "google", &b.id)));
@@ -115,12 +152,18 @@ impl<'c> AsyncHttpClient<'c> for Http {
 
     fn call(&'c self, request: HttpRequest) -> Self::Future {
         Box::pin(async move {
-            let response = self.0.execute(request.try_into().map_err(Box::new)?).await.map_err(Box::new)?;
+            let response = self
+                .0
+                .execute(request.try_into().map_err(Box::new)?)
+                .await
+                .map_err(Box::new)?;
             let mut builder = axum::http::Response::builder().status(response.status());
             for (name, value) in response.headers() {
                 builder = builder.header(name, value);
             }
-            builder.body(response.bytes().await.map_err(Box::new)?.to_vec()).map_err(HttpClientError::Http)
+            builder
+                .body(response.bytes().await.map_err(Box::new)?.to_vec())
+                .map_err(HttpClientError::Http)
         })
     }
 }
@@ -137,7 +180,12 @@ pub struct Provider {
 
 impl Provider {
     pub async fn new(config: ProviderConfig, http: &Http) -> Self {
-        let provider = Self { id: config.id.clone(), name: config.name.clone(), config, metadata: RwLock::new(None) };
+        let provider = Self {
+            id: config.id.clone(),
+            name: config.name.clone(),
+            config,
+            metadata: RwLock::new(None),
+        };
         if let Err(e) = provider.refresh(http).await {
             tracing::warn!(provider = %provider.id, "could not reach the provider yet ({e}); will retry on first sign-in");
         }
@@ -146,7 +194,9 @@ impl Provider {
 
     async fn refresh(&self, http: &Http) -> Result<CoreProviderMetadata, String> {
         let issuer = IssuerUrl::new(self.config.issuer.clone()).map_err(|e| e.to_string())?;
-        let metadata = CoreProviderMetadata::discover_async(issuer, http).await.map_err(|e| format!("discovery failed: {e}"))?;
+        let metadata = CoreProviderMetadata::discover_async(issuer, http)
+            .await
+            .map_err(|e| format!("discovery failed: {e}"))?;
         *self.metadata.write().await = Some(metadata.clone());
         Ok(metadata)
     }
@@ -173,7 +223,11 @@ impl Provider {
         >,
         String,
     > {
-        let redirect = format!("{}/auth/oidc/{}/callback", public_url.trim_end_matches('/'), self.id);
+        let redirect = format!(
+            "{}/auth/oidc/{}/callback",
+            public_url.trim_end_matches('/'),
+            self.id
+        );
         Ok(CoreClient::from_provider_metadata(
             metadata,
             ClientId::new(self.config.client_id.clone()),
@@ -189,11 +243,15 @@ impl Provider {
 pub enum Intent {
     SignIn,
     /// Add this identity to the signed-in account `user_id`.
-    Link { user_id: String },
+    Link {
+        user_id: String,
+    },
     /// Become the first admin of an empty instance.
     Claim,
     /// Join through an invitation (the token's hash, never the token).
-    Invite { token_hash: String },
+    Invite {
+        token_hash: String,
+    },
 }
 
 struct Flow {
@@ -221,7 +279,11 @@ impl Flows {
     }
     /// Removes and returns the flow: each is usable once.
     fn take(&self, id: &str) -> Option<Flow> {
-        self.0.lock().unwrap().remove(id).filter(|f| f.started.elapsed() < FLOW_TTL)
+        self.0
+            .lock()
+            .unwrap()
+            .remove(id)
+            .filter(|f| f.started.elapsed() < FLOW_TTL)
     }
 }
 
@@ -229,13 +291,27 @@ impl Flows {
 /// `https://evil.example`.
 pub fn safe_return(path: Option<&str>) -> String {
     match path {
-        Some(p) if p.starts_with('/') && !p.starts_with("//") && !p.starts_with("/\\") && !p.contains(['\r', '\n']) => p.into(),
+        Some(p)
+            if p.starts_with('/')
+                && !p.starts_with("//")
+                && !p.starts_with("/\\")
+                && !p.contains(['\r', '\n']) =>
+        {
+            p.into()
+        }
         _ => "/".into(),
     }
 }
 
 fn redirect(to: &str) -> Response {
-    (StatusCode::FOUND, [(header::LOCATION, HeaderValue::from_str(to).unwrap_or(HeaderValue::from_static("/")))]).into_response()
+    (
+        StatusCode::FOUND,
+        [(
+            header::LOCATION,
+            HeaderValue::from_str(to).unwrap_or(HeaderValue::from_static("/")),
+        )],
+    )
+        .into_response()
 }
 
 /// Every failure lands on the sign-in page with a code the SPA turns into a
@@ -281,12 +357,22 @@ async fn start(
         "sign-in" => Intent::SignIn,
         "claim" => Intent::Claim,
         "link" => match principal.user() {
-            Some(user) => Intent::Link { user_id: user.id.clone() },
+            Some(user) => Intent::Link {
+                user_id: user.id.clone(),
+            },
             None => return failed("signed-out"),
         },
         _ => return failed("bad-request"),
     };
-    match begin(&app, &headers, &provider, intent, safe_return(q.return_to.as_deref())).await {
+    match begin(
+        &app,
+        &headers,
+        &provider,
+        intent,
+        safe_return(q.return_to.as_deref()),
+    )
+    .await
+    {
         Ok((url, cookie)) => {
             let mut response = redirect(&url);
             response.headers_mut().append(header::SET_COOKIE, cookie);
@@ -309,13 +395,21 @@ pub async fn begin(
 ) -> Result<(String, HeaderValue), &'static str> {
     let p = find(app, provider).ok_or("unknown-provider")?;
     let public_url = app.config.public_url.as_ref().ok_or("not-configured")?;
-    let client = p.metadata(&app.http).await.and_then(|m| p.client(m, public_url)).map_err(|e| {
-        tracing::warn!(provider = %p.id, "{e}");
-        "provider-unreachable"
-    })?;
+    let client = p
+        .metadata(&app.http)
+        .await
+        .and_then(|m| p.client(m, public_url))
+        .map_err(|e| {
+            tracing::warn!(provider = %p.id, "{e}");
+            "provider-unreachable"
+        })?;
     let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
     let (url, state, nonce) = client
-        .authorize_url(CoreAuthenticationFlow::AuthorizationCode, CsrfToken::new_random, Nonce::new_random)
+        .authorize_url(
+            CoreAuthenticationFlow::AuthorizationCode,
+            CsrfToken::new_random,
+            Nonce::new_random,
+        )
         .add_scope(Scope::new("email".into()))
         .add_scope(Scope::new("profile".into()))
         .set_pkce_challenge(challenge)
@@ -333,7 +427,14 @@ pub async fn begin(
             started: Instant::now(),
         },
     );
-    Ok((url.to_string(), FLOW.set(&flow_id, auth::is_secure(headers), FLOW_TTL.as_secs() as i64)))
+    Ok((
+        url.to_string(),
+        FLOW.set(
+            &flow_id,
+            auth::is_secure(headers),
+            FLOW_TTL.as_secs() as i64,
+        ),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -394,7 +495,12 @@ async fn callback(
 /// signature, `iss`, `aud`, `exp` and `nonce`. A signature that does not check
 /// out against the keys we hold gets one retry after refetching them, for
 /// providers that have rotated keys since we last looked.
-async fn verify(app: &AppState, provider: &str, code: String, flow: &Flow) -> Result<Identity, String> {
+async fn verify(
+    app: &AppState,
+    provider: &str,
+    code: String,
+    flow: &Flow,
+) -> Result<Identity, String> {
     let p = find(app, provider).ok_or("unknown provider")?;
     let public_url = app.config.public_url.as_deref().ok_or("no public url")?;
     let client = p.client(p.metadata(&app.http).await?, public_url)?;
@@ -411,16 +517,25 @@ async fn verify(app: &AppState, provider: &str, code: String, flow: &Flow) -> Re
         Ok(c) => c.clone(),
         Err(openidconnect::ClaimsVerificationError::SignatureVerification(_)) => {
             let client = p.client(p.refresh(&app.http).await?, public_url)?;
-            id_token.claims(&client.id_token_verifier(), &nonce).map_err(|e| e.to_string())?.clone()
+            id_token
+                .claims(&client.id_token_verifier(), &nonce)
+                .map_err(|e| e.to_string())?
+                .clone()
         }
         Err(e) => return Err(e.to_string()),
     };
-    let email = claims.email().filter(|_| claims.email_verified() == Some(true)).map(|e| e.as_str().to_lowercase());
+    let email = claims
+        .email()
+        .filter(|_| claims.email_verified() == Some(true))
+        .map(|e| e.as_str().to_lowercase());
     Ok(Identity {
         provider: provider.into(),
         subject: claims.subject().as_str().into(),
         email,
-        name: claims.name().and_then(|n| n.get(None)).map(|n| n.as_str().to_string()),
+        name: claims
+            .name()
+            .and_then(|n| n.get(None))
+            .map(|n| n.as_str().to_string()),
         preferred_username: claims.preferred_username().map(|u| u.as_str().to_string()),
     })
 }
@@ -433,7 +548,11 @@ async fn linked_user(db: &sqlx::SqlitePool, identity: &Identity) -> sqlx::Result
         .await
 }
 
-pub async fn link<'e>(db: impl sqlx::SqliteExecutor<'e>, user_id: &str, identity: &Identity) -> sqlx::Result<()> {
+pub async fn link<'e>(
+    db: impl sqlx::SqliteExecutor<'e>,
+    user_id: &str,
+    identity: &Identity,
+) -> sqlx::Result<()> {
     sqlx::query("INSERT INTO user_identity (provider, subject, user_id, email) VALUES (?, ?, ?, ?)")
         .bind(&identity.provider)
         .bind(&identity.subject)
@@ -447,7 +566,13 @@ pub async fn link<'e>(db: impl sqlx::SqliteExecutor<'e>, user_id: &str, identity
 /// Resolves the account, in order: an identity already linked; linking to the
 /// signed-in account; an invitation; claiming an empty instance. Nothing else
 /// creates or finds an account — in particular, not a matching email.
-async fn finish(app: &AppState, headers: &HeaderMap, principal: &Principal, identity: Identity, flow: Flow) -> Response {
+async fn finish(
+    app: &AppState,
+    headers: &HeaderMap,
+    principal: &Principal,
+    identity: Identity,
+    flow: Flow,
+) -> Response {
     match resolve(app, &identity, &flow.intent, principal).await {
         Ok(Resolved::SignIn(user_id)) => {
             // Keep the address book current; nothing ever matches on it.
@@ -457,10 +582,21 @@ async fn finish(app: &AppState, headers: &HeaderMap, principal: &Principal, iden
                 .bind(&identity.subject)
                 .execute(&app.db)
                 .await;
-            match auth::start_session(app, principal.session_hash(), &user_id, Kind::Browser, &auth::browser_label(headers)).await {
+            match auth::start_session(
+                app,
+                principal.session_hash(),
+                &user_id,
+                Kind::Browser,
+                &auth::browser_label(headers),
+            )
+            .await
+            {
                 Ok(token) => {
                     let mut response = redirect(&flow.return_to);
-                    response.headers_mut().append(header::SET_COOKIE, SESSION.set(&token, auth::is_secure(headers), Kind::Browser.idle_secs()));
+                    response.headers_mut().append(
+                        header::SET_COOKIE,
+                        SESSION.set(&token, auth::is_secure(headers), Kind::Browser.idle_secs()),
+                    );
                     response
                 }
                 Err(e) => {
@@ -479,42 +615,77 @@ enum Resolved {
     Linked,
 }
 
-async fn resolve(app: &AppState, identity: &Identity, intent: &Intent, principal: &Principal) -> Result<Resolved, &'static str> {
+async fn resolve(
+    app: &AppState,
+    identity: &Identity,
+    intent: &Intent,
+    principal: &Principal,
+) -> Result<Resolved, &'static str> {
     let db = &app.db;
-    let linked = linked_user(db, identity).await.map_err(|_| "server-error")?;
+    let linked = linked_user(db, identity)
+        .await
+        .map_err(|_| "server-error")?;
     match (intent, linked) {
         (Intent::Link { user_id }, Some(owner)) => {
-            if &owner == user_id { Ok(Resolved::Linked) } else { Err("linked-elsewhere") }
+            if &owner == user_id {
+                Ok(Resolved::Linked)
+            } else {
+                Err("linked-elsewhere")
+            }
         }
         (Intent::Link { user_id }, None) => {
             // The account that asked must still be the one signed in here.
             if principal.user().map(|u| &u.id) != Some(user_id) {
                 return Err("signed-out");
             }
-            link(db, user_id, identity).await.map_err(|_| "server-error")?;
+            link(db, user_id, identity)
+                .await
+                .map_err(|_| "server-error")?;
             Ok(Resolved::Linked)
         }
         (Intent::Invite { .. } | Intent::Claim, Some(_)) => Err("already-registered"),
         (_, Some(user_id)) => {
-            let user = auth::find_user(db, &user_id).await.map_err(|_| "server-error")?.ok_or("server-error")?;
-            if user.deactivated_at.is_some() { Err("deactivated") } else { Ok(Resolved::SignIn(user_id)) }
+            let user = auth::find_user(db, &user_id)
+                .await
+                .map_err(|_| "server-error")?
+                .ok_or("server-error")?;
+            if user.deactivated_at.is_some() {
+                Err("deactivated")
+            } else {
+                Ok(Resolved::SignIn(user_id))
+            }
         }
         (Intent::Invite { token_hash }, None) => {
             let mut tx = db.begin().await.map_err(|_| "server-error")?;
-            let user = crate::invitations::join_in(&mut tx, token_hash, &username_for(db, identity).await, &display_name_for(identity), None)
+            let user = crate::invitations::join_in(
+                &mut tx,
+                token_hash,
+                &username_for(db, identity).await,
+                &display_name_for(identity),
+                None,
+            )
+            .await
+            .map_err(|e| crate::invitations::reason(&e))?;
+            link(&mut *tx, &user.id, identity)
                 .await
-                .map_err(|e| crate::invitations::reason(&e))?;
-            link(&mut *tx, &user.id, identity).await.map_err(|_| "server-error")?;
+                .map_err(|_| "server-error")?;
             tx.commit().await.map_err(|_| "server-error")?;
             Ok(Resolved::SignIn(user.id))
         }
         (Intent::Claim, None) => {
             let _guard = app.setup_lock.lock().await;
             let mut tx = db.begin().await.map_err(|_| "server-error")?;
-            let user = auth::claim_in(&mut tx, &username_for(db, identity).await, &display_name_for(identity), None)
+            let user = auth::claim_in(
+                &mut tx,
+                &username_for(db, identity).await,
+                &display_name_for(identity),
+                None,
+            )
+            .await
+            .map_err(|_| "already-claimed")?;
+            link(&mut *tx, &user.id, identity)
                 .await
-                .map_err(|_| "already-claimed")?;
-            link(&mut *tx, &user.id, identity).await.map_err(|_| "server-error")?;
+                .map_err(|_| "server-error")?;
             tx.commit().await.map_err(|_| "server-error")?;
             Ok(Resolved::SignIn(user.id))
         }
@@ -536,7 +707,13 @@ async fn username_for(db: &sqlx::SqlitePool, identity: &Identity) -> String {
     let mut base: String = source
         .to_lowercase()
         .chars()
-        .map(|c| if c.is_ascii_lowercase() || c.is_ascii_digit() || "._-".contains(c) { c } else { '-' })
+        .map(|c| {
+            if c.is_ascii_lowercase() || c.is_ascii_digit() || "._-".contains(c) {
+                c
+            } else {
+                '-'
+            }
+        })
         .take(56)
         .collect();
     base = base.trim_matches(['-', '.', '_']).to_string();
@@ -544,12 +721,17 @@ async fn username_for(db: &sqlx::SqlitePool, identity: &Identity) -> String {
         base = "member".into();
     }
     for n in 1.. {
-        let candidate = if n == 1 { base.clone() } else { format!("{base}-{n}") };
-        let taken: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM app_user WHERE username = ?)")
-            .bind(&candidate)
-            .fetch_one(db)
-            .await
-            .unwrap_or(false);
+        let candidate = if n == 1 {
+            base.clone()
+        } else {
+            format!("{base}-{n}")
+        };
+        let taken: bool =
+            sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM app_user WHERE username = ?)")
+                .bind(&candidate)
+                .fetch_one(db)
+                .await
+                .unwrap_or(false);
         if !taken {
             return candidate;
         }
@@ -561,10 +743,20 @@ fn display_name_for(identity: &Identity) -> String {
     let name = identity
         .name
         .clone()
-        .or_else(|| identity.email.as_deref().and_then(|e| e.split('@').next()).map(str::to_string))
+        .or_else(|| {
+            identity
+                .email
+                .as_deref()
+                .and_then(|e| e.split('@').next())
+                .map(str::to_string)
+        })
         .unwrap_or_else(|| "Member".into());
     let name: String = name.trim().chars().take(64).collect();
-    if name.is_empty() { "Member".into() } else { name }
+    if name.is_empty() {
+        "Member".into()
+    } else {
+        name
+    }
 }
 
 // --- my sign-in methods -----------------------------------------------------
@@ -586,10 +778,11 @@ async fn list_identities(
             .bind(&me.id)
             .fetch_all(&app.db)
             .await?;
-    let has_password: bool = sqlx::query_scalar("SELECT password_hash IS NOT NULL FROM app_user WHERE id = ?")
-        .bind(&me.id)
-        .fetch_one(&app.db)
-        .await?;
+    let has_password: bool =
+        sqlx::query_scalar("SELECT password_hash IS NOT NULL FROM app_user WHERE id = ?")
+            .bind(&me.id)
+            .fetch_one(&app.db)
+            .await?;
     let named: Vec<_> = identities
         .into_iter()
         .map(|i| {
@@ -597,7 +790,9 @@ async fn list_identities(
             serde_json::json!({ "provider": i.provider, "name": name, "email": i.email, "createdAt": i.created_at })
         })
         .collect();
-    Ok(axum::Json(serde_json::json!({ "hasPassword": has_password, "identities": named })))
+    Ok(axum::Json(
+        serde_json::json!({ "hasPassword": has_password, "identities": named }),
+    ))
 }
 
 /// Refused when it would leave the account with no way in at all.
@@ -617,12 +812,20 @@ async fn unlink(
     .fetch_one(&app.db)
     .await?;
     if !has_password && others == 0 {
-        return Err(ApiError::conflict("this is your last way to sign in; add a password or another provider first")
-            .titled("Cannot remove your last sign-in method"));
+        return Err(ApiError::conflict(
+            "this is your last way to sign in; add a password or another provider first",
+        )
+        .titled("Cannot remove your last sign-in method"));
     }
-    let done = sqlx::query("DELETE FROM user_identity WHERE user_id = ? AND provider = ?").bind(&me.id).bind(&provider).execute(&app.db).await?;
+    let done = sqlx::query("DELETE FROM user_identity WHERE user_id = ? AND provider = ?")
+        .bind(&me.id)
+        .bind(&provider)
+        .execute(&app.db)
+        .await?;
     if done.rows_affected() == 0 {
-        return Err(ApiError::not_found(format!("no {provider} sign-in on this account")));
+        return Err(ApiError::not_found(format!(
+            "no {provider} sign-in on this account"
+        )));
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -632,7 +835,10 @@ mod tests {
     use super::*;
 
     fn vars(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     #[test]
@@ -640,33 +846,60 @@ mod tests {
         let got = providers_from_env(vars(&[
             ("VISARIUM_OIDC_GOOGLE_CLIENT_ID", "g-id"),
             ("VISARIUM_OIDC_GOOGLE_CLIENT_SECRET", "g-secret"),
-            ("VISARIUM_OIDC_STUDIO_SSO_ISSUER", "https://id.example/o/visarium/"),
+            (
+                "VISARIUM_OIDC_STUDIO_SSO_ISSUER",
+                "https://id.example/o/visarium/",
+            ),
             ("VISARIUM_OIDC_STUDIO_SSO_CLIENT_ID", "s-id"),
             ("VISARIUM_OIDC_STUDIO_SSO_CLIENT_SECRET", "s-secret"),
             ("VISARIUM_OIDC_STUDIO_SSO_NAME", "Studio SSO"),
             ("VISARIUM_PORT", "8080"),
         ]))
         .unwrap();
-        assert_eq!(got[0], ProviderConfig {
-            id: "google".into(),
-            name: "Google".into(),
-            issuer: GOOGLE_ISSUER.into(),
-            client_id: "g-id".into(),
-            client_secret: "g-secret".into(),
-        });
-        assert_eq!((got[1].id.as_str(), got[1].name.as_str()), ("studio-sso", "Studio SSO"));
+        assert_eq!(
+            got[0],
+            ProviderConfig {
+                id: "google".into(),
+                name: "Google".into(),
+                issuer: GOOGLE_ISSUER.into(),
+                client_id: "g-id".into(),
+                client_secret: "g-secret".into(),
+            }
+        );
+        assert_eq!(
+            (got[1].id.as_str(), got[1].name.as_str()),
+            ("studio-sso", "Studio SSO")
+        );
 
-        let no_issuer = providers_from_env(vars(&[("VISARIUM_OIDC_AUTH_CLIENT_ID", "a"), ("VISARIUM_OIDC_AUTH_CLIENT_SECRET", "b")]));
-        assert_eq!(no_issuer.unwrap_err(), "VISARIUM_OIDC_AUTH_ISSUER is required");
+        let no_issuer = providers_from_env(vars(&[
+            ("VISARIUM_OIDC_AUTH_CLIENT_ID", "a"),
+            ("VISARIUM_OIDC_AUTH_CLIENT_SECRET", "b"),
+        ]));
+        assert_eq!(
+            no_issuer.unwrap_err(),
+            "VISARIUM_OIDC_AUTH_ISSUER is required"
+        );
         let no_secret = providers_from_env(vars(&[("VISARIUM_OIDC_GOOGLE_CLIENT_ID", "a")]));
-        assert_eq!(no_secret.unwrap_err(), "VISARIUM_OIDC_GOOGLE_CLIENT_SECRET is required");
-        assert!(providers_from_env(vars(&[("VISARIUM_OIDC_GOOGLE_SECRET", "x")])).is_err(), "a typo is loud");
+        assert_eq!(
+            no_secret.unwrap_err(),
+            "VISARIUM_OIDC_GOOGLE_CLIENT_SECRET is required"
+        );
+        assert!(
+            providers_from_env(vars(&[("VISARIUM_OIDC_GOOGLE_SECRET", "x")])).is_err(),
+            "a typo is loud"
+        );
     }
 
     #[test]
     fn return_paths_stay_on_this_origin() {
         assert_eq!(safe_return(Some("/boards/abc?x=1")), "/boards/abc?x=1");
-        for bad in ["https://evil.example/", "//evil.example", "/\\evil.example", "boards", "/a\r\nSet-Cookie: x"] {
+        for bad in [
+            "https://evil.example/",
+            "//evil.example",
+            "/\\evil.example",
+            "boards",
+            "/a\r\nSet-Cookie: x",
+        ] {
             assert_eq!(safe_return(Some(bad)), "/", "{bad}");
         }
         assert_eq!(safe_return(None), "/");

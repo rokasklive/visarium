@@ -54,12 +54,20 @@ fn active() -> String {
 /// The link, if it may still be used. Checked on every viewer request, not
 /// only when the link is redeemed.
 pub async fn active_link(db: &sqlx::SqlitePool, id: &str) -> sqlx::Result<Option<ShareLink>> {
-    sqlx::query_as(sqlx::AssertSqlSafe(format!("{LINK_SQL} WHERE l.id = ? AND {}", active()))).bind(id).fetch_optional(db).await
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{LINK_SQL} WHERE l.id = ? AND {}",
+        active()
+    )))
+    .bind(id)
+    .fetch_optional(db)
+    .await
 }
 
 fn require_sharing(app: &AppState) -> ApiResult<()> {
     if app.local_user.is_some() || app.config.sharing_disabled {
-        return Err(ApiError::not_found("sharing is turned off on this instance"));
+        return Err(ApiError::not_found(
+            "sharing is turned off on this instance",
+        ));
     }
     Ok(())
 }
@@ -85,10 +93,12 @@ struct NewShare {
 async fn hash_passphrase(passphrase: Option<String>) -> ApiResult<Option<String>> {
     match passphrase.filter(|p| !p.is_empty()) {
         None => Ok(None),
-        Some(p) if p.chars().count() < MIN_PASSPHRASE_CHARS => {
-            Err(ApiError::bad_request(format!("a passphrase must be at least {MIN_PASSPHRASE_CHARS} characters")))
-        }
-        Some(p) if p.len() > 1024 => Err(ApiError::bad_request("a passphrase must be at most 1024 bytes")),
+        Some(p) if p.chars().count() < MIN_PASSPHRASE_CHARS => Err(ApiError::bad_request(format!(
+            "a passphrase must be at least {MIN_PASSPHRASE_CHARS} characters"
+        ))),
+        Some(p) if p.len() > 1024 => Err(ApiError::bad_request(
+            "a passphrase must be at most 1024 bytes",
+        )),
         Some(p) => Ok(Some(auth::hash_password(p).await?)),
     }
 }
@@ -106,9 +116,18 @@ async fn create(
     let expires = match body.expires_in_days {
         None => None,
         Some(d) if EXPIRY_DAYS.contains(&d) => Some(format!("+{d} days")),
-        Some(d) => return Err(ApiError::bad_request(format!("a link expires after {EXPIRY_DAYS:?} days or never, not {d}"))),
+        Some(d) => {
+            return Err(ApiError::bad_request(format!(
+                "a link expires after {EXPIRY_DAYS:?} days or never, not {d}"
+            )));
+        }
     };
-    let label = body.label.as_deref().map(str::trim).filter(|l| !l.is_empty()).map(|l| l.chars().take(80).collect::<String>());
+    let label = body
+        .label
+        .as_deref()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(|l| l.chars().take(80).collect::<String>());
     let passphrase = hash_passphrase(body.passphrase).await?;
     let token = auth::random_token();
     let id = new_id();
@@ -126,7 +145,10 @@ async fn create(
     .bind(&passphrase)
     .execute(&app.db)
     .await?;
-    let link: ShareLink = sqlx::query_as(sqlx::AssertSqlSafe(format!("{LINK_SQL} WHERE l.id = ?"))).bind(&id).fetch_one(&app.db).await?;
+    let link: ShareLink = sqlx::query_as(sqlx::AssertSqlSafe(format!("{LINK_SQL} WHERE l.id = ?")))
+        .bind(&id)
+        .fetch_one(&app.db)
+        .await?;
     // The only time the token exists outside the person who shares it.
     let mut out = serde_json::to_value(link).unwrap();
     out["link"] = json!(format!("/s#{token}"));
@@ -134,28 +156,45 @@ async fn create(
 }
 
 /// A board's links that still work, with how many people hold each open.
-async fn list_for_board(State(app): State<AppState>, Path(board): Path<Uuid>) -> ApiResult<axum::Json<Vec<ShareLink>>> {
+async fn list_for_board(
+    State(app): State<AppState>,
+    Path(board): Path<Uuid>,
+) -> ApiResult<axum::Json<Vec<ShareLink>>> {
     require_sharing(&app)?;
     Ok(axum::Json(
-        sqlx::query_as(sqlx::AssertSqlSafe(format!("{LINK_SQL} WHERE l.canvas_id = ? AND {} ORDER BY l.created_at DESC", active())))
-            .bind(board.to_string())
-            .fetch_all(&app.db)
-            .await?,
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "{LINK_SQL} WHERE l.canvas_id = ? AND {} ORDER BY l.created_at DESC",
+            active()
+        )))
+        .bind(board.to_string())
+        .fetch_all(&app.db)
+        .await?,
     ))
 }
 
 /// Every working link on the instance: admins only.
-async fn list_all(State(app): State<AppState>, axum::Extension(me): axum::Extension<User>) -> ApiResult<axum::Json<Vec<ShareLink>>> {
+async fn list_all(
+    State(app): State<AppState>,
+    axum::Extension(me): axum::Extension<User>,
+) -> ApiResult<axum::Json<Vec<ShareLink>>> {
     require_sharing(&app)?;
     auth::require_admin(&me)?;
     Ok(axum::Json(
-        sqlx::query_as(sqlx::AssertSqlSafe(format!("{LINK_SQL} WHERE {} ORDER BY l.created_at DESC", active()))).fetch_all(&app.db).await?,
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "{LINK_SQL} WHERE {} ORDER BY l.created_at DESC",
+            active()
+        )))
+        .fetch_all(&app.db)
+        .await?,
     ))
 }
 
 /// Ends a link's viewers at once: their sessions, and their open sockets.
 async fn end_viewers(app: &AppState, id: &str) -> sqlx::Result<()> {
-    sqlx::query("DELETE FROM session WHERE share_id = ?").bind(id).execute(&app.db).await?;
+    sqlx::query("DELETE FROM session WHERE share_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await?;
     app.rooms.close_share(id);
     Ok(())
 }
@@ -163,10 +202,12 @@ async fn end_viewers(app: &AppState, id: &str) -> sqlx::Result<()> {
 async fn revoke(State(app): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<StatusCode> {
     require_sharing(&app)?;
     let id = id.to_string();
-    let done = sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE share_link SET revoked_at = {NOW} WHERE id = ? AND revoked_at IS NULL")))
-        .bind(&id)
-        .execute(&app.db)
-        .await?;
+    let done = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "UPDATE share_link SET revoked_at = {NOW} WHERE id = ? AND revoked_at IS NULL"
+    )))
+    .bind(&id)
+    .execute(&app.db)
+    .await?;
     if done.rows_affected() == 0 {
         return Err(ApiError::not_found(format!("no active link {id}")));
     }
@@ -190,12 +231,17 @@ async fn change_passphrase(
     require_sharing(&app)?;
     let id = id.to_string();
     let hash = hash_passphrase(body.passphrase).await?;
-    sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE share_link SET passphrase_hash = ? WHERE id = ? AND {}", active().replace("l.", ""))))
-        .bind(&hash)
-        .bind(&id)
-        .execute(&app.db)
-        .await?;
-    let link = active_link(&app.db, &id).await?.ok_or_else(|| ApiError::not_found(format!("no active link {id}")))?;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "UPDATE share_link SET passphrase_hash = ? WHERE id = ? AND {}",
+        active().replace("l.", "")
+    )))
+    .bind(&hash)
+    .bind(&id)
+    .execute(&app.db)
+    .await?;
+    let link = active_link(&app.db, &id)
+        .await?
+        .ok_or_else(|| ApiError::not_found(format!("no active link {id}")))?;
     end_viewers(&app, &id).await?;
     Ok(axum::Json(link))
 }
@@ -236,7 +282,11 @@ pub async fn redeem(
     .bind(auth::hash_token(&body.token))
     .fetch_optional(&app.db)
     .await?;
-    let gone = |code: &str, detail: &str| ApiError::new(StatusCode::GONE, detail).titled("Link not active").with("code", json!(code));
+    let gone = |code: &str, detail: &str| {
+        ApiError::new(StatusCode::GONE, detail)
+            .titled("Link not active")
+            .with("code", json!(code))
+    };
     let secret = match secret {
         None => return Err(gone("invalid", "this link is not valid")),
         Some(s) if !s.live => return Err(gone("revoked", "this link is no longer active")),
@@ -244,33 +294,60 @@ pub async fn redeem(
         Some(s) => s,
     };
     if principal.user().is_some() {
-        return Ok(axum::Json(json!({ "member": true, "boardId": secret.canvas_id })).into_response());
+        return Ok(
+            axum::Json(json!({ "member": true, "boardId": secret.canvas_id })).into_response(),
+        );
     }
     // A locked link says that it is locked, and nothing else: no title, no
     // owner. Wrong guesses slow down this link and no other.
     if let Some(hash) = secret.passphrase_hash {
         let key = format!("share:{}", secret.id);
         let Some(passphrase) = body.passphrase.filter(|p| !p.is_empty()) else {
-            return Err(ApiError::unauthorized("this link needs a passphrase").titled("Passphrase required").with("passphraseRequired", json!(true)));
+            return Err(ApiError::unauthorized("this link needs a passphrase")
+                .titled("Passphrase required")
+                .with("passphraseRequired", json!(true)));
         };
         tokio::time::sleep(app.throttle.delay(&key)).await;
         if auth::verify_password(passphrase, Some(hash)).await == auth::Verified::No {
             app.throttle.failed(&key);
-            return Err(ApiError::unauthorized("that passphrase is not right").titled("Passphrase required").with("passphraseRequired", json!(true)));
+            return Err(ApiError::unauthorized("that passphrase is not right")
+                .titled("Passphrase required")
+                .with("passphraseRequired", json!(true)));
         }
         app.throttle.succeeded(&key);
     }
     if let Some(old) = principal.session_hash() {
         auth::end_session(&app.db, old).await?;
     }
-    let token = auth::create_session(&app.db, Kind::Share, None, Some(&secret.id), secret.expires_at.as_deref(), None).await?;
-    sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE share_link SET last_used_at = {NOW} WHERE id = ?"))).bind(&secret.id).execute(&app.db).await?;
-    let link = active_link(&app.db, &secret.id).await?.ok_or_else(|| gone("revoked", "this link is no longer active"))?;
-    let title: Option<String> = sqlx::query_scalar("SELECT title FROM canvas WHERE id = ?").bind(&link.canvas_id).fetch_optional(&app.db).await?;
+    let token = auth::create_session(
+        &app.db,
+        Kind::Share,
+        None,
+        Some(&secret.id),
+        secret.expires_at.as_deref(),
+        None,
+    )
+    .await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "UPDATE share_link SET last_used_at = {NOW} WHERE id = ?"
+    )))
+    .bind(&secret.id)
+    .execute(&app.db)
+    .await?;
+    let link = active_link(&app.db, &secret.id)
+        .await?
+        .ok_or_else(|| gone("revoked", "this link is no longer active"))?;
+    let title: Option<String> = sqlx::query_scalar("SELECT title FROM canvas WHERE id = ?")
+        .bind(&link.canvas_id)
+        .fetch_optional(&app.db)
+        .await?;
     let mut response = axum::Json(json!({ "member": false, "boardId": link.canvas_id, "title": title, "sharedBy": link.created_by_name }))
         .into_response();
     let max_age = auth::SHARE_SESSION_IDLE_SECS;
-    response.headers_mut().append(header::SET_COOKIE, SHARE.set(&token, auth::is_secure(&headers), max_age));
+    response.headers_mut().append(
+        header::SET_COOKIE,
+        SHARE.set(&token, auth::is_secure(&headers), max_age),
+    );
     Ok(response)
 }
 
@@ -288,14 +365,19 @@ pub async fn private_headers(req: Request, next: Next) -> Response {
     let h = response.headers_mut();
     h.insert("referrer-policy", HeaderValue::from_static("no-referrer"));
     h.insert("x-robots-tag", HeaderValue::from_static("noindex"));
-    h
-        .entry(header::CACHE_CONTROL)
+    h.entry(header::CACHE_CONTROL)
         .or_insert(HeaderValue::from_static("private, no-store"));
     response
 }
 
-async fn board(State(app): State<AppState>, axum::Extension(link): axum::Extension<ShareLink>) -> ApiResult<Response> {
-    let title: String = sqlx::query_scalar("SELECT title FROM canvas WHERE id = ?").bind(&link.canvas_id).fetch_one(&app.db).await?;
+async fn board(
+    State(app): State<AppState>,
+    axum::Extension(link): axum::Extension<ShareLink>,
+) -> ApiResult<Response> {
+    let title: String = sqlx::query_scalar("SELECT title FROM canvas WHERE id = ?")
+        .bind(&link.canvas_id)
+        .fetch_one(&app.db)
+        .await?;
     let mut snapshot = crate::boards::snapshot_of(&app.db, &link.canvas_id).await?;
     // Collaborators' names are for members; a link viewer sees the work, not who did it.
     snapshot.as_object_mut().map(|s| s.remove("people"));
@@ -304,7 +386,10 @@ async fn board(State(app): State<AppState>, axum::Extension(link): axum::Extensi
     snapshot["sharedBy"] = json!(link.created_by_name);
     snapshot["expiresAt"] = json!(link.expires_at);
     let mut response = axum::Json(snapshot).into_response();
-    response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("private, no-store"));
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, no-store"),
+    );
     Ok(response)
 }
 
@@ -316,17 +401,22 @@ async fn derivative(
     Path((id, width)): Path<(Uuid, u32)>,
     headers: HeaderMap,
 ) -> ApiResult<Response> {
-    let on_board: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM canvas_item WHERE canvas_id = ? AND asset_id = ?)")
-        .bind(&link.canvas_id)
-        .bind(id.to_string())
-        .fetch_one(&app.db)
-        .await?;
+    let on_board: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM canvas_item WHERE canvas_id = ? AND asset_id = ?)",
+    )
+    .bind(&link.canvas_id)
+    .bind(id.to_string())
+    .fetch_one(&app.db)
+    .await?;
     if !on_board {
         return Err(ApiError::not_found(format!("no asset {id}")));
     }
     let mut response = crate::assets::serve_derivative(&app, &id, width, &headers).await?;
     // The derivative's own long cache is right for members; a viewer's copy
     // must not outlive their access in a shared cache.
-    response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("private, max-age=3600"));
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=3600"),
+    );
     Ok(response)
 }

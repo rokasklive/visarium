@@ -53,7 +53,9 @@ async fn element_boxes(
     let finite = |v: &[f64]| v.iter().all(|n| n.is_finite());
     if !(report.width > 0.0 && report.width.is_finite())
         || report.elements.len() > MAX_REPORTED_ELEMENTS
-        || report.elements.iter().any(|(name, r)| name.is_empty() || name.chars().count() > 200 || !finite(r) || r[2] < 0.0 || r[3] < 0.0)
+        || report.elements.iter().any(|(name, r)| {
+            name.is_empty() || name.chars().count() > 200 || !finite(r) || r[2] < 0.0 || r[3] < 0.0
+        })
     {
         return Err(ApiError::bad_request(format!(
             "a report is a positive width and at most {MAX_REPORTED_ELEMENTS} named, finite [x, y, width, height] boxes"
@@ -66,7 +68,9 @@ async fn element_boxes(
             .fetch_optional(&app.db)
             .await?;
     let Some((revision, stored)) = current else {
-        return Err(ApiError::not_found(format!("no diagram or note {item} on board {id}")));
+        return Err(ApiError::not_found(format!(
+            "no diagram or note {item} on board {id}"
+        )));
     };
     if report.revision != revision {
         return Err(ApiError::conflict(format!(
@@ -116,11 +120,17 @@ fn not_found(id: impl std::fmt::Display) -> ApiError {
 }
 
 pub async fn exists(db: &sqlx::SqlitePool, id: &Uuid) -> sqlx::Result<bool> {
-    sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM canvas WHERE id = ?)").bind(id.to_string()).fetch_one(db).await
+    sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM canvas WHERE id = ?)")
+        .bind(id.to_string())
+        .fetch_one(db)
+        .await
 }
 
 pub async fn revision(db: &sqlx::SqlitePool, id: &Uuid) -> sqlx::Result<Option<i64>> {
-    sqlx::query_scalar("SELECT revision FROM canvas WHERE id = ?").bind(id.to_string()).fetch_optional(db).await
+    sqlx::query_scalar("SELECT revision FROM canvas WHERE id = ?")
+        .bind(id.to_string())
+        .fetch_optional(db)
+        .await
 }
 
 // --- the operation model ----------------------------------------------------
@@ -236,15 +246,24 @@ const LANGS: [&str; 2] = ["mermaid", "plantuml"];
 
 fn check_body(body: &str) -> ApiResult<()> {
     if body.len() > MAX_BODY {
-        return Err(ApiError::bad_request(format!("an item's text is limited to {MAX_BODY} bytes; this one is {}", body.len())));
+        return Err(ApiError::bad_request(format!(
+            "an item's text is limited to {MAX_BODY} bytes; this one is {}",
+            body.len()
+        )));
     }
     Ok(())
 }
 
 fn check_task(t: &Task) -> ApiResult<()> {
-    let id_ok = (1..=40).contains(&t.id.len()) && t.id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+    let id_ok = (1..=40).contains(&t.id.len())
+        && t.id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
     if !id_ok {
-        return Err(ApiError::bad_request(format!("task id '{}' must be 1-40 letters, digits, '-' or '_'", t.id)));
+        return Err(ApiError::bad_request(format!(
+            "task id '{}' must be 1-40 letters, digits, '-' or '_'",
+            t.id
+        )));
     }
     check_task_text(&t.text)?;
     check_state(&t.state)
@@ -252,27 +271,37 @@ fn check_task(t: &Task) -> ApiResult<()> {
 
 fn check_task_text(text: &str) -> ApiResult<()> {
     if text.trim().is_empty() || text.chars().count() > MAX_TASK_TEXT {
-        return Err(ApiError::bad_request(format!("task text must be 1-{MAX_TASK_TEXT} characters")));
+        return Err(ApiError::bad_request(format!(
+            "task text must be 1-{MAX_TASK_TEXT} characters"
+        )));
     }
     Ok(())
 }
 
 fn check_state(state: &str) -> ApiResult<()> {
     if !TASK_STATES.contains(&state) {
-        return Err(ApiError::bad_request(format!("task state must be one of {}", TASK_STATES.join(", "))));
+        return Err(ApiError::bad_request(format!(
+            "task state must be one of {}",
+            TASK_STATES.join(", ")
+        )));
     }
     Ok(())
 }
 
 fn check_tasks(tasks: &[Task]) -> ApiResult<()> {
     if tasks.len() > MAX_TASKS {
-        return Err(ApiError::bad_request(format!("a checklist holds at most {MAX_TASKS} tasks")));
+        return Err(ApiError::bad_request(format!(
+            "a checklist holds at most {MAX_TASKS} tasks"
+        )));
     }
     let mut seen = std::collections::HashSet::new();
     for t in tasks {
         check_task(t)?;
         if !seen.insert(t.id.as_str()) {
-            return Err(ApiError::bad_request(format!("task id '{}' is used twice in one checklist", t.id)));
+            return Err(ApiError::bad_request(format!(
+                "task id '{}' is used twice in one checklist",
+                t.id
+            )));
         }
     }
     Ok(())
@@ -280,14 +309,19 @@ fn check_tasks(tasks: &[Task]) -> ApiResult<()> {
 
 fn check_title(title: &str) -> ApiResult<()> {
     if title.chars().count() > MAX_TITLE {
-        return Err(ApiError::bad_request(format!("a checklist title is at most {MAX_TITLE} characters")));
+        return Err(ApiError::bad_request(format!(
+            "a checklist title is at most {MAX_TITLE} characters"
+        )));
     }
     Ok(())
 }
 
 fn check_link_type(t: &str) -> ApiResult<()> {
     if !LINK_TYPES.contains(&t) {
-        return Err(ApiError::bad_request(format!("link type must be one of {}", LINK_TYPES.join(", "))));
+        return Err(ApiError::bad_request(format!(
+            "link type must be one of {}",
+            LINK_TYPES.join(", ")
+        )));
     }
     Ok(())
 }
@@ -296,18 +330,28 @@ fn check_link_type(t: &str) -> ApiResult<()> {
 type ContentColumns = (&'static str, Option<String>, Option<String>, Option<String>);
 
 fn content_columns(c: &Content) -> ApiResult<ContentColumns> {
-    let missing_source = |kind: &str| ApiError::bad_request(format!("a {kind} needs its source text"));
+    let missing_source =
+        |kind: &str| ApiError::bad_request(format!("a {kind} needs its source text"));
     match c.kind.as_deref() {
-        None | Some("image") | Some("placeholder") => Ok(("image", Some(c.asset_id()?), None, None)),
+        None | Some("image") | Some("placeholder") => {
+            Ok(("image", Some(c.asset_id()?), None, None))
+        }
         Some("note") => {
             let source = c.source.clone().ok_or_else(|| missing_source("note"))?;
             check_body(&source)?;
             Ok(("note", None, None, Some(source)))
         }
         Some("diagram") => {
-            let lang = c.lang.as_deref().filter(|l| LANGS.contains(l)).ok_or_else(|| {
-                ApiError::bad_request(format!("a diagram's lang must be one of {}", LANGS.join(", ")))
-            })?;
+            let lang = c
+                .lang
+                .as_deref()
+                .filter(|l| LANGS.contains(l))
+                .ok_or_else(|| {
+                    ApiError::bad_request(format!(
+                        "a diagram's lang must be one of {}",
+                        LANGS.join(", ")
+                    ))
+                })?;
             let source = c.source.clone().ok_or_else(|| missing_source("diagram"))?;
             check_body(&source)?;
             Ok(("diagram", None, Some(lang.to_string()), Some(source)))
@@ -331,13 +375,17 @@ impl Content {
     /// A placeholder (an image still uploading) has no asset and cannot be
     /// stored; the client sends `item.content` once the upload lands.
     fn asset_id(&self) -> ApiResult<String> {
-        self.asset.as_ref().and_then(|a| a.asset_id).map(|id| id.to_string()).ok_or_else(|| {
-            ApiError::bad_request(format!(
-                "item content of kind '{}' has no asset; a placeholder is not persistable",
-                self.kind.as_deref().unwrap_or("null")
-            ))
-            .titled("Operation cannot be persisted")
-        })
+        self.asset
+            .as_ref()
+            .and_then(|a| a.asset_id)
+            .map(|id| id.to_string())
+            .ok_or_else(|| {
+                ApiError::bad_request(format!(
+                    "item content of kind '{}' has no asset; a placeholder is not persistable",
+                    self.kind.as_deref().unwrap_or("null")
+                ))
+                .titled("Operation cannot be persisted")
+            })
     }
 }
 
@@ -408,7 +456,10 @@ pub enum Op {
         z: f64,
     },
     #[serde(rename = "item.appearance", rename_all = "camelCase")]
-    ItemAppearance { item_id: Uuid, appearance: Appearance },
+    ItemAppearance {
+        item_id: Uuid,
+        appearance: Appearance,
+    },
     #[serde(rename = "group.create", rename_all = "camelCase")]
     GroupCreate {
         group_id: Uuid,
@@ -421,9 +472,15 @@ pub enum Op {
     #[serde(rename = "group.delete", rename_all = "camelCase")]
     GroupDelete { group_id: Uuid },
     #[serde(rename = "group.members", rename_all = "camelCase")]
-    GroupMembers { group_id: Uuid, member_ids: Option<Vec<Uuid>> },
+    GroupMembers {
+        group_id: Uuid,
+        member_ids: Option<Vec<Uuid>>,
+    },
     #[serde(rename = "group.label", rename_all = "camelCase")]
-    GroupLabel { group_id: Uuid, label: Option<String> },
+    GroupLabel {
+        group_id: Uuid,
+        label: Option<String>,
+    },
     #[serde(rename = "group.frame", rename_all = "camelCase")]
     GroupFrame {
         group_id: Uuid,
@@ -518,7 +575,18 @@ impl Op {
                 }
             }
             Op::TaskAdd { task, .. } => mark(&mut task.by, &mut task.by_agent, &mut task.at),
-            Op::TaskSet { by: b, by_agent: g, at: a, .. } | Op::LinkAdd { by: b, by_agent: g, at: a, .. } => mark(b, g, a),
+            Op::TaskSet {
+                by: b,
+                by_agent: g,
+                at: a,
+                ..
+            }
+            | Op::LinkAdd {
+                by: b,
+                by_agent: g,
+                at: a,
+                ..
+            } => mark(b, g, a),
             _ => {}
         }
     }
@@ -546,7 +614,9 @@ impl Op {
 
 fn check_text_scale(s: Option<f64>) -> ApiResult<Option<f64>> {
     match s {
-        Some(v) if !(0.25..=8.0).contains(&v) => Err(ApiError::bad_request("textScale must be between 0.25 and 8")),
+        Some(v) if !(0.25..=8.0).contains(&v) => Err(ApiError::bad_request(
+            "textScale must be between 0.25 and 8",
+        )),
         // 1 is the default, stored as NULL so the default stays the meaning.
         Some(v) if (v - 1.0).abs() < 1e-9 => Ok(None),
         s => Ok(s),
@@ -576,7 +646,9 @@ fn check_crop(c: &Crop) -> ApiResult<CropColumns> {
         && c.x + c.width <= 1.0 + TOLERANCE
         && c.y + c.height <= 1.0 + TOLERANCE;
     if !finite || !fits {
-        return Err(ApiError::bad_request("crop must be a non-empty rectangle inside the original (fractions 0 to 1)"));
+        return Err(ApiError::bad_request(
+            "crop must be a non-empty rectangle inside the original (fractions 0 to 1)",
+        ));
     }
     let (w, h) = ((1.0 - c.x).min(c.width), (1.0 - c.y).min(c.height));
     let full = c.x < TOLERANCE && c.y < TOLERANCE && w > 1.0 - TOLERANCE && h > 1.0 - TOLERANCE;
@@ -586,7 +658,10 @@ fn check_crop(c: &Crop) -> ApiResult<CropColumns> {
 /// A broken reference (an asset or group that is not stored) or a value the
 /// schema refuses is the caller's mistake, not the server's.
 fn integrity(e: sqlx::Error) -> ApiError {
-    let constraint = e.as_database_error().is_some_and(|d| d.is_check_violation()) || is_foreign_key_violation(&e);
+    let constraint = e
+        .as_database_error()
+        .is_some_and(|d| d.is_check_violation())
+        || is_foreign_key_violation(&e);
     if constraint {
         ApiError::bad_request("an operation referenced an asset or group that is not stored")
             .titled("Operation references something that does not exist")
@@ -595,8 +670,15 @@ fn integrity(e: sqlx::Error) -> ApiError {
     }
 }
 
-async fn join(tx: &mut Transaction<'_, Sqlite>, board: &str, group: &Uuid, members: &Option<Vec<Uuid>>) -> sqlx::Result<()> {
-    let Some(members) = members.as_ref().filter(|m| !m.is_empty()) else { return Ok(()) };
+async fn join(
+    tx: &mut Transaction<'_, Sqlite>,
+    board: &str,
+    group: &Uuid,
+    members: &Option<Vec<Uuid>>,
+) -> sqlx::Result<()> {
+    let Some(members) = members.as_ref().filter(|m| !m.is_empty()) else {
+        return Ok(());
+    };
     sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE canvas_item SET group_id = ?, updated_at = {NOW}
           WHERE canvas_id = ? AND id IN (SELECT value FROM json_each(?))"
@@ -612,9 +694,23 @@ async fn join(tx: &mut Transaction<'_, Sqlite>, board: &str, group: &Uuid, membe
 async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> ApiResult<()> {
     let bump = format!("revision = revision + 1, updated_at = {NOW}");
     match op {
-        Op::ItemCreate { item_id, transform: t, z, content, group_id, appearance, crop, collides, text_scale } => {
+        Op::ItemCreate {
+            item_id,
+            transform: t,
+            z,
+            content,
+            group_id,
+            appearance,
+            crop,
+            collides,
+            text_scale,
+        } => {
             let text_scale = check_text_scale(*text_scale)?;
-            let a = appearance.clone().unwrap_or(Appearance { opacity: 1.0, flip_x: false, flip_y: false });
+            let a = appearance.clone().unwrap_or(Appearance {
+                opacity: 1.0,
+                flip_x: false,
+                flip_y: false,
+            });
             check_appearance(&a)?;
             let c = crop.as_ref().map(check_crop).transpose()?.flatten();
             let (kind, asset_id, lang, body) = content_columns(content)?;
@@ -668,10 +764,19 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
                 .bind(board)
                 .execute(&mut **tx)
                 .await?;
-            sqlx::query("DELETE FROM item_text WHERE item_id = ?").bind(item_id.to_string()).execute(&mut **tx).await?;
+            sqlx::query("DELETE FROM item_text WHERE item_id = ?")
+                .bind(item_id.to_string())
+                .execute(&mut **tx)
+                .await?;
             unset_centerpiece(tx, board, &format!("item:{item_id}")).await?;
         }
-        Op::ItemTransform { item_id, transform: t, crop, text_scale, settled } => {
+        Op::ItemTransform {
+            item_id,
+            transform: t,
+            crop,
+            text_scale,
+            settled,
+        } => {
             // Absent crop: the columns are not in the statement at all, so a
             // plain move can never undo someone else's crop.
             let c = crop.as_ref().map(check_crop).transpose()?;
@@ -683,13 +788,23 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
                 n
             };
             let set_crop = if c.is_some() {
-                format!("crop_x = ?{}, crop_y = ?{}, crop_w = ?{}, crop_h = ?{},", next(), next(), next(), next())
+                format!(
+                    "crop_x = ?{}, crop_y = ?{}, crop_w = ?{}, crop_h = ?{},",
+                    next(),
+                    next(),
+                    next(),
+                    next()
+                )
             } else {
                 String::new()
             };
             // Present (even 1, stored as NULL) replaces the scale; absent leaves it.
             let s = text_scale.map(|s| check_text_scale(Some(s))).transpose()?;
-            let set_scale = if s.is_some() { format!("text_scale = ?{},", next()) } else { String::new() };
+            let set_scale = if s.is_some() {
+                format!("text_scale = ?{},", next())
+            } else {
+                String::new()
+            };
             let (id_at, board_at) = (next(), next());
             // Home (canvas/layout-settling), from the row's values before this
             // update (SQLite evaluates every SET against the old row). A
@@ -713,35 +828,46 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
             .bind(t.height)
             .bind(t.rotation);
             if let Some(c) = c {
-                q = q.bind(c.map(|c| c.0)).bind(c.map(|c| c.1)).bind(c.map(|c| c.2)).bind(c.map(|c| c.3));
+                q = q
+                    .bind(c.map(|c| c.0))
+                    .bind(c.map(|c| c.1))
+                    .bind(c.map(|c| c.2))
+                    .bind(c.map(|c| c.3));
             }
             if let Some(s) = s {
                 q = q.bind(s);
             }
             q.bind(item_id.to_string())
-            .bind(board)
-            .execute(&mut **tx)
-            .await
-            .map_err(integrity)?;
-        }
-        Op::ItemContent { item_id, content } => {
-            sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE canvas_item SET asset_id = ?, {bump} WHERE id = ? AND canvas_id = ?")))
-                .bind(content.asset_id()?)
-                .bind(item_id.to_string())
                 .bind(board)
                 .execute(&mut **tx)
                 .await
                 .map_err(integrity)?;
         }
-        Op::ItemZ { item_id, z } => {
-            sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE canvas_item SET z = ?, {bump} WHERE id = ? AND canvas_id = ?")))
-                .bind(z)
-                .bind(item_id.to_string())
-                .bind(board)
-                .execute(&mut **tx)
-                .await?;
+        Op::ItemContent { item_id, content } => {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE canvas_item SET asset_id = ?, {bump} WHERE id = ? AND canvas_id = ?"
+            )))
+            .bind(content.asset_id()?)
+            .bind(item_id.to_string())
+            .bind(board)
+            .execute(&mut **tx)
+            .await
+            .map_err(integrity)?;
         }
-        Op::ItemAppearance { item_id, appearance: a } => {
+        Op::ItemZ { item_id, z } => {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE canvas_item SET z = ?, {bump} WHERE id = ? AND canvas_id = ?"
+            )))
+            .bind(z)
+            .bind(item_id.to_string())
+            .bind(board)
+            .execute(&mut **tx)
+            .await?;
+        }
+        Op::ItemAppearance {
+            item_id,
+            appearance: a,
+        } => {
             check_appearance(a)?;
             sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE canvas_item SET opacity = ?, flip_x = ?, flip_y = ?, {bump} WHERE id = ? AND canvas_id = ?"
@@ -755,7 +881,13 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
             .await
             .map_err(integrity)?;
         }
-        Op::GroupCreate { group_id, member_ids, label, frame, collides } => {
+        Op::GroupCreate {
+            group_id,
+            member_ids,
+            label,
+            frame,
+            collides,
+        } => {
             let inserted = sqlx::query(
                 "INSERT INTO canvas_group (id, canvas_id, label, frame, collides, ref_no)
                  VALUES (?, ?, ?, ?, ?, (SELECT coalesce(json_extract(next_refs, '$.g'), 0) + 1 FROM canvas WHERE id = ?))
@@ -773,7 +905,9 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
             if inserted.rows_affected() == 1 {
                 take_ref(tx, board, "g").await?;
             }
-            join(tx, board, group_id, member_ids).await.map_err(integrity)?;
+            join(tx, board, group_id, member_ids)
+                .await
+                .map_err(integrity)?;
         }
         Op::GroupDelete { group_id } => {
             sqlx::query("DELETE FROM canvas_group WHERE id = ? AND canvas_id = ?")
@@ -783,13 +917,20 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
                 .await?;
             unset_centerpiece(tx, board, &format!("group:{group_id}")).await?;
         }
-        Op::GroupMembers { group_id, member_ids } => {
-            sqlx::query("UPDATE canvas_item SET group_id = NULL WHERE group_id = ? AND canvas_id = ?")
-                .bind(group_id.to_string())
-                .bind(board)
-                .execute(&mut **tx)
-                .await?;
-            join(tx, board, group_id, member_ids).await.map_err(integrity)?;
+        Op::GroupMembers {
+            group_id,
+            member_ids,
+        } => {
+            sqlx::query(
+                "UPDATE canvas_item SET group_id = NULL WHERE group_id = ? AND canvas_id = ?",
+            )
+            .bind(group_id.to_string())
+            .bind(board)
+            .execute(&mut **tx)
+            .await?;
+            join(tx, board, group_id, member_ids)
+                .await
+                .map_err(integrity)?;
         }
         Op::GroupLabel { group_id, label } => {
             sqlx::query("UPDATE canvas_group SET label = ? WHERE id = ? AND canvas_id = ?")
@@ -808,12 +949,14 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
                 .await?;
         }
         Op::ItemCollides { item_id, collides } => {
-            sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE canvas_item SET collides = ?, {bump} WHERE id = ? AND canvas_id = ?")))
-                .bind(collides)
-                .bind(item_id.to_string())
-                .bind(board)
-                .execute(&mut **tx)
-                .await?;
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE canvas_item SET collides = ?, {bump} WHERE id = ? AND canvas_id = ?"
+            )))
+            .bind(collides)
+            .bind(item_id.to_string())
+            .bind(board)
+            .execute(&mut **tx)
+            .await?;
         }
         Op::GroupCollides { group_id, collides } => {
             sqlx::query("UPDATE canvas_group SET collides = ? WHERE id = ? AND canvas_id = ?")
@@ -823,10 +966,18 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
                 .execute(&mut **tx)
                 .await?;
         }
-        Op::ItemSource { item_id, source, base_revision } => {
-            let Some((kind, revision)) = item_kind(tx, board, item_id).await? else { return Ok(()) };
+        Op::ItemSource {
+            item_id,
+            source,
+            base_revision,
+        } => {
+            let Some((kind, revision)) = item_kind(tx, board, item_id).await? else {
+                return Ok(());
+            };
             if kind != "note" && kind != "diagram" {
-                return Err(ApiError::bad_request(format!("item {item_id} is a {kind}; only notes and diagrams have source")));
+                return Err(ApiError::bad_request(format!(
+                    "item {item_id} is a {kind}; only notes and diagrams have source"
+                )));
             }
             if base_revision.is_some_and(|b| b != revision) {
                 return Err(ApiError::conflict(format!(
@@ -840,33 +991,58 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
         }
         Op::ChecklistTitle { item_id, title } => {
             check_title(title)?;
-            let Some(mut list) = checklist(tx, board, item_id).await? else { return Ok(()) };
+            let Some(mut list) = checklist(tx, board, item_id).await? else {
+                return Ok(());
+            };
             list.title = title.clone();
             save_checklist(tx, board, item_id, &list).await?;
         }
-        Op::TaskAdd { item_id, task, index } => {
+        Op::TaskAdd {
+            item_id,
+            task,
+            index,
+        } => {
             check_task(task)?;
-            let Some(mut list) = checklist(tx, board, item_id).await? else { return Ok(()) };
+            let Some(mut list) = checklist(tx, board, item_id).await? else {
+                return Ok(());
+            };
             if list.tasks.len() >= MAX_TASKS {
-                return Err(ApiError::bad_request(format!("a checklist holds at most {MAX_TASKS} tasks")));
+                return Err(ApiError::bad_request(format!(
+                    "a checklist holds at most {MAX_TASKS} tasks"
+                )));
             }
             if list.tasks.iter().any(|t| t.id == task.id) {
-                return Err(ApiError::bad_request(format!("task id '{}' is already in this checklist", task.id)));
+                return Err(ApiError::bad_request(format!(
+                    "task id '{}' is already in this checklist",
+                    task.id
+                )));
             }
             let at = index.unwrap_or(list.tasks.len()).min(list.tasks.len());
             list.tasks.insert(at, task.clone());
             save_checklist(tx, board, item_id, &list).await?;
         }
-        Op::TaskSet { item_id, task_id, text, state, by, by_agent, at } => {
+        Op::TaskSet {
+            item_id,
+            task_id,
+            text,
+            state,
+            by,
+            by_agent,
+            at,
+        } => {
             if let Some(t) = text {
                 check_task_text(t)?;
             }
             if let Some(s) = state {
                 check_state(s)?;
             }
-            let Some(mut list) = checklist(tx, board, item_id).await? else { return Ok(()) };
+            let Some(mut list) = checklist(tx, board, item_id).await? else {
+                return Ok(());
+            };
             // Tolerant like every update: a task removed meanwhile is nothing to change.
-            let Some(task) = list.tasks.iter_mut().find(|t| &t.id == task_id) else { return Ok(()) };
+            let Some(task) = list.tasks.iter_mut().find(|t| &t.id == task_id) else {
+                return Ok(());
+            };
             if let Some(t) = text {
                 task.text = t.clone();
             }
@@ -879,19 +1055,31 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
             save_checklist(tx, board, item_id, &list).await?;
         }
         Op::TaskRemove { item_id, task_id } => {
-            let Some(mut list) = checklist(tx, board, item_id).await? else { return Ok(()) };
+            let Some(mut list) = checklist(tx, board, item_id).await? else {
+                return Ok(());
+            };
             let before = list.tasks.len();
             list.tasks.retain(|t| &t.id != task_id);
             if list.tasks.len() != before {
                 save_checklist(tx, board, item_id, &list).await?;
             }
         }
-        Op::LinkAdd { link_id, from, to, link_type, by, by_agent, at } => {
+        Op::LinkAdd {
+            link_id,
+            from,
+            to,
+            link_type,
+            by,
+            by_agent,
+            at,
+        } => {
             check_link_type(link_type)?;
             for (end, a) in [("from", from), ("to", to)] {
                 // A link is a create: an end that is not on this board is refused, as
                 // item.create refuses a missing asset.
-                let (kind, _) = item_kind(tx, board, &a.item_id).await?.ok_or_else(|| no_item(&a.item_id))?;
+                let (kind, _) = item_kind(tx, board, &a.item_id)
+                    .await?
+                    .ok_or_else(|| no_item(&a.item_id))?;
                 if let Some(e) = &a.element {
                     // A diagram's elements, a note's passages (canvas/text-anchors), a checklist's tasks.
                     if kind != "diagram" && kind != "note" && kind != "checklist" {
@@ -901,7 +1089,9 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
                         )));
                     }
                     if e.is_empty() || e.chars().count() > MAX_ELEMENT {
-                        return Err(ApiError::bad_request(format!("link {end}: an element name is 1-{MAX_ELEMENT} characters")));
+                        return Err(ApiError::bad_request(format!(
+                            "link {end}: an element name is 1-{MAX_ELEMENT} characters"
+                        )));
                     }
                 }
             }
@@ -949,7 +1139,11 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
                 let (table, id) = match t.split_once(':') {
                     Some(("item", id)) => ("canvas_item", id),
                     Some(("group", id)) => ("canvas_group", id),
-                    _ => return Err(ApiError::bad_request("a centerpiece is `item:<id>` or `group:<id>`")),
+                    _ => {
+                        return Err(ApiError::bad_request(
+                            "a centerpiece is `item:<id>` or `group:<id>`",
+                        ));
+                    }
                 };
                 let exists: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
                     "SELECT EXISTS (SELECT 1 FROM {table} WHERE id = ? AND canvas_id = ?)"
@@ -959,36 +1153,62 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
                 .fetch_one(&mut **tx)
                 .await?;
                 if !exists {
-                    return Err(ApiError::bad_request("the centerpiece is not on this board"));
+                    return Err(ApiError::bad_request(
+                        "the centerpiece is not on this board",
+                    ));
                 }
             }
-            sqlx::query("UPDATE canvas SET centerpiece = ? WHERE id = ?").bind(target).bind(board).execute(&mut **tx).await?;
+            sqlx::query("UPDATE canvas SET centerpiece = ? WHERE id = ?")
+                .bind(target)
+                .bind(board)
+                .execute(&mut **tx)
+                .await?;
         }
     }
     Ok(())
 }
 
 /// A deleted centerpiece leaves the board with none (canvas/centerpiece).
-async fn unset_centerpiece(tx: &mut Transaction<'_, Sqlite>, board: &str, target: &str) -> sqlx::Result<()> {
-    sqlx::query("UPDATE canvas SET centerpiece = NULL WHERE id = ? AND centerpiece = ?").bind(board).bind(target).execute(&mut **tx).await?;
+async fn unset_centerpiece(
+    tx: &mut Transaction<'_, Sqlite>,
+    board: &str,
+    target: &str,
+) -> sqlx::Result<()> {
+    sqlx::query("UPDATE canvas SET centerpiece = NULL WHERE id = ? AND centerpiece = ?")
+        .bind(board)
+        .bind(target)
+        .execute(&mut **tx)
+        .await?;
     Ok(())
 }
 
 fn no_item(item: &Uuid) -> ApiError {
-    ApiError::bad_request(format!("no item {item} on this board")).titled("Operation references something that does not exist")
+    ApiError::bad_request(format!("no item {item} on this board"))
+        .titled("Operation references something that does not exist")
 }
 
 /// An item's kind and revision, or None when it is not on this board. Updates
 /// treat None as nothing to do (the API's tolerance rule); creates refuse it.
-async fn item_kind(tx: &mut Transaction<'_, Sqlite>, board: &str, item: &Uuid) -> ApiResult<Option<(String, i64)>> {
-    Ok(sqlx::query_as("SELECT kind, revision FROM canvas_item WHERE id = ? AND canvas_id = ?")
-        .bind(item.to_string())
-        .bind(board)
-        .fetch_optional(&mut **tx)
-        .await?)
+async fn item_kind(
+    tx: &mut Transaction<'_, Sqlite>,
+    board: &str,
+    item: &Uuid,
+) -> ApiResult<Option<(String, i64)>> {
+    Ok(
+        sqlx::query_as("SELECT kind, revision FROM canvas_item WHERE id = ? AND canvas_id = ?")
+            .bind(item.to_string())
+            .bind(board)
+            .fetch_optional(&mut **tx)
+            .await?,
+    )
 }
 
-async fn set_body(tx: &mut Transaction<'_, Sqlite>, board: &str, item: &Uuid, body: &str) -> ApiResult<()> {
+async fn set_body(
+    tx: &mut Transaction<'_, Sqlite>,
+    board: &str,
+    item: &Uuid,
+    body: &str,
+) -> ApiResult<()> {
     sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE canvas_item SET body = ?, revision = revision + 1, updated_at = {NOW} WHERE id = ? AND canvas_id = ?"
     )))
@@ -1026,8 +1246,14 @@ const ITEM_TEXT_SQL: &str = "INSERT INTO item_text (text, canvas_id, item_id)
        FROM canvas_item WHERE id = ? AND kind <> 'image'";
 
 async fn reindex(tx: &mut Transaction<'_, Sqlite>, item: &str) -> ApiResult<()> {
-    sqlx::query("DELETE FROM item_text WHERE item_id = ?").bind(item).execute(&mut **tx).await?;
-    sqlx::query(ITEM_TEXT_SQL).bind(item).execute(&mut **tx).await?;
+    sqlx::query("DELETE FROM item_text WHERE item_id = ?")
+        .bind(item)
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query(ITEM_TEXT_SQL)
+        .bind(item)
+        .execute(&mut **tx)
+        .await?;
     Ok(())
 }
 
@@ -1038,16 +1264,34 @@ pub const OPERATION_LOG_KEEP: i64 = 5_000;
 /// Reads a checklist inside the batch's transaction, or None when the item is
 /// gone. The batch already holds SQLite's write lock (the revision bump runs
 /// first), so read-modify-write here cannot interleave with another batch.
-async fn checklist(tx: &mut Transaction<'_, Sqlite>, board: &str, item: &Uuid) -> ApiResult<Option<Checklist>> {
-    let Some((kind, _)) = item_kind(tx, board, item).await? else { return Ok(None) };
+async fn checklist(
+    tx: &mut Transaction<'_, Sqlite>,
+    board: &str,
+    item: &Uuid,
+) -> ApiResult<Option<Checklist>> {
+    let Some((kind, _)) = item_kind(tx, board, item).await? else {
+        return Ok(None);
+    };
     if kind != "checklist" {
-        return Err(ApiError::bad_request(format!("item {item} is a {kind}, not a checklist")));
+        return Err(ApiError::bad_request(format!(
+            "item {item} is a {kind}, not a checklist"
+        )));
     }
-    let body: String = sqlx::query_scalar("SELECT body FROM canvas_item WHERE id = ?").bind(item.to_string()).fetch_one(&mut **tx).await?;
-    serde_json::from_str(&body).map(Some).map_err(|e| ApiError::internal(format!("checklist {item} is stored unreadably: {e}")))
+    let body: String = sqlx::query_scalar("SELECT body FROM canvas_item WHERE id = ?")
+        .bind(item.to_string())
+        .fetch_one(&mut **tx)
+        .await?;
+    serde_json::from_str(&body)
+        .map(Some)
+        .map_err(|e| ApiError::internal(format!("checklist {item} is stored unreadably: {e}")))
 }
 
-async fn save_checklist(tx: &mut Transaction<'_, Sqlite>, board: &str, item: &Uuid, list: &Checklist) -> ApiResult<()> {
+async fn save_checklist(
+    tx: &mut Transaction<'_, Sqlite>,
+    board: &str,
+    item: &Uuid,
+    list: &Checklist,
+) -> ApiResult<()> {
     let body = serde_json::to_string(list).unwrap();
     check_body(&body)?;
     set_body(tx, board, item, &body).await
@@ -1065,7 +1309,12 @@ async fn save_checklist(tx: &mut Transaction<'_, Sqlite>, board: &str, item: &Uu
 /// Collision pushes (canvas/collision) are appended to `ops` in the same
 /// transaction, logged with the same actor, so callers announce and return
 /// them with everything else.
-pub async fn apply(app: &AppState, board: &Uuid, ops: &mut Vec<Op>, actor: &Actor) -> ApiResult<(i64, i64)> {
+pub async fn apply(
+    app: &AppState,
+    board: &Uuid,
+    ops: &mut Vec<Op>,
+    actor: &Actor,
+) -> ApiResult<(i64, i64)> {
     let n = ops.len() as i64;
     let id = board.to_string();
     let mut tx = app.db.begin().await?;
@@ -1094,11 +1343,13 @@ pub async fn apply(app: &AppState, board: &Uuid, ops: &mut Vec<Op>, actor: &Acto
     let mut to = to;
     if !pushed.is_empty() {
         let m = pushed.len() as i64;
-        to = sqlx::query_scalar("UPDATE canvas SET revision = revision + ? WHERE id = ? RETURNING revision")
-            .bind(m)
-            .bind(&id)
-            .fetch_one(&mut *tx)
-            .await?;
+        to = sqlx::query_scalar(
+            "UPDATE canvas SET revision = revision + ? WHERE id = ? RETURNING revision",
+        )
+        .bind(m)
+        .bind(&id)
+        .fetch_one(&mut *tx)
+        .await?;
         for (i, op) in pushed.iter().enumerate() {
             apply_one(&mut tx, &id, op).await?;
             sqlx::query(sqlx::AssertSqlSafe(format!(
@@ -1135,13 +1386,30 @@ async fn pushes(tx: &mut Transaction<'_, Sqlite>, board: &str, ops: &[Op]) -> Ap
     let mut freed = false;
     for op in ops {
         match op {
-            Op::ItemCreate { item_id, .. } | Op::ItemTransform { item_id, .. } | Op::ItemCollides { item_id, collides: true } => {
+            Op::ItemCreate { item_id, .. }
+            | Op::ItemTransform { item_id, .. }
+            | Op::ItemCollides {
+                item_id,
+                collides: true,
+            } => {
                 causes.insert(item_id.to_string());
             }
-            Op::GroupCreate { group_id, .. } | Op::GroupMembers { group_id, .. } | Op::GroupCollides { group_id, collides: true } => {
+            Op::GroupCreate { group_id, .. }
+            | Op::GroupMembers { group_id, .. }
+            | Op::GroupCollides {
+                group_id,
+                collides: true,
+            } => {
                 causes.insert(group_id.to_string());
             }
-            Op::ItemDelete { .. } | Op::GroupDelete { .. } | Op::ItemCollides { collides: false, .. } | Op::GroupCollides { collides: false, .. } => {
+            Op::ItemDelete { .. }
+            | Op::GroupDelete { .. }
+            | Op::ItemCollides {
+                collides: false, ..
+            }
+            | Op::GroupCollides {
+                collides: false, ..
+            } => {
                 freed = true;
             }
             _ => {}
@@ -1160,38 +1428,59 @@ async fn pushes(tx: &mut Transaction<'_, Sqlite>, board: &str, ops: &[Op]) -> Ap
     if !any {
         return Ok(vec![]);
     }
-    type Geometry = (String, Option<String>, f64, f64, f64, f64, f64, bool, Option<f64>, Option<f64>);
+    type Geometry = (
+        String,
+        Option<String>,
+        f64,
+        f64,
+        f64,
+        f64,
+        f64,
+        bool,
+        Option<f64>,
+        Option<f64>,
+    );
     let rows: Vec<Geometry> = sqlx::query_as(
         "SELECT id, group_id, x, y, width, height, rotation, collides, home_x, home_y FROM canvas_item WHERE canvas_id = ?",
     )
     .bind(board)
     .fetch_all(&mut **tx)
     .await?;
-    let groups: std::collections::HashMap<String, bool> =
-        sqlx::query_as::<_, (String, bool)>("SELECT id, collides FROM canvas_group WHERE canvas_id = ?")
-            .bind(board)
-            .fetch_all(&mut **tx)
-            .await?
-            .into_iter()
-            .collect();
+    let groups: std::collections::HashMap<String, bool> = sqlx::query_as::<_, (String, bool)>(
+        "SELECT id, collides FROM canvas_group WHERE canvas_id = ?",
+    )
+    .bind(board)
+    .fetch_all(&mut **tx)
+    .await?
+    .into_iter()
+    .collect();
     let pieces: Vec<crate::collision::Piece> = rows
         .iter()
-        .map(|(id, group, x, y, w, h, r, collides, hx, hy)| crate::collision::Piece {
-            id: id.clone(),
-            rect: crate::collision::bounds(*x, *y, *w, *h, *r),
-            group: group.clone(),
-            collides: *collides,
-            home: hx.zip(*hy),
-        })
+        .map(
+            |(id, group, x, y, w, h, r, collides, hx, hy)| crate::collision::Piece {
+                id: id.clone(),
+                rect: crate::collision::bounds(*x, *y, *w, *h, *r),
+                group: group.clone(),
+                collides: *collides,
+                home: hx.zip(*hy),
+            },
+        )
         .collect();
-    let by_id: std::collections::HashMap<&str, &Geometry> = rows.iter().map(|r| (r.0.as_str(), r)).collect();
+    let by_id: std::collections::HashMap<&str, &Geometry> =
+        rows.iter().map(|r| (r.0.as_str(), r)).collect();
     Ok(crate::collision::settle(&pieces, &groups, &causes)
         .into_iter()
         .map(|(id, dx, dy)| {
             let (_, _, x, y, width, height, rotation, ..) = by_id[id.as_str()];
             Op::ItemTransform {
                 item_id: Uuid::parse_str(&id).unwrap(),
-                transform: Transform { x: x + dx, y: y + dy, width: *width, height: *height, rotation: *rotation },
+                transform: Transform {
+                    x: x + dx,
+                    y: y + dy,
+                    width: *width,
+                    height: *height,
+                    rotation: *rotation,
+                },
                 crop: None,
                 text_scale: None,
                 settled: true,
@@ -1216,16 +1505,22 @@ fn valid_title(title: &str) -> ApiResult<&str> {
 }
 
 async fn find(app: &AppState, id: &str) -> ApiResult<Board> {
-    sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {COLUMNS} FROM canvas WHERE id = ?")))
-        .bind(id)
-        .fetch_optional(&app.db)
-        .await?
-        .ok_or_else(|| not_found(id))
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLUMNS} FROM canvas WHERE id = ?"
+    )))
+    .bind(id)
+    .fetch_optional(&app.db)
+    .await?
+    .ok_or_else(|| not_found(id))
 }
 
 async fn list(State(app): State<AppState>) -> ApiResult<axum::Json<Vec<Board>>> {
     Ok(axum::Json(
-        sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {COLUMNS} FROM canvas ORDER BY updated_at DESC"))).fetch_all(&app.db).await?,
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT {COLUMNS} FROM canvas ORDER BY updated_at DESC"
+        )))
+        .fetch_all(&app.db)
+        .await?,
     ))
 }
 
@@ -1234,10 +1529,16 @@ async fn create(
     axum::Extension(me): axum::Extension<User>,
     Json(body): Json<BoardTitle>,
 ) -> ApiResult<(StatusCode, axum::Json<Board>)> {
-    Ok((StatusCode::CREATED, axum::Json(create_board(&app, &me.id, &body.title, None).await?)))
+    Ok((
+        StatusCode::CREATED,
+        axum::Json(create_board(&app, &me.id, &body.title, None).await?),
+    ))
 }
 
-async fn get_board(State(app): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<axum::Json<Board>> {
+async fn get_board(
+    State(app): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<axum::Json<Board>> {
     Ok(axum::Json(find(&app, &id.to_string()).await?))
 }
 
@@ -1247,7 +1548,9 @@ async fn rename(
     Path(id): Path<Uuid>,
     Json(body): Json<BoardTitle>,
 ) -> ApiResult<axum::Json<Board>> {
-    Ok(axum::Json(rename_board(&app, &id, &body.title, &me.display_name).await?))
+    Ok(axum::Json(
+        rename_board(&app, &id, &body.title, &me.display_name).await?,
+    ))
 }
 
 async fn delete(
@@ -1274,7 +1577,10 @@ async fn duplicate(
             .map_err(|e| ApiError::bad_request(e.to_string()))?
             .map(|b| b.title)
     };
-    Ok((StatusCode::CREATED, axum::Json(duplicate_board(&app, &id, &me.id, requested, None).await?)))
+    Ok((
+        StatusCode::CREATED,
+        axum::Json(duplicate_board(&app, &id, &me.id, requested, None).await?),
+    ))
 }
 
 // --- board operations, shared by the HTTP handlers and the agent tools -------
@@ -1285,7 +1591,12 @@ pub async fn board(app: &AppState, id: &Uuid) -> ApiResult<Board> {
 }
 
 /// A new, empty board owned by `owner`; `agent` names the agent that made it.
-pub async fn create_board(app: &AppState, owner: &str, title: &str, agent: Option<&str>) -> ApiResult<Board> {
+pub async fn create_board(
+    app: &AppState,
+    owner: &str,
+    title: &str,
+    agent: Option<&str>,
+) -> ApiResult<Board> {
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO canvas (id, title, owner_id, created_by_agent) VALUES (?, ?, ?, ?) RETURNING {COLUMNS}"
     )))
@@ -1299,12 +1610,13 @@ pub async fn create_board(app: &AppState, owner: &str, title: &str, agent: Optio
 
 /// Renames a board and tells everyone on it, naming who did (`by`).
 pub async fn rename_board(app: &AppState, id: &Uuid, title: &str, by: &str) -> ApiResult<Board> {
-    let board: Option<Board> =
-        sqlx::query_as(sqlx::AssertSqlSafe(format!("UPDATE canvas SET title = ?, updated_at = {NOW} WHERE id = ? RETURNING {COLUMNS}")))
-            .bind(valid_title(title)?)
-            .bind(id.to_string())
-            .fetch_optional(&app.db)
-            .await?;
+    let board: Option<Board> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "UPDATE canvas SET title = ?, updated_at = {NOW} WHERE id = ? RETURNING {COLUMNS}"
+    )))
+    .bind(valid_title(title)?)
+    .bind(id.to_string())
+    .fetch_optional(&app.db)
+    .await?;
     let board = board.ok_or_else(|| not_found(id))?;
     app.rooms.board_renamed(id, &board.title, by);
     Ok(board)
@@ -1313,7 +1625,9 @@ pub async fn rename_board(app: &AppState, id: &Uuid, title: &str, by: &str) -> A
 /// Only the person who made a board, or an admin, deletes it.
 pub fn may_delete(me: &User, board: &Board) -> ApiResult<()> {
     if !me.admin && board.owner_id.as_deref() != Some(me.id.as_str()) {
-        return Err(ApiError::forbidden("only the person who made this board, or an admin, can delete it"));
+        return Err(ApiError::forbidden(
+            "only the person who made this board, or an admin, can delete it",
+        ));
     }
     Ok(())
 }
@@ -1322,9 +1636,15 @@ pub fn may_delete(me: &User, board: &Board) -> ApiResult<()> {
 /// caller has checked `may_delete`.
 pub async fn delete_board(app: &AppState, board: &Board, by: &str) -> ApiResult<()> {
     let mut tx = app.db.begin().await?;
-    sqlx::query("DELETE FROM canvas WHERE id = ?").bind(&board.id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM canvas WHERE id = ?")
+        .bind(&board.id)
+        .execute(&mut *tx)
+        .await?;
     // A virtual table has no foreign keys to cascade through.
-    sqlx::query("DELETE FROM item_text WHERE canvas_id = ?").bind(&board.id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM item_text WHERE canvas_id = ?")
+        .bind(&board.id)
+        .execute(&mut *tx)
+        .await?;
     tx.commit().await?;
     if let Ok(id) = Uuid::parse_str(&board.id) {
         app.rooms.board_deleted(&id, by);
@@ -1334,7 +1654,13 @@ pub async fn delete_board(app: &AppState, board: &Board, by: &str) -> ApiResult<
 
 /// Copies items and groups under fresh ids into a new board owned by
 /// `owner`. The images are shared, not copied.
-pub async fn duplicate_board(app: &AppState, id: &Uuid, owner: &str, title: Option<String>, agent: Option<&str>) -> ApiResult<Board> {
+pub async fn duplicate_board(
+    app: &AppState,
+    id: &Uuid,
+    owner: &str,
+    title: Option<String>,
+    agent: Option<&str>,
+) -> ApiResult<Board> {
     let source = find(app, &id.to_string()).await?;
     let title = match title.filter(|t| !t.trim().is_empty()) {
         Some(t) => valid_title(&t)?.to_string(),
@@ -1352,8 +1678,12 @@ pub async fn duplicate_board(app: &AppState, id: &Uuid, owner: &str, title: Opti
         .bind(&source.id)
         .execute(&mut *tx)
         .await?;
-    let groups: Vec<(String, Option<String>, bool, i64, bool)> =
-        sqlx::query_as("SELECT id, label, frame, ref_no, collides FROM canvas_group WHERE canvas_id = ?").bind(&source.id).fetch_all(&mut *tx).await?;
+    let groups: Vec<(String, Option<String>, bool, i64, bool)> = sqlx::query_as(
+        "SELECT id, label, frame, ref_no, collides FROM canvas_group WHERE canvas_id = ?",
+    )
+    .bind(&source.id)
+    .fetch_all(&mut *tx)
+    .await?;
     let mut group_map = std::collections::HashMap::new();
     for (old, label, frame, ref_no, collides) in groups {
         let new = new_id();
@@ -1368,7 +1698,10 @@ pub async fn duplicate_board(app: &AppState, id: &Uuid, owner: &str, title: Opti
             .await?;
         group_map.insert(old, new);
     }
-    let items: Vec<ItemRow> = sqlx::query_as(ITEMS_SQL).bind(&source.id).fetch_all(&mut *tx).await?;
+    let items: Vec<ItemRow> = sqlx::query_as(ITEMS_SQL)
+        .bind(&source.id)
+        .fetch_all(&mut *tx)
+        .await?;
     let mut item_map = std::collections::HashMap::new();
     for i in items {
         let new = new_id();
@@ -1500,8 +1833,13 @@ impl ItemRow {
             "note" => json!({ "kind": "note", "source": self.body }),
             "diagram" => json!({ "kind": "diagram", "lang": self.lang, "source": self.body }),
             "checklist" => {
-                let list: Checklist = serde_json::from_str(self.body.as_deref().unwrap_or_default())
-                    .unwrap_or(Checklist { title: String::new(), tasks: vec![] });
+                let list: Checklist = serde_json::from_str(
+                    self.body.as_deref().unwrap_or_default(),
+                )
+                .unwrap_or(Checklist {
+                    title: String::new(),
+                    tasks: vec![],
+                });
                 json!({ "kind": "checklist", "title": list.title, "tasks": list.tasks })
             }
             _ => json!({ "kind": "image", "asset": {
@@ -1520,35 +1858,51 @@ pub const ITEMS_SQL: &str = "SELECT i.id, i.kind, i.lang, i.body, i.revision, i.
 
 /// Everything on the board in paint order, at one revision — read in one
 /// transaction so the revision and the rows agree.
-async fn snapshot(State(app): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<axum::Json<serde_json::Value>> {
+async fn snapshot(
+    State(app): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<axum::Json<serde_json::Value>> {
     Ok(axum::Json(snapshot_of(&app.db, &id.to_string()).await?))
 }
 
 /// The snapshot body, for members and for share-link viewers alike.
 pub async fn snapshot_of(db: &sqlx::SqlitePool, id: &str) -> ApiResult<serde_json::Value> {
     let mut tx = db.begin().await?;
-    let (revision, centerpiece): (i64, Option<String>) = sqlx::query_as("SELECT revision, centerpiece FROM canvas WHERE id = ?")
+    let (revision, centerpiece): (i64, Option<String>) =
+        sqlx::query_as("SELECT revision, centerpiece FROM canvas WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| not_found(id))?;
+    let rows: Vec<ItemRow> = sqlx::query_as(ITEMS_SQL)
         .bind(id)
-        .fetch_optional(&mut *tx)
-        .await?
-        .ok_or_else(|| not_found(id))?;
-    let rows: Vec<ItemRow> = sqlx::query_as(ITEMS_SQL).bind(id).fetch_all(&mut *tx).await?;
-    let groups: Vec<(String, Option<String>, bool, i64, bool)> =
-        sqlx::query_as("SELECT id, label, frame, ref_no, collides FROM canvas_group WHERE canvas_id = ?").bind(id).fetch_all(&mut *tx).await?;
+        .fetch_all(&mut *tx)
+        .await?;
+    let groups: Vec<(String, Option<String>, bool, i64, bool)> = sqlx::query_as(
+        "SELECT id, label, frame, ref_no, collides FROM canvas_group WHERE canvas_id = ?",
+    )
+    .bind(id)
+    .fetch_all(&mut *tx)
+    .await?;
     let link_rows = links_of(&mut tx, id).await?;
     let items: Vec<_> = rows.iter().map(|r| (r, r.content())).collect();
     // Display names for everyone the board credits, so a hover can say who
     // finished a task without a second request.
-    let mut credited: Vec<&str> = link_rows.iter().filter_map(|l| l.created_by.as_deref()).collect();
+    let mut credited: Vec<&str> = link_rows
+        .iter()
+        .filter_map(|l| l.created_by.as_deref())
+        .collect();
     for (_, c) in &items {
         for t in c["tasks"].as_array().into_iter().flatten() {
             credited.extend(t["by"].as_str());
         }
     }
-    let people: Vec<(String, String)> = sqlx::query_as("SELECT id, display_name FROM app_user WHERE id IN (SELECT value FROM json_each(?))")
-        .bind(serde_json::to_string(&credited).unwrap())
-        .fetch_all(&mut *tx)
-        .await?;
+    let people: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id, display_name FROM app_user WHERE id IN (SELECT value FROM json_each(?))",
+    )
+    .bind(serde_json::to_string(&credited).unwrap())
+    .fetch_all(&mut *tx)
+    .await?;
     tx.commit().await?;
 
     let mut members: std::collections::HashMap<&str, Vec<&str>> = Default::default();
@@ -1599,8 +1953,13 @@ pub async fn snapshot_of(db: &sqlx::SqlitePool, id: &str) -> ApiResult<serde_jso
             })
         })
         .collect();
-    let people: serde_json::Map<String, serde_json::Value> = people.into_iter().map(|(id, name)| (id, json!(name))).collect();
-    Ok(json!({ "revision": revision, "items": items, "groups": groups, "links": links, "people": people, "centerpiece": centerpiece }))
+    let people: serde_json::Map<String, serde_json::Value> = people
+        .into_iter()
+        .map(|(id, name)| (id, json!(name)))
+        .collect();
+    Ok(
+        json!({ "revision": revision, "items": items, "groups": groups, "links": links, "people": people, "centerpiece": centerpiece }),
+    )
 }
 
 #[derive(Deserialize)]
@@ -1627,11 +1986,18 @@ async fn operations(
     Json(batch): Json<Batch>,
 ) -> ApiResult<axum::Json<serde_json::Value>> {
     if batch.operations.is_empty() {
-        return Err(ApiError::bad_request("a batch needs at least one operation"));
+        return Err(ApiError::bad_request(
+            "a batch needs at least one operation",
+        ));
     }
     // Who and when come from the session, never from the body.
-    let at: String = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT {NOW}"))).fetch_one(&app.db).await?;
-    let actor = Actor { user_id: me.id, agent: None };
+    let at: String = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT {NOW}")))
+        .fetch_one(&app.db)
+        .await?;
+    let actor = Actor {
+        user_id: me.id,
+        agent: None,
+    };
     let mut ops: Vec<Op> = batch.operations.into_iter().map(|p| p.body).collect();
     for op in &mut ops {
         op.stamp(&actor, &at);
@@ -1639,7 +2005,10 @@ async fn operations(
     let (from, to) = apply(&app, &id, &mut ops, &actor).await?;
     // The author already applied these optimistically; everyone else hears them,
     // stamped. The author takes the stamps from the applied bodies returned here.
-    let actor = headers.get(ACTOR_HEADER).and_then(|v| v.to_str().ok()).and_then(|v| Uuid::parse_str(v).ok());
+    let actor = headers
+        .get(ACTOR_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| Uuid::parse_str(v).ok());
     app.rooms.announce(&id, actor, from, to, &ops);
     Ok(axum::Json(json!({ "revision": to, "operations": ops })))
 }

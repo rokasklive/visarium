@@ -69,12 +69,22 @@ impl Rect {
 /// about the centre if rotated diagrams get linked to.
 pub fn anchor_box(i: &ItemRow, element: Option<&str>) -> Rect {
     let whole = Rect::of(i);
-    let (Some(name), Some(boxes), Some(rev)) = (element, i.element_boxes.as_deref(), i.element_rev) else { return whole };
+    let (Some(name), Some(boxes), Some(rev)) = (element, i.element_boxes.as_deref(), i.element_rev)
+    else {
+        return whole;
+    };
     if rev != i.revision || i.rotation != 0.0 {
         return whole;
     }
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(boxes) else { return whole };
-    let (Some(width), Some(r)) = (v["width"].as_f64().filter(|w| *w > 0.0), v["elements"][name].as_array()) else { return whole };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(boxes) else {
+        return whole;
+    };
+    let (Some(width), Some(r)) = (
+        v["width"].as_f64().filter(|w| *w > 0.0),
+        v["elements"][name].as_array(),
+    ) else {
+        return whole;
+    };
     let n: Vec<f64> = r.iter().filter_map(|x| x.as_f64()).collect();
     let [x, y, w, h] = n[..] else { return whole };
     let k = i.width / width;
@@ -256,7 +266,12 @@ pub fn length(s: &Segment) -> f64 {
 pub fn hits(s: &Segment, r: &Rect) -> bool {
     let (x0, y0, dx, dy) = (s.0.0, s.0.1, s.1.0 - s.0.0, s.1.1 - s.0.1);
     let (mut t0, mut t1) = (0.0_f64, 1.0_f64);
-    for (p, q) in [(-dx, x0 - r.left()), (dx, r.right() - x0), (-dy, y0 - r.top()), (dy, r.bottom() - y0)] {
+    for (p, q) in [
+        (-dx, x0 - r.left()),
+        (dx, r.right() - x0),
+        (-dy, y0 - r.top()),
+        (dy, r.bottom() - y0),
+    ] {
         if p == 0.0 {
             if q <= 0.0 {
                 return false;
@@ -295,7 +310,11 @@ pub fn gap_between(a: &Rect, b: &Rect) -> f64 {
 /// How many things a new link from `at` to `end` passes through or over.
 pub fn crossings(scene: &Scene, at: &Rect, end: &LinkEnd) -> usize {
     let s = segment(at, &end.anchor);
-    let through = scene.items.iter().filter(|r| **r != end.owner && *r != at && hits(&s, r)).count();
+    let through = scene
+        .items
+        .iter()
+        .filter(|r| **r != end.owner && *r != at && hits(&s, r))
+        .count();
     through + scene.segments.iter().filter(|o| crosses(&s, o)).count()
 }
 
@@ -303,7 +322,13 @@ pub fn crossings(scene: &Scene, at: &Rect, end: &LinkEnd) -> usize {
 /// and cross least, staying near the named target and group (design D2).
 /// Without links it is exactly [`place`]. `below` and `right_of` are kept:
 /// the links choose only where along that side; `near` lets them pick any.
-pub fn place_linked(target: Rect, side: Side, size: (f64, f64), scene: &Scene, links: &[LinkEnd]) -> Rect {
+pub fn place_linked(
+    target: Rect,
+    side: Side,
+    size: (f64, f64),
+    scene: &Scene,
+    links: &[LinkEnd],
+) -> Rect {
     if links.is_empty() || side == Side::In {
         return place(target, side, size, scene.obstacles);
     }
@@ -319,7 +344,12 @@ pub fn place_linked(target: Rect, side: Side, size: (f64, f64), scene: &Scene, l
                 (a.left() - GAP - w / 2.0, a.y + along),
                 (a.x + along, a.top() - GAP - h / 2.0),
             ] {
-                candidates.push(Rect { x: snap(x), y: snap(y), w, h });
+                candidates.push(Rect {
+                    x: snap(x),
+                    y: snap(y),
+                    w,
+                    h,
+                });
             }
         }
         // The outward walks reach past whatever crowds the anchor.
@@ -346,7 +376,11 @@ pub fn place_linked(target: Rect, side: Side, size: (f64, f64), scene: &Scene, l
         .into_iter()
         .filter(|c| free(c) && kept(c))
         .map(|c| (cost(&c), c))
-        .min_by(|(a, p), (b, q)| a.total_cmp(b).then(p.y.total_cmp(&q.y)).then(p.x.total_cmp(&q.x)))
+        .min_by(|(a, p), (b, q)| {
+            a.total_cmp(b)
+                .then(p.y.total_cmp(&q.y))
+                .then(p.x.total_cmp(&q.x))
+        })
         .map(|(_, c)| c)
         .unwrap_or_else(|| place(target, side, size, scene.obstacles))
 }
@@ -372,19 +406,37 @@ pub fn pack(sizes: &[(f64, f64)], how: Pack, gap: f64) -> (Vec<(f64, f64)>, (f64
     }
     .clamp(1, n.max(1));
     let rows = n.div_ceil(cols);
-    let col_w: Vec<f64> = (0..cols).map(|c| (c..n).step_by(cols).map(|i| sizes[i].0).fold(0.0, f64::max)).collect();
-    let row_h: Vec<f64> = (0..rows).map(|r| (r * cols..((r + 1) * cols).min(n)).map(|i| sizes[i].1).fold(0.0, f64::max)).collect();
-    let starts = |spans: &[f64]| -> Vec<f64> {
-        spans.iter().scan(0.0, |at, s| {
-            let here = *at;
-            *at += s + gap;
-            Some(here)
+    let col_w: Vec<f64> = (0..cols)
+        .map(|c| (c..n).step_by(cols).map(|i| sizes[i].0).fold(0.0, f64::max))
+        .collect();
+    let row_h: Vec<f64> = (0..rows)
+        .map(|r| {
+            (r * cols..((r + 1) * cols).min(n))
+                .map(|i| sizes[i].1)
+                .fold(0.0, f64::max)
         })
-        .collect()
+        .collect();
+    let starts = |spans: &[f64]| -> Vec<f64> {
+        spans
+            .iter()
+            .scan(0.0, |at, s| {
+                let here = *at;
+                *at += s + gap;
+                Some(here)
+            })
+            .collect()
     };
     let (x0, y0) = (starts(&col_w), starts(&row_h));
-    let offsets = (0..n).map(|i| (x0[i % cols] + sizes[i].0 / 2.0, y0[i / cols] + sizes[i].1 / 2.0)).collect();
-    let total = |spans: &[f64]| spans.iter().sum::<f64>() + gap * (spans.len().saturating_sub(1)) as f64;
+    let offsets = (0..n)
+        .map(|i| {
+            (
+                x0[i % cols] + sizes[i].0 / 2.0,
+                y0[i / cols] + sizes[i].1 / 2.0,
+            )
+        })
+        .collect();
+    let total =
+        |spans: &[f64]| spans.iter().sum::<f64>() + gap * (spans.len().saturating_sub(1)) as f64;
     (offsets, (total(&col_w), total(&row_h)))
 }
 
@@ -452,16 +504,45 @@ mod tests {
     fn an_element_reported_for_the_current_revision_is_where_it_was_drawn() {
         // Laid out 240 wide, drawn 480 wide: twice the size, from the top left.
         let r = anchor_box(&diagram(Some(BOXES), Some(3), 3), Some("Connect"));
-        assert_eq!(r, Rect { x: -240.0 + 440.0, y: -100.0 + 100.0, w: 80.0, h: 40.0 });
+        assert_eq!(
+            r,
+            Rect {
+                x: -240.0 + 440.0,
+                y: -100.0 + 100.0,
+                w: 80.0,
+                h: 40.0
+            }
+        );
     }
 
     #[test]
     fn a_missing_stale_or_unnamed_element_is_the_whole_item() {
-        let whole = Rect { x: 0.0, y: 0.0, w: 480.0, h: 200.0 };
-        assert_eq!(anchor_box(&diagram(Some(BOXES), Some(2), 3), Some("Connect")), whole, "stale");
-        assert_eq!(anchor_box(&diagram(Some(BOXES), Some(3), 3), Some("Nope")), whole, "unknown name");
-        assert_eq!(anchor_box(&diagram(None, None, 3), Some("Connect")), whole, "never reported");
-        assert_eq!(anchor_box(&diagram(Some(BOXES), Some(3), 3), None), whole, "the item itself");
+        let whole = Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 480.0,
+            h: 200.0,
+        };
+        assert_eq!(
+            anchor_box(&diagram(Some(BOXES), Some(2), 3), Some("Connect")),
+            whole,
+            "stale"
+        );
+        assert_eq!(
+            anchor_box(&diagram(Some(BOXES), Some(3), 3), Some("Nope")),
+            whole,
+            "unknown name"
+        );
+        assert_eq!(
+            anchor_box(&diagram(None, None, 3), Some("Connect")),
+            whole,
+            "never reported"
+        );
+        assert_eq!(
+            anchor_box(&diagram(Some(BOXES), Some(3), 3), None),
+            whole,
+            "the item itself"
+        );
     }
 
     const D: Rect = Rect {
@@ -486,49 +567,120 @@ mod tests {
     }
 
     fn scene<'a>(obstacles: &'a [Rect], segments: &'a [Segment]) -> Scene<'a> {
-        Scene { obstacles, items: obstacles, segments, group: None }
+        Scene {
+            obstacles,
+            items: obstacles,
+            segments,
+            group: None,
+        }
     }
 
     #[test]
     fn a_note_linked_to_an_element_sits_beside_that_element() {
         // Connect is drawn at d's right edge.
-        let connect = Rect { x: 200.0, y: 60.0, w: 60.0, h: 40.0 };
-        let end = LinkEnd { anchor: connect, owner: D };
+        let connect = Rect {
+            x: 200.0,
+            y: 60.0,
+            w: 60.0,
+            h: 40.0,
+        };
+        let end = LinkEnd {
+            anchor: connect,
+            owner: D,
+        };
         let r = place_linked(D, Side::Near, (320.0, 120.0), &scene(&[D], &[]), &[end]);
         assert!(r.left() >= D.right(), "right of d, where Connect is: {r:?}");
         // Beside it: their extents overlap, so the link runs straight across.
-        assert!(r.top() < connect.bottom() && connect.top() < r.bottom(), "level with Connect: {r:?}");
+        assert!(
+            r.top() < connect.bottom() && connect.top() < r.bottom(),
+            "level with Connect: {r:?}"
+        );
         let (from, to) = segment(&r, &connect);
         assert_eq!(from.1, to.1, "a straight link: {from:?} {to:?}");
     }
 
     #[test]
     fn below_stays_below_whatever_the_link_prefers() {
-        let left = Rect { x: -900.0, y: 0.0, w: 200.0, h: 200.0 };
-        let end = LinkEnd { anchor: left, owner: left };
-        let r = place_linked(D, Side::Below, (320.0, 120.0), &scene(&[D, left], &[]), &[end]);
+        let left = Rect {
+            x: -900.0,
+            y: 0.0,
+            w: 200.0,
+            h: 200.0,
+        };
+        let end = LinkEnd {
+            anchor: left,
+            owner: left,
+        };
+        let r = place_linked(
+            D,
+            Side::Below,
+            (320.0, 120.0),
+            &scene(&[D, left], &[]),
+            &[end],
+        );
         assert!(r.top() >= D.bottom(), "{r:?}");
         assert!(r.x < 0.0, "but slid toward the link: {r:?}");
     }
 
     #[test]
     fn a_link_far_from_near_wins_over_near() {
-        let far = Rect { x: 4000.0, y: 0.0, w: 480.0, h: 360.0 };
-        let end = LinkEnd { anchor: far, owner: far };
-        let r = place_linked(D, Side::Near, (320.0, 120.0), &scene(&[D, far], &[]), &[end]);
-        assert!(gap_between(&r, &far) < gap_between(&r, &D), "placed by its link: {r:?}");
+        let far = Rect {
+            x: 4000.0,
+            y: 0.0,
+            w: 480.0,
+            h: 360.0,
+        };
+        let end = LinkEnd {
+            anchor: far,
+            owner: far,
+        };
+        let r = place_linked(
+            D,
+            Side::Near,
+            (320.0, 120.0),
+            &scene(&[D, far], &[]),
+            &[end],
+        );
+        assert!(
+            gap_between(&r, &far) < gap_between(&r, &D),
+            "placed by its link: {r:?}"
+        );
     }
 
     #[test]
     fn of_two_equal_spots_the_one_without_a_crossing_wins() {
         // A target with free space left and right; a note sits between the
         // target and the right-hand spot's line to the linked element.
-        let target = Rect { x: 0.0, y: 0.0, w: 200.0, h: 200.0 };
-        let linked = Rect { x: 0.0, y: -800.0, w: 200.0, h: 100.0 };
-        let blocker = Rect { x: 360.0, y: -400.0, w: 200.0, h: 200.0 };
+        let target = Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 200.0,
+            h: 200.0,
+        };
+        let linked = Rect {
+            x: 0.0,
+            y: -800.0,
+            w: 200.0,
+            h: 100.0,
+        };
+        let blocker = Rect {
+            x: 360.0,
+            y: -400.0,
+            w: 200.0,
+            h: 200.0,
+        };
         let all = [target, linked, blocker];
-        let end = LinkEnd { anchor: linked, owner: linked };
-        let r = place_linked(target, Side::Near, (200.0, 100.0), &scene(&all, &[]), &[end]);
+        let end = LinkEnd {
+            anchor: linked,
+            owner: linked,
+        };
+        let r = place_linked(
+            target,
+            Side::Near,
+            (200.0, 100.0),
+            &scene(&all, &[]),
+            &[end],
+        );
         assert_eq!(crossings(&scene(&all, &[]), &r, &end), 0, "{r:?}");
     }
 
@@ -536,14 +688,34 @@ mod tests {
     fn links_between_fixed_items_are_not_in_the_way() {
         // The same scene with and without a segment the caller left out
         // because both its ends have collision off: no segment, no cost.
-        let linked = Rect { x: 0.0, y: -800.0, w: 200.0, h: 100.0 };
-        let end = LinkEnd { anchor: linked, owner: linked };
-        let without = place_linked(D, Side::Near, (200.0, 100.0), &scene(&[D, linked], &[]), &[end]);
+        let linked = Rect {
+            x: 0.0,
+            y: -800.0,
+            w: 200.0,
+            h: 100.0,
+        };
+        let end = LinkEnd {
+            anchor: linked,
+            owner: linked,
+        };
+        let without = place_linked(
+            D,
+            Side::Near,
+            (200.0, 100.0),
+            &scene(&[D, linked], &[]),
+            &[end],
+        );
         // Square across the middle of the chosen link.
         let ((x0, y0), (x1, y1)) = segment(&without, &linked);
         let (mx, my, dx, dy) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0, x1 - x0, y1 - y0);
         let crossing: Segment = ((mx - dy, my + dx), (mx + dy, my - dx));
-        let with = place_linked(D, Side::Near, (200.0, 100.0), &scene(&[D, linked], &[crossing]), &[end]);
+        let with = place_linked(
+            D,
+            Side::Near,
+            (200.0, 100.0),
+            &scene(&[D, linked], &[crossing]),
+            &[end],
+        );
         assert_ne!(without, with, "a counted segment moves the spot");
     }
 
@@ -563,13 +735,39 @@ mod tests {
 
     #[test]
     fn segment_geometry() {
-        let a = Rect { x: 0.0, y: 0.0, w: 100.0, h: 100.0 };
-        let b = Rect { x: 300.0, y: 0.0, w: 100.0, h: 100.0 };
+        let a = Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 100.0,
+        };
+        let b = Rect {
+            x: 300.0,
+            y: 0.0,
+            w: 100.0,
+            h: 100.0,
+        };
         let s = segment(&a, &b);
         assert_eq!(s, ((50.0, 0.0), (250.0, 0.0)));
         assert_eq!(length(&s), 200.0);
-        assert!(hits(&s, &Rect { x: 150.0, y: 0.0, w: 20.0, h: 20.0 }));
-        assert!(!hits(&s, &Rect { x: 150.0, y: 100.0, w: 20.0, h: 20.0 }));
+        assert!(hits(
+            &s,
+            &Rect {
+                x: 150.0,
+                y: 0.0,
+                w: 20.0,
+                h: 20.0
+            }
+        ));
+        assert!(!hits(
+            &s,
+            &Rect {
+                x: 150.0,
+                y: 100.0,
+                w: 20.0,
+                h: 20.0
+            }
+        ));
         assert!(crosses(&s, &((150.0, -50.0), (150.0, 50.0))));
         assert!(!crosses(&s, &((150.0, 10.0), (150.0, 50.0))));
         assert_eq!(side_of(&b, &a), "right of");
@@ -578,13 +776,28 @@ mod tests {
     #[test]
     fn a_link_to_a_lifeline_lands_on_its_head() {
         // A note up and to the left of a tall, thin lifeline whose x it overlaps.
-        let note = Rect { x: 300.0, y: -200.0, w: 400.0, h: 120.0 };
-        let lifeline = Rect { x: 420.0, y: 400.0, w: 20.0, h: 800.0 };
+        let note = Rect {
+            x: 300.0,
+            y: -200.0,
+            w: 400.0,
+            h: 120.0,
+        };
+        let lifeline = Rect {
+            x: 420.0,
+            y: 400.0,
+            w: 20.0,
+            h: 800.0,
+        };
         let (from, to) = segment(&note, &lifeline);
         assert_eq!(to, (420.0, 0.0), "the top of the lifeline, straight below");
         assert_eq!(from, (420.0, -140.0));
         // Diagonal: corner to corner.
-        let far = Rect { x: 1000.0, y: 1000.0, w: 100.0, h: 100.0 };
+        let far = Rect {
+            x: 1000.0,
+            y: 1000.0,
+            w: 100.0,
+            h: 100.0,
+        };
         assert_eq!(segment(&note, &far), ((500.0, -140.0), (950.0, 950.0)));
     }
 

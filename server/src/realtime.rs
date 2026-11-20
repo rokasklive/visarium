@@ -26,9 +26,9 @@ use tokio::sync::{Notify, mpsc};
 use uuid::Uuid;
 
 use crate::auth::User;
-use crate::sharing::ShareLink;
 use crate::boards::{self, Op};
 use crate::error::ApiError;
+use crate::sharing::ShareLink;
 use crate::{AppState, PROTOCOL_VERSION};
 
 const COLOUR_SLOTS: usize = 6;
@@ -45,7 +45,10 @@ const POLICY_VIOLATION: u16 = 1008;
 const SERVER_ERROR: u16 = 1011;
 
 fn now_ms() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
 }
 
 struct Actor {
@@ -64,7 +67,9 @@ impl Actor {
     /// and a client that silently missed frames is worse than one that knows
     /// to reconnect and resync.
     fn send(&self, text: &Utf8Bytes) {
-        if let Err(mpsc::error::TrySendError::Full(_)) = self.tx.try_send(Message::Text(text.clone())) {
+        if let Err(mpsc::error::TrySendError::Full(_)) =
+            self.tx.try_send(Message::Text(text.clone()))
+        {
             self.too_slow.notify_one();
         }
     }
@@ -154,11 +159,14 @@ impl Rooms {
     pub fn announce(&self, board: &Uuid, author: Option<Uuid>, from: i64, to: i64, ops: &[Op]) {
         let rooms = self.0.lock().unwrap();
         if let Some(room) = rooms.get(board) {
-            let frame = json!({ "t": "op", "fromRevision": from, "toRevision": to, "operations": ops });
+            let frame =
+                json!({ "t": "op", "fromRevision": from, "toRevision": to, "operations": ops });
             room.broadcast(author, &frame);
             let text = Utf8Bytes::from(frame.to_string());
             for v in &room.viewers {
-                if let Err(mpsc::error::TrySendError::Full(_)) = v.tx.try_send(Message::Text(text.clone())) {
+                if let Err(mpsc::error::TrySendError::Full(_)) =
+                    v.tx.try_send(Message::Text(text.clone()))
+                {
                     v.too_slow.notify_one();
                 }
             }
@@ -169,21 +177,43 @@ impl Rooms {
     /// it was not there, and shows what it touched. Only members hear either:
     /// `broadcast` reaches actors, never share-link viewers (ADR-0026). A board
     /// nobody has open has no room, and there is no one to tell.
-    pub fn agent_seen(&self, board: &Uuid, id: Uuid, name: &str, person: &str, item: Option<&str>, verb: &str) {
+    pub fn agent_seen(
+        &self,
+        board: &Uuid,
+        id: Uuid,
+        name: &str,
+        person: &str,
+        item: Option<&str>,
+        verb: &str,
+    ) {
         let mut rooms = self.0.lock().unwrap();
-        let Some(room) = rooms.get_mut(board) else { return };
+        let Some(room) = rooms.get_mut(board) else {
+            return;
+        };
         let now = now_ms();
         match room.agents.iter_mut().find(|a| a.id == id) {
             Some(a) => a.last_ms = now,
             None => {
                 let colour = room.free_colour(letter_of(name));
-                let agent = AgentPresence { id, name: name.to_string(), person: person.to_string(), colour, last_ms: now };
-                room.broadcast(None, &json!({ "t": "presence", "joined": [agent.presence()] }));
+                let agent = AgentPresence {
+                    id,
+                    name: name.to_string(),
+                    person: person.to_string(),
+                    colour,
+                    last_ms: now,
+                };
+                room.broadcast(
+                    None,
+                    &json!({ "t": "presence", "joined": [agent.presence()] }),
+                );
                 room.agents.push(agent);
             }
         }
         if let Some(item) = item.and_then(|i| Uuid::parse_str(i).ok()) {
-            room.broadcast(None, &json!({ "t": "focus", "actorId": id, "itemId": item, "verb": verb }));
+            room.broadcast(
+                None,
+                &json!({ "t": "focus", "actorId": id, "itemId": item, "verb": verb }),
+            );
         }
     }
 
@@ -203,7 +233,8 @@ impl Rooms {
         if let Some(room) = rooms.get(board) {
             room.broadcast(None, &json!({ "t": "board-deleted", "by": by }));
             for v in &room.viewers {
-                let _ = v.tx.try_send(close_message(POLICY_VIOLATION, "this board was deleted"));
+                let _ =
+                    v.tx.try_send(close_message(POLICY_VIOLATION, "this board was deleted"));
             }
         }
     }
@@ -218,7 +249,12 @@ impl Rooms {
         let cutoff = now.saturating_sub(AGENT_QUIET_SECS * 1000);
         let mut rooms = self.0.lock().unwrap();
         for room in rooms.values_mut() {
-            let gone: Vec<Uuid> = room.agents.iter().filter(|a| a.last_ms < cutoff).map(|a| a.id).collect();
+            let gone: Vec<Uuid> = room
+                .agents
+                .iter()
+                .filter(|a| a.last_ms < cutoff)
+                .map(|a| a.id)
+                .collect();
             if !gone.is_empty() {
                 room.agents.retain(|a| a.last_ms >= cutoff);
                 room.broadcast(None, &json!({ "t": "presence", "left": gone }));
@@ -233,9 +269,16 @@ impl Rooms {
 
     fn leave(&self, board: &Uuid, actor: Uuid) {
         let mut rooms = self.0.lock().unwrap();
-        let Some(room) = rooms.get_mut(board) else { return };
+        let Some(room) = rooms.get_mut(board) else {
+            return;
+        };
         room.actors.retain(|a| a.id != actor);
-        let released: Vec<Uuid> = room.locks.iter().filter(|(_, l)| l.actor == actor).map(|(id, _)| *id).collect();
+        let released: Vec<Uuid> = room
+            .locks
+            .iter()
+            .filter(|(_, l)| l.actor == actor)
+            .map(|(id, _)| *id)
+            .collect();
         for id in &released {
             room.locks.remove(id);
         }
@@ -257,7 +300,9 @@ impl Rooms {
 
     fn leave_viewer(&self, board: &Uuid, id: Uuid) {
         let mut rooms = self.0.lock().unwrap();
-        let Some(room) = rooms.get_mut(board) else { return };
+        let Some(room) = rooms.get_mut(board) else {
+            return;
+        };
         room.viewers.retain(|v| v.id != id);
         room.broadcast(None, &room.viewer_count());
         if room.actors.is_empty() && room.viewers.is_empty() {
@@ -269,8 +314,15 @@ impl Rooms {
     /// passphrase changed.
     pub fn close_share(&self, share_id: &str) {
         let rooms = self.0.lock().unwrap();
-        for v in rooms.values().flat_map(|r| &r.viewers).filter(|v| v.share_id == share_id) {
-            let _ = v.tx.try_send(close_message(POLICY_VIOLATION, "this link is no longer active"));
+        for v in rooms
+            .values()
+            .flat_map(|r| &r.viewers)
+            .filter(|v| v.share_id == share_id)
+        {
+            let _ = v.tx.try_send(close_message(
+                POLICY_VIOLATION,
+                "this link is no longer active",
+            ));
         }
     }
 }
@@ -290,41 +342,6 @@ pub fn letter_of(name: &str) -> char {
         .unwrap_or('?')
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn letters_follow_the_shared_fixture() {
-        let fixture: Value =
-            serde_json::from_str(include_str!("../../packages/canvas-core/fixtures/presence-letters.json")).unwrap();
-        for case in fixture["cases"].as_array().unwrap() {
-            let (name, letter) = (case[0].as_str().unwrap(), case[1].as_str().unwrap());
-            assert_eq!(letter_of(name).to_string(), letter, "{name:?}");
-        }
-    }
-
-    fn agent(name: &str, colour: usize) -> AgentPresence {
-        AgentPresence { id: Uuid::new_v4(), name: name.into(), person: "Ada".into(), colour, last_ms: 0 }
-    }
-
-    #[test]
-    fn colours_are_unique_per_letter_not_per_room() {
-        let mut room = Room::default();
-        room.agents.push(agent("Ada", 0));
-        assert_ne!(room.free_colour('A'), 0, "a second A gets another colour");
-        assert_eq!(room.free_colour('R'), 0, "a different letter may share it");
-        for slot in 1..COLOUR_SLOTS {
-            room.agents.push(agent(&format!("A{slot}"), slot));
-        }
-        // Every colour is taken for A: the least used, with no panic.
-        room.agents.push(agent("Rokas", 0));
-        let seventh = room.free_colour('A');
-        assert!(seventh < COLOUR_SLOTS);
-        assert_ne!(seventh, 0, "slot 0 is used twice, so it is not the least used");
-    }
-}
-
 fn release_frame(ids: &[Uuid]) -> Value {
     json!({ "t": "lock", "itemIds": ids, "heldBy": null, "expiresAt": 0 })
 }
@@ -332,9 +349,16 @@ fn release_frame(ids: &[Uuid]) -> Value {
 /// Same-origin only: the socket authenticates by cookie, so without this any
 /// page the user visits could open one as them (cross-site WebSocket hijack).
 fn same_origin(headers: &HeaderMap) -> bool {
-    let Some(origin) = headers.get(header::ORIGIN).and_then(|o| o.to_str().ok()) else { return true };
-    let host = headers.get("x-forwarded-host").or_else(|| headers.get(header::HOST)).and_then(|h| h.to_str().ok());
-    let origin_host = origin.split_once("://").map(|(_, rest)| rest.trim_end_matches('/'));
+    let Some(origin) = headers.get(header::ORIGIN).and_then(|o| o.to_str().ok()) else {
+        return true;
+    };
+    let host = headers
+        .get("x-forwarded-host")
+        .or_else(|| headers.get(header::HOST))
+        .and_then(|h| h.to_str().ok());
+    let origin_host = origin
+        .split_once("://")
+        .map(|(_, rest)| rest.trim_end_matches('/'));
     matches!((origin_host, host), (Some(o), Some(h)) if o.eq_ignore_ascii_case(h))
 }
 
@@ -348,7 +372,8 @@ pub async fn upgrade(
     if !same_origin(&headers) {
         return ApiError::forbidden("cross-origin socket refused").into_response();
     }
-    ws.max_message_size(1024 * 1024).on_upgrade(move |socket| run(app, socket, board, user.display_name))
+    ws.max_message_size(1024 * 1024)
+        .on_upgrade(move |socket| run(app, socket, board, user.display_name))
 }
 
 struct Close(u16, String);
@@ -362,7 +387,9 @@ async fn run(app: AppState, socket: WebSocket, board: String, display_name: Stri
     let board = match Uuid::parse_str(&board) {
         Ok(id) if boards::exists(&app.db, &id).await.unwrap_or(false) => id,
         _ => {
-            let _ = sink.send(close_message(POLICY_VIOLATION, "unknown board")).await;
+            let _ = sink
+                .send(close_message(POLICY_VIOLATION, "unknown board"))
+                .await;
             return;
         }
     };
@@ -371,7 +398,14 @@ async fn run(app: AppState, socket: WebSocket, board: String, display_name: Stri
     let too_slow = Arc::new(Notify::new());
     let writer = spawn_writer(sink, rx, too_slow.clone());
 
-    let mut connection = Connection { app: app.clone(), board, display_name, actor: None, tx: tx.clone(), too_slow };
+    let mut connection = Connection {
+        app: app.clone(),
+        board,
+        display_name,
+        actor: None,
+        tx: tx.clone(),
+        too_slow,
+    };
     while let Some(Ok(message)) = stream.next().await {
         let text = match message {
             Message::Text(text) => text,
@@ -433,13 +467,16 @@ pub async fn upgrade_viewer(
     if !same_origin(&headers) {
         return ApiError::forbidden("cross-origin socket refused").into_response();
     }
-    ws.max_message_size(16 * 1024).on_upgrade(move |socket| run_viewer(app, socket, link))
+    ws.max_message_size(16 * 1024)
+        .on_upgrade(move |socket| run_viewer(app, socket, link))
 }
 
 async fn run_viewer(app: AppState, socket: WebSocket, link: ShareLink) {
     let (mut sink, mut stream) = socket.split();
     let Ok(board) = Uuid::parse_str(&link.canvas_id) else {
-        let _ = sink.send(close_message(POLICY_VIOLATION, "unknown board")).await;
+        let _ = sink
+            .send(close_message(POLICY_VIOLATION, "unknown board"))
+            .await;
         return;
     };
     let (tx, rx) = mpsc::channel::<Message>(SEND_QUEUE);
@@ -507,7 +544,10 @@ fn close_message(code: u16, reason: &str) -> Message {
     while !reason.is_char_boundary(end) {
         end -= 1;
     }
-    Message::Close(Some(CloseFrame { code, reason: Utf8Bytes::from(&reason[..end]) }))
+    Message::Close(Some(CloseFrame {
+        code,
+        reason: Utf8Bytes::from(&reason[..end]),
+    }))
 }
 
 struct Connection {
@@ -525,7 +565,10 @@ impl Connection {
         if !frame.is_object() {
             return Err(invalid("frame is not an object"));
         }
-        let t = frame.get("t").and_then(Value::as_str).ok_or_else(|| invalid("frame has no type"))?;
+        let t = frame
+            .get("t")
+            .and_then(Value::as_str)
+            .ok_or_else(|| invalid("frame has no type"))?;
         let Some(actor) = self.actor else {
             if t != "hello" {
                 return Err(invalid(format!("first frame was '{t}', not hello")));
@@ -538,13 +581,19 @@ impl Connection {
             "cursor" => {
                 let (x, y) = (finite(&frame, "x")?, finite(&frame, "y")?);
                 rooms.with(&self.board, |r| {
-                    r.broadcast(Some(actor), &json!({ "t": "cursor", "actorId": actor, "x": x, "y": y }))
+                    r.broadcast(
+                        Some(actor),
+                        &json!({ "t": "cursor", "actorId": actor, "x": x, "y": y }),
+                    )
                 });
             }
             "selection" => {
                 let ids = item_ids(&frame, "itemIds")?;
                 rooms.with(&self.board, |r| {
-                    r.broadcast(Some(actor), &json!({ "t": "selection", "actorId": actor, "itemIds": ids }))
+                    r.broadcast(
+                        Some(actor),
+                        &json!({ "t": "selection", "actorId": actor, "itemIds": ids }),
+                    )
                 });
             }
             "transform.preview" => {
@@ -556,8 +605,14 @@ impl Connection {
                             lock.expires_at = expires;
                         }
                     }
-                    let items: Vec<_> = items.iter().map(|(id, t)| json!({ "itemId": id, "transform": t })).collect();
-                    r.broadcast(Some(actor), &json!({ "t": "transform.preview", "actorId": actor, "items": items }));
+                    let items: Vec<_> = items
+                        .iter()
+                        .map(|(id, t)| json!({ "itemId": id, "transform": t }))
+                        .collect();
+                    r.broadcast(
+                        Some(actor),
+                        &json!({ "t": "transform.preview", "actorId": actor, "items": items }),
+                    );
                 });
             }
             "lock.acquire" => {
@@ -588,8 +643,10 @@ impl Connection {
             "lock.release" => {
                 let ids = item_ids(&frame, "itemIds")?;
                 rooms.with(&self.board, |r| {
-                    let released: Vec<Uuid> =
-                        ids.into_iter().filter(|id| r.locks.get(id).is_some_and(|l| l.actor == actor)).collect();
+                    let released: Vec<Uuid> = ids
+                        .into_iter()
+                        .filter(|id| r.locks.get(id).is_some_and(|l| l.actor == actor))
+                        .collect();
                     for id in &released {
                         r.locks.remove(id);
                     }
@@ -606,7 +663,10 @@ impl Connection {
     async fn hello(&mut self, frame: &Value) -> Result<(), Close> {
         let version = integer(frame, "protocolVersion")?;
         if version != PROTOCOL_VERSION {
-            return Err(Close(POLICY_VIOLATION, format!("protocol version {version} not supported")));
+            return Err(Close(
+                POLICY_VIOLATION,
+                format!("protocol version {version} not supported"),
+            ));
         }
         integer(frame, "sinceRevision")?;
         let revision = boards::revision(&self.app.db, &self.board)
@@ -621,9 +681,23 @@ impl Connection {
                 self.display_name.clone()
             };
             let colour = r.free_colour(letter_of(&name));
-            r.actors.push(Actor { id, display_name: name, colour, tx: self.tx.clone(), too_slow: self.too_slow.clone() });
-            let actors: Vec<Value> = r.actors.iter().map(Actor::presence).chain(r.agents.iter().map(AgentPresence::presence)).collect();
-            r.send_to(id, &json!({ "t": "welcome", "actorId": id, "revision": revision, "actors": actors }));
+            r.actors.push(Actor {
+                id,
+                display_name: name,
+                colour,
+                tx: self.tx.clone(),
+                too_slow: self.too_slow.clone(),
+            });
+            let actors: Vec<Value> = r
+                .actors
+                .iter()
+                .map(Actor::presence)
+                .chain(r.agents.iter().map(AgentPresence::presence))
+                .collect();
+            r.send_to(
+                id,
+                &json!({ "t": "welcome", "actorId": id, "revision": revision, "actors": actors }),
+            );
             let me = r.actors.last().unwrap().presence();
             r.broadcast(Some(id), &json!({ "t": "presence", "joined": [me] }));
             if !r.viewers.is_empty() {
@@ -636,31 +710,56 @@ impl Connection {
 }
 
 fn finite(parent: &Value, field: &str) -> Result<f64, Close> {
-    let n = parent.get(field).and_then(Value::as_f64).ok_or_else(|| invalid(format!("'{field}' is not a number")))?;
-    if n.is_finite() { Ok(n) } else { Err(invalid(format!("'{field}' is not finite"))) }
+    let n = parent
+        .get(field)
+        .and_then(Value::as_f64)
+        .ok_or_else(|| invalid(format!("'{field}' is not a number")))?;
+    if n.is_finite() {
+        Ok(n)
+    } else {
+        Err(invalid(format!("'{field}' is not finite")))
+    }
 }
 
 fn integer(parent: &Value, field: &str) -> Result<i64, Close> {
-    parent.get(field).and_then(Value::as_i64).ok_or_else(|| invalid(format!("'{field}' is not an integer")))
+    parent
+        .get(field)
+        .and_then(Value::as_i64)
+        .ok_or_else(|| invalid(format!("'{field}' is not an integer")))
 }
 
 fn item_ids(parent: &Value, field: &str) -> Result<Vec<Uuid>, Close> {
-    let list = parent.get(field).and_then(Value::as_array).ok_or_else(|| invalid(format!("'{field}' is not an array")))?;
+    let list = parent
+        .get(field)
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid(format!("'{field}' is not an array")))?;
     if list.len() > MAX_FRAME_ITEMS {
-        return Err(invalid(format!("'{field}' has {} entries, over the {MAX_FRAME_ITEMS} limit", list.len())));
+        return Err(invalid(format!(
+            "'{field}' has {} entries, over the {MAX_FRAME_ITEMS} limit",
+            list.len()
+        )));
     }
     list.iter()
         .map(|v| {
-            let s = v.as_str().ok_or_else(|| invalid(format!("'{field}' holds a non-string")))?;
-            Uuid::parse_str(s).map_err(|_| invalid(format!("'{field}' holds a value that is not a uuid")))
+            let s = v
+                .as_str()
+                .ok_or_else(|| invalid(format!("'{field}' holds a non-string")))?;
+            Uuid::parse_str(s)
+                .map_err(|_| invalid(format!("'{field}' holds a value that is not a uuid")))
         })
         .collect()
 }
 
 fn previews(frame: &Value) -> Result<Vec<(Uuid, Value)>, Close> {
-    let items = frame.get("items").and_then(Value::as_array).ok_or_else(|| invalid("'items' is not an array"))?;
+    let items = frame
+        .get("items")
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid("'items' is not an array"))?;
     if items.len() > MAX_FRAME_ITEMS {
-        return Err(invalid(format!("'items' has {} entries, over the {MAX_FRAME_ITEMS} limit", items.len())));
+        return Err(invalid(format!(
+            "'items' has {} entries, over the {MAX_FRAME_ITEMS} limit",
+            items.len()
+        )));
     }
     items
         .iter()
@@ -668,9 +767,15 @@ fn previews(frame: &Value) -> Result<Vec<(Uuid, Value)>, Close> {
             if !entry.is_object() {
                 return Err(invalid("'items' holds a non-object"));
             }
-            let id = entry.get("itemId").and_then(Value::as_str).ok_or_else(|| invalid("'itemId' is not a string"))?;
+            let id = entry
+                .get("itemId")
+                .and_then(Value::as_str)
+                .ok_or_else(|| invalid("'itemId' is not a string"))?;
             let id = Uuid::parse_str(id).map_err(|_| invalid("'itemId' is not a uuid"))?;
-            let t = entry.get("transform").filter(|t| t.is_object()).ok_or_else(|| invalid("preview has no transform"))?;
+            let t = entry
+                .get("transform")
+                .filter(|t| t.is_object())
+                .ok_or_else(|| invalid("preview has no transform"))?;
             let transform = json!({
                 "x": finite(t, "x")?, "y": finite(t, "y")?,
                 "width": finite(t, "width")?, "height": finite(t, "height")?,
@@ -679,4 +784,50 @@ fn previews(frame: &Value) -> Result<Vec<(Uuid, Value)>, Close> {
             Ok((id, transform))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn letters_follow_the_shared_fixture() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../packages/canvas-core/fixtures/presence-letters.json"
+        ))
+        .unwrap();
+        for case in fixture["cases"].as_array().unwrap() {
+            let (name, letter) = (case[0].as_str().unwrap(), case[1].as_str().unwrap());
+            assert_eq!(letter_of(name).to_string(), letter, "{name:?}");
+        }
+    }
+
+    fn agent(name: &str, colour: usize) -> AgentPresence {
+        AgentPresence {
+            id: Uuid::new_v4(),
+            name: name.into(),
+            person: "Ada".into(),
+            colour,
+            last_ms: 0,
+        }
+    }
+
+    #[test]
+    fn colours_are_unique_per_letter_not_per_room() {
+        let mut room = Room::default();
+        room.agents.push(agent("Ada", 0));
+        assert_ne!(room.free_colour('A'), 0, "a second A gets another colour");
+        assert_eq!(room.free_colour('R'), 0, "a different letter may share it");
+        for slot in 1..COLOUR_SLOTS {
+            room.agents.push(agent(&format!("A{slot}"), slot));
+        }
+        // Every colour is taken for A: the least used, with no panic.
+        room.agents.push(agent("Rokas", 0));
+        let seventh = room.free_colour('A');
+        assert!(seventh < COLOUR_SLOTS);
+        assert_ne!(
+            seventh, 0,
+            "slot 0 is used twice, so it is not the least used"
+        );
+    }
 }

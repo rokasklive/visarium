@@ -48,7 +48,12 @@ const LIST_TTL_MS: u64 = 3_600_000;
 /// the grant on expects the agent to see the tools soon.
 const GRANT_TTL_MS: u64 = 60_000;
 /// The tools that need the *Manage boards* grant.
-const BOARD_TOOLS: [&str; 4] = ["board_create", "board_rename", "board_duplicate", "board_delete"];
+const BOARD_TOOLS: [&str; 4] = [
+    "board_create",
+    "board_rename",
+    "board_duplicate",
+    "board_delete",
+];
 
 // --- the caller and a tool's answer --------------------------------------------
 
@@ -141,8 +146,14 @@ pub fn routes() -> Router<AppState> {
 pub fn member_routes() -> Router<AppState> {
     Router::new()
         .route("/agent-tokens", get(list_tokens).post(create_token))
-        .route("/agent-tokens/{id}", delete(revoke_token).patch(set_token_grant))
-        .route("/agent-settings", get(local_settings).patch(set_local_settings))
+        .route(
+            "/agent-tokens/{id}",
+            delete(revoke_token).patch(set_token_grant),
+        )
+        .route(
+            "/agent-settings",
+            get(local_settings).patch(set_local_settings),
+        )
 }
 
 async fn only_post() -> Response {
@@ -256,12 +267,14 @@ async fn set_token_grant(
     Path(id): Path<Uuid>,
     Json(body): Json<Grant>,
 ) -> ApiResult<StatusCode> {
-    let done = sqlx::query("UPDATE session SET manage_boards = ? WHERE id = ? AND user_id = ? AND kind = 'agent'")
-        .bind(body.manage_boards)
-        .bind(id.to_string())
-        .bind(&me.id)
-        .execute(&app.db)
-        .await?;
+    let done = sqlx::query(
+        "UPDATE session SET manage_boards = ? WHERE id = ? AND user_id = ? AND kind = 'agent'",
+    )
+    .bind(body.manage_boards)
+    .bind(id.to_string())
+    .bind(&me.id)
+    .execute(&app.db)
+    .await?;
     if done.rows_affected() == 0 {
         return Err(ApiError::not_found(format!("no agent token {id}")));
     }
@@ -273,10 +286,11 @@ async fn local_settings(
     State(app): State<AppState>,
     axum::Extension(me): axum::Extension<User>,
 ) -> ApiResult<axum::Json<Value>> {
-    let on: bool = sqlx::query_scalar("SELECT local_agents_manage_boards FROM app_user WHERE id = ?")
-        .bind(&me.id)
-        .fetch_one(&app.db)
-        .await?;
+    let on: bool =
+        sqlx::query_scalar("SELECT local_agents_manage_boards FROM app_user WHERE id = ?")
+            .bind(&me.id)
+            .fetch_one(&app.db)
+            .await?;
     Ok(axum::Json(json!({ "localAgentsManageBoards": on })))
 }
 
@@ -296,17 +310,25 @@ async fn set_local_settings(
         .bind(&me.id)
         .execute(&app.db)
         .await?;
-    Ok(axum::Json(json!({ "localAgentsManageBoards": body.local_agents_manage_boards })))
+    Ok(axum::Json(
+        json!({ "localAgentsManageBoards": body.local_agents_manage_boards }),
+    ))
 }
 
 /// Whether this caller may manage boards: its token's grant, or the local
 /// account's switch. Read per call, never cached.
 async fn may_manage_boards(app: &AppState, caller: &Caller) -> bool {
     let q = match &caller.session {
-        Some(session) => sqlx::query_scalar("SELECT manage_boards FROM session WHERE id = ?").bind(session.clone()),
-        None => sqlx::query_scalar("SELECT local_agents_manage_boards FROM app_user WHERE id = ?").bind(caller.user.id.clone()),
+        Some(session) => sqlx::query_scalar("SELECT manage_boards FROM session WHERE id = ?")
+            .bind(session.clone()),
+        None => sqlx::query_scalar("SELECT local_agents_manage_boards FROM app_user WHERE id = ?")
+            .bind(caller.user.id.clone()),
     };
-    q.fetch_optional(&app.db).await.ok().flatten().unwrap_or(false)
+    q.fetch_optional(&app.db)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(false)
 }
 
 async fn revoke_token(
@@ -521,7 +543,9 @@ async fn mcp(
     // person first (`input_required`) already says so. Older clients ignore it.
     let mut result = result;
     if let Some(fields) = result.as_object_mut() {
-        fields.entry("resultType").or_insert_with(|| json!("complete"));
+        fields
+            .entry("resultType")
+            .or_insert_with(|| json!("complete"));
     }
     axum::Json(json!({ "jsonrpc": "2.0", "id": id, "result": result })).into_response()
 }
@@ -579,7 +603,11 @@ async fn call(app: &AppState, caller: &Caller, params: &Value) -> Value {
             Err(format!(
                 "{name} needs the *Manage boards* grant, which is off for this agent. {} can turn it on under Settings → Agents{}. Nothing was changed.",
                 caller.user.display_name,
-                if caller.session.is_some() { ", on this agent's token" } else { " (\"Let local agents manage boards\")" }
+                if caller.session.is_some() {
+                    ", on this agent's token"
+                } else {
+                    " (\"Let local agents manage boards\")"
+                }
             ))
         };
         return match outcome {
@@ -596,9 +624,8 @@ async fn call(app: &AppState, caller: &Caller, params: &Value) -> Value {
         "search" => read::search(app, &args).await,
         "changes" => read::changes(app, &args).await,
         "item_view" => read::item_view(app, &args).await,
-        "item_create" | "item_edit" | "tasks" | "link" | "unlink" | "arrange" | "group_create" | "item_delete" => {
-            write::run(app, caller, name, &args).await
-        }
+        "item_create" | "item_edit" | "tasks" | "link" | "unlink" | "arrange" | "group_create"
+        | "item_delete" => write::run(app, caller, name, &args).await,
         _ => Err(format!(
             "There is no tool '{name}'. The tools: {}.",
             TOOL_NAMES.join(", ")

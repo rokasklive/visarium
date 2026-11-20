@@ -46,8 +46,14 @@ fn request_id(args: &Value) -> Option<String> {
 }
 
 /// The first answer to this `request_id`, when the agent is retrying.
-pub async fn remembered(app: &AppState, caller: &Caller, args: &Value) -> Result<Option<Out>, Fail> {
-    let Some(rid) = request_id(args) else { return Ok(None) };
+pub async fn remembered(
+    app: &AppState,
+    caller: &Caller,
+    args: &Value,
+) -> Result<Option<Out>, Fail> {
+    let Some(rid) = request_id(args) else {
+        return Ok(None);
+    };
     let earlier: Option<String> = sqlx::query_scalar(
         "SELECT result FROM agent_request WHERE session_id = ? AND request_id = ?",
     )
@@ -68,15 +74,24 @@ pub async fn remembered(app: &AppState, caller: &Caller, args: &Value) -> Result
 }
 
 /// Keeps this answer for a day under the call's `request_id`, if it has one.
-pub async fn remember(app: &AppState, caller: &Caller, args: &Value, out: &Out) -> Result<(), Fail> {
-    let Some(rid) = request_id(args) else { return Ok(()) };
-    sqlx::query("INSERT OR REPLACE INTO agent_request (session_id, request_id, result) VALUES (?, ?, ?)")
-        .bind(caller.key())
-        .bind(&rid)
-        .bind(json!({ "text": out.text, "structured": out.structured }).to_string())
-        .execute(&app.db)
-        .await
-        .map_err(db_fail)?;
+pub async fn remember(
+    app: &AppState,
+    caller: &Caller,
+    args: &Value,
+    out: &Out,
+) -> Result<(), Fail> {
+    let Some(rid) = request_id(args) else {
+        return Ok(());
+    };
+    sqlx::query(
+        "INSERT OR REPLACE INTO agent_request (session_id, request_id, result) VALUES (?, ?, ?)",
+    )
+    .bind(caller.key())
+    .bind(&rid)
+    .bind(json!({ "text": out.text, "structured": out.structured }).to_string())
+    .execute(&app.db)
+    .await
+    .map_err(db_fail)?;
     sqlx::query(
         "DELETE FROM agent_request WHERE at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1 day')",
     )
@@ -113,7 +128,11 @@ async fn commit_pushing(
         .await
         .map_err(|e| e.detail)?;
     app.rooms.announce(&board, None, from, to, &ops);
-    let mut pushed: Vec<String> = ops[sent..].iter().filter_map(|op| op.item_id()).map(|i| i.to_string()).collect();
+    let mut pushed: Vec<String> = ops[sent..]
+        .iter()
+        .filter_map(|op| op.item_id())
+        .map(|i| i.to_string())
+        .collect();
     pushed.dedup();
     Ok((to, pushed))
 }
@@ -229,22 +248,48 @@ fn layout(b: &BoardData, except: &[&str], inside: Option<&str>) -> Layout {
     let pad = crate::collision::GROUP_PAD;
     let mut outlines = vec![];
     for g in &b.groups {
-        let members: Vec<Rect> =
-            b.items.iter().filter(|i| i.group_id.as_deref() == Some(g.id.as_str()) && !except.contains(&i.id.as_str())).map(Rect::of).collect();
+        let members: Vec<Rect> = b
+            .items
+            .iter()
+            .filter(|i| {
+                i.group_id.as_deref() == Some(g.id.as_str()) && !except.contains(&i.id.as_str())
+            })
+            .map(Rect::of)
+            .collect();
         if let Some(r) = Rect::around(&members) {
-            outlines.push((Rect { w: r.w + 2.0 * pad, h: r.h + 2.0 * pad, ..r }, g.short_ref(), g.id.clone()));
+            outlines.push((
+                Rect {
+                    w: r.w + 2.0 * pad,
+                    h: r.h + 2.0 * pad,
+                    ..r
+                },
+                g.short_ref(),
+                g.id.clone(),
+            ));
         }
     }
-    let items: Vec<(Rect, String)> =
-        b.items.iter().filter(|i| !except.contains(&i.id.as_str())).map(|i| (Rect::of(i), i.short_ref())).collect();
+    let items: Vec<(Rect, String)> = b
+        .items
+        .iter()
+        .filter(|i| !except.contains(&i.id.as_str()))
+        .map(|i| (Rect::of(i), i.short_ref()))
+        .collect();
     let mut obstacles: Vec<Rect> = items.iter().map(|(r, _)| *r).collect();
-    obstacles.extend(outlines.iter().filter(|o| Some(o.2.as_str()) != inside).map(|o| o.0));
+    obstacles.extend(
+        outlines
+            .iter()
+            .filter(|o| Some(o.2.as_str()) != inside)
+            .map(|o| o.0),
+    );
     let segments = b
         .links
         .iter()
         .filter_map(|l| {
             let (from, to) = (b.item(&l.from_item)?, b.item(&l.to_item)?);
-            if except.contains(&from.id.as_str()) || except.contains(&to.id.as_str()) || !(b.collides(from) || b.collides(to)) {
+            if except.contains(&from.id.as_str())
+                || except.contains(&to.id.as_str())
+                || !(b.collides(from) || b.collides(to))
+            {
                 return None;
             }
             Some(place::segment(
@@ -253,7 +298,12 @@ fn layout(b: &BoardData, except: &[&str], inside: Option<&str>) -> Layout {
             ))
         })
         .collect();
-    Layout { obstacles, items, outlines: outlines.into_iter().map(|(r, n, _)| (r, n)).collect(), segments }
+    Layout {
+        obstacles,
+        items,
+        outlines: outlines.into_iter().map(|(r, n, _)| (r, n)).collect(),
+        segments,
+    }
 }
 
 /// The far end of each link an existing item has, with how to name it.
@@ -269,7 +319,10 @@ fn link_ends(b: &BoardData, item: &ItemRow) -> Vec<(LinkEnd, String)> {
                 return None;
             };
             Some((
-                LinkEnd { anchor: place::anchor_box(other, element), owner: Rect::of(other) },
+                LinkEnd {
+                    anchor: place::anchor_box(other, element),
+                    owner: Rect::of(other),
+                },
                 b.anchor_text(&other.id, element),
             ))
         })
@@ -279,7 +332,13 @@ fn link_ends(b: &BoardData, item: &ItemRow) -> Vec<(LinkEnd, String)> {
 /// Where a placed item went and how its links lie, in one line
 /// (agents/placement, design D8): "n7 right of d1 · link to d1#Connect 96px,
 /// crosses nothing".
-fn placed_line(who: &str, spot: &Rect, at: &Where, ends: &[(LinkEnd, String)], l: &Layout) -> String {
+fn placed_line(
+    who: &str,
+    spot: &Rect,
+    at: &Where,
+    ends: &[(LinkEnd, String)],
+    l: &Layout,
+) -> String {
     let mut line = if at.name.is_empty() || at.side == Side::In {
         format!("{who} {}", at.said)
     } else if !ends.is_empty() && place::gap_between(spot, &at.target) > 4.0 * place::GRID {
@@ -301,18 +360,28 @@ fn placed_line(who: &str, spot: &Rect, at: &Where, ends: &[(LinkEnd, String)], l
         crossed.extend(
             l.outlines
                 .iter()
-                .filter(|(r, _)| place::hits(&s, r) && !end.owner.overlaps(r, 0.0) && !spot.overlaps(r, 0.0))
+                .filter(|(r, _)| {
+                    place::hits(&s, r) && !end.owner.overlaps(r, 0.0) && !spot.overlaps(r, 0.0)
+                })
                 .map(|(_, n)| n.clone()),
         );
         let lines = l.segments.iter().filter(|o| place::crosses(&s, o)).count();
         if lines > 0 {
-            crossed.push(if lines == 1 { "1 link".into() } else { format!("{lines} links") });
+            crossed.push(if lines == 1 {
+                "1 link".into()
+            } else {
+                format!("{lines} links")
+            });
         }
         crossing |= !crossed.is_empty();
         line.push_str(&format!(
             " · link to {label} {}px, crosses {}",
             place::length(&s).round(),
-            if crossed.is_empty() { "nothing".into() } else { crossed.join(", ") }
+            if crossed.is_empty() {
+                "nothing".into()
+            } else {
+                crossed.join(", ")
+            }
         ));
     }
     if crossing {
@@ -322,8 +391,16 @@ fn placed_line(who: &str, spot: &Rect, at: &Where, ends: &[(LinkEnd, String)], l
 }
 
 fn moved_aside(b: &BoardData, pushed: &[String]) -> String {
-    let refs: Vec<String> = pushed.iter().filter_map(|id| b.item(id)).map(|i| i.short_ref()).collect();
-    if refs.is_empty() { String::new() } else { format!(" Moved aside: {}.", refs.join(", ")) }
+    let refs: Vec<String> = pushed
+        .iter()
+        .filter_map(|id| b.item(id))
+        .map(|i| i.short_ref())
+        .collect();
+    if refs.is_empty() {
+        String::new()
+    } else {
+        format!(" Moved aside: {}.", refs.join(", "))
+    }
 }
 
 fn transform(r: Rect) -> Transform {
@@ -596,16 +673,26 @@ async fn item_create(app: &AppState, caller: &Caller, args: &Value) -> Result<Ou
     let l = layout(&b, &[], at.group.as_deref());
     let ends: Vec<(LinkEnd, String)> = match &link {
         Some((_, to)) => {
-            let other = b.item(&to.item_id.to_string()).ok_or("The link's other end is gone.")?;
+            let other = b
+                .item(&to.item_id.to_string())
+                .ok_or("The link's other end is gone.")?;
             vec![(
-                LinkEnd { anchor: place::anchor_box(other, to.element.as_deref()), owner: Rect::of(other) },
+                LinkEnd {
+                    anchor: place::anchor_box(other, to.element.as_deref()),
+                    owner: Rect::of(other),
+                },
                 b.anchor_text(&other.id, to.element.as_deref()),
             )]
         }
         None => vec![],
     };
     let rects: Vec<Rect> = l.items.iter().map(|(r, _)| *r).collect();
-    let scene = Scene { obstacles: &l.obstacles, items: &rects, segments: &l.segments, group: None };
+    let scene = Scene {
+        obstacles: &l.obstacles,
+        items: &rects,
+        segments: &l.segments,
+        group: None,
+    };
     let spot = place::place_linked(
         at.target,
         at.side,
@@ -624,7 +711,11 @@ async fn item_create(app: &AppState, caller: &Caller, args: &Value) -> Result<Ou
         appearance: None,
         crop: None,
         // An agent's items are pushed aside by default (canvas/collision).
-        collides: Some(args.get("collides").and_then(Value::as_bool).unwrap_or(true)),
+        collides: Some(
+            args.get("collides")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
+        ),
         text_scale: None,
     }];
     if let Some(g) = &at.group {
@@ -654,7 +745,13 @@ async fn item_create(app: &AppState, caller: &Caller, args: &Value) -> Result<Ou
         .ok_or("The item was created but could not be read back.")?;
     let mut text = format!(
         "Created {}.",
-        placed_line(&format!("{} ({})", made.short_ref(), after.kind_of(made)), &spot, &at, &ends, &l)
+        placed_line(
+            &format!("{} ({})", made.short_ref(), after.kind_of(made)),
+            &spot,
+            &at,
+            &ends,
+            &l
+        )
     );
     if let Some((ty, to)) = &link {
         text.push_str(&format!(
@@ -1156,12 +1253,27 @@ async fn unlink(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, Fa
 /// items, and the outlines of collision-off groups, other than `except`.
 fn fixed_bodies(b: &BoardData, except: &[&str]) -> Vec<Rect> {
     let pad = crate::collision::GROUP_PAD;
-    let mut out: Vec<Rect> = b.items.iter().filter(|i| !except.contains(&i.id.as_str()) && !b.collides(i)).map(Rect::of).collect();
+    let mut out: Vec<Rect> = b
+        .items
+        .iter()
+        .filter(|i| !except.contains(&i.id.as_str()) && !b.collides(i))
+        .map(Rect::of)
+        .collect();
     for g in b.groups.iter().filter(|g| !g.collides) {
-        let members: Vec<Rect> =
-            b.items.iter().filter(|i| i.group_id.as_deref() == Some(g.id.as_str()) && !except.contains(&i.id.as_str())).map(Rect::of).collect();
+        let members: Vec<Rect> = b
+            .items
+            .iter()
+            .filter(|i| {
+                i.group_id.as_deref() == Some(g.id.as_str()) && !except.contains(&i.id.as_str())
+            })
+            .map(Rect::of)
+            .collect();
         if let Some(r) = Rect::around(&members) {
-            out.push(Rect { w: r.w + 2.0 * pad, h: r.h + 2.0 * pad, ..r });
+            out.push(Rect {
+                w: r.w + 2.0 * pad,
+                h: r.h + 2.0 * pad,
+                ..r
+            });
         }
     }
     out
@@ -1172,7 +1284,9 @@ fn reading_order<'a>(items: &[&'a ItemRow]) -> Vec<&'a ItemRow> {
     let mut v = items.to_vec();
     v.sort_by(|a, b| {
         let (ra, rb) = (Rect::of(a), Rect::of(b));
-        place::snap(ra.top()).total_cmp(&place::snap(rb.top())).then(ra.left().total_cmp(&rb.left()))
+        place::snap(ra.top())
+            .total_cmp(&place::snap(rb.top()))
+            .then(ra.left().total_cmp(&rb.left()))
     });
     v
 }
@@ -1181,26 +1295,51 @@ fn reading_order<'a>(items: &[&'a ItemRow]) -> Vec<&'a ItemRow> {
 /// `near`/`below`/`right_of`/`in` when one is named, else where the items
 /// already start. Returns the operations, a description, and the group named
 /// by `in`, if any.
-async fn packed(app: &AppState, b: &BoardData, items: &[&ItemRow], args: &Value, how: place::Pack) -> Result<(Vec<Op>, String, Option<String>), Fail> {
-    let gap = args.get("gap").and_then(Value::as_f64).unwrap_or(place::GAP).clamp(0.0, 480.0);
+async fn packed(
+    app: &AppState,
+    b: &BoardData,
+    items: &[&ItemRow],
+    args: &Value,
+    how: place::Pack,
+) -> Result<(Vec<Op>, String, Option<String>), Fail> {
+    let gap = args
+        .get("gap")
+        .and_then(Value::as_f64)
+        .unwrap_or(place::GAP)
+        .clamp(0.0, 480.0);
     let ordered = reading_order(items);
     let sizes: Vec<(f64, f64)> = ordered.iter().map(|i| (i.width, i.height)).collect();
     let (offsets, (w, h)) = place::pack(&sizes, how, gap);
     let ids: Vec<&str> = items.iter().map(|i| i.id.as_str()).collect();
-    let named = ["near", "below", "right_of", "in"].iter().any(|k| opt_str(args, k).is_some());
+    let named = ["near", "below", "right_of", "in"]
+        .iter()
+        .any(|k| opt_str(args, k).is_some());
     let (block, said, group) = if named {
         let at = whereabouts(app, b, args).await?;
         let l = layout(b, &ids, at.group.as_deref());
-        (place::place(at.target, at.side, (w, h), &l.obstacles), at.said, at.group)
+        (
+            place::place(at.target, at.side, (w, h), &l.obstacles),
+            at.said,
+            at.group,
+        )
     } else {
         let around = Rect::around(&items.iter().map(|i| Rect::of(i)).collect::<Vec<_>>()).unwrap();
         let (left, top) = (place::snap(around.left()), place::snap(around.top()));
-        let natural = Rect { x: left + w / 2.0, y: top + h / 2.0, w, h };
+        let natural = Rect {
+            x: left + w / 2.0,
+            y: top + h / 2.0,
+            w,
+            h,
+        };
         // Collision-on neighbours are pushed aside by the board; what never
         // moves has to be kept clear of here, or the block would sit on it.
         let fixed = fixed_bodies(b, &ids);
         if fixed.iter().any(|o| natural.overlaps(o, place::GAP / 2.0)) {
-            (place::place(natural, Side::Near, (w, h), &fixed), "beside where they were".into(), None)
+            (
+                place::place(natural, Side::Near, (w, h), &fixed),
+                "beside where they were".into(),
+                None,
+            )
         } else {
             (natural, "where they were".into(), None)
         }
@@ -1215,7 +1354,15 @@ async fn packed(app: &AppState, b: &BoardData, items: &[&ItemRow], args: &Value,
         .zip(offsets)
         .map(|(i, (dx, dy))| Op::ItemTransform {
             item_id: Uuid::parse_str(&i.id).unwrap(),
-            transform: Transform { rotation: i.rotation, ..transform(Rect { x: block.left() + dx, y: block.top() + dy, w: i.width, h: i.height }) },
+            transform: Transform {
+                rotation: i.rotation,
+                ..transform(Rect {
+                    x: block.left() + dx,
+                    y: block.top() + dy,
+                    w: i.width,
+                    h: i.height,
+                })
+            },
             crop: None,
             text_scale: None,
             settled: false,
@@ -1225,21 +1372,34 @@ async fn packed(app: &AppState, b: &BoardData, items: &[&ItemRow], args: &Value,
 }
 
 fn pack_of(args: &Value, n: usize) -> Result<Option<place::Pack>, Fail> {
-    let columns = args.get("columns").and_then(Value::as_u64).map(|c| c.max(1) as usize);
+    let columns = args
+        .get("columns")
+        .and_then(Value::as_u64)
+        .map(|c| c.max(1) as usize);
     Ok(match opt_str(args, "layout") {
         None => None,
         Some("row") => Some(place::Pack::Row),
         Some("column") => Some(place::Pack::Column),
-        Some("grid") => Some(place::Pack::Grid(columns.unwrap_or_else(|| (n as f64).sqrt().ceil() as usize))),
+        Some("grid") => Some(place::Pack::Grid(
+            columns.unwrap_or_else(|| (n as f64).sqrt().ceil() as usize),
+        )),
         Some(other) => return Err(format!("layout is row, column or grid, not '{other}'.")),
     })
 }
 
 /// Turns collision on or off for items, when `collides` is given.
 fn collision_ops(args: &Value, items: &[&ItemRow], said: &mut Vec<String>) -> Vec<Op> {
-    let Some(on) = args.get("collides").and_then(Value::as_bool) else { return vec![] };
+    let Some(on) = args.get("collides").and_then(Value::as_bool) else {
+        return vec![];
+    };
     said.push(format!("collision {}", if on { "on" } else { "off" }));
-    items.iter().map(|i| Op::ItemCollides { item_id: Uuid::parse_str(&i.id).unwrap(), collides: on }).collect()
+    items
+        .iter()
+        .map(|i| Op::ItemCollides {
+            item_id: Uuid::parse_str(&i.id).unwrap(),
+            collides: on,
+        })
+        .collect()
 }
 
 /// Groups or frames items under a title and packs them together
@@ -1248,11 +1408,18 @@ fn collision_ops(args: &Value, items: &[&ItemRow], said: &mut Vec<String>) -> Ve
 async fn group_create(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, Fail> {
     let board = find_board(&app.db, arg_str(args, "board")?).await?;
     let b = BoardData::load(&app.db, &board).await?;
-    let refs: Vec<&str> = args.get("refs").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+    let refs: Vec<&str> = args
+        .get("refs")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
     if refs.is_empty() {
         return Err("refs is required: the items to group, e.g. [\"i1\", \"i2\", \"n4\"].".into());
     }
-    let items: Vec<&ItemRow> = refs.iter().map(|r| b.resolve_item(r)).collect::<Result<_, _>>()?;
+    let items: Vec<&ItemRow> = refs
+        .iter()
+        .map(|r| b.resolve_item(r))
+        .collect::<Result<_, _>>()?;
     let ids: Vec<&str> = items.iter().map(|i| i.id.as_str()).collect();
     let mut ops = vec![];
     // Out of any group they were in first, so every client's groups agree.
@@ -1261,13 +1428,22 @@ async fn group_create(app: &AppState, caller: &Caller, args: &Value) -> Result<O
     old.sort();
     old.dedup();
     for g in old {
-        let gone: Vec<String> = items.iter().filter(|i| i.group_id.as_deref() == Some(g)).map(|i| i.short_ref()).collect();
+        let gone: Vec<String> = items
+            .iter()
+            .filter(|i| i.group_id.as_deref() == Some(g))
+            .map(|i| i.short_ref())
+            .collect();
         if let Some(group) = b.groups.iter().find(|x| x.id == g) {
             left.push(format!("{} left {}", gone.join(", "), group.short_ref()));
         }
-        ops.push(Op::GroupMembers { group_id: Uuid::parse_str(g).unwrap(), member_ids: Some(group_members(&b, g, &[], &ids)) });
+        ops.push(Op::GroupMembers {
+            group_id: Uuid::parse_str(g).unwrap(),
+            member_ids: Some(group_members(&b, g, &[], &ids)),
+        });
     }
-    let how = pack_of(args, items.len())?.unwrap_or(place::Pack::Grid((items.len() as f64).sqrt().ceil() as usize));
+    let how = pack_of(args, items.len())?.unwrap_or(place::Pack::Grid(
+        (items.len() as f64).sqrt().ceil() as usize,
+    ));
     let mut args = args.clone();
     args.as_object_mut().map(|o| o.remove("in"));
     let (moves, said, _) = packed(app, &b, &items, &args, how).await?;
@@ -1280,11 +1456,19 @@ async fn group_create(app: &AppState, caller: &Caller, args: &Value) -> Result<O
         member_ids: Some(ids.iter().filter_map(|i| Uuid::parse_str(i).ok()).collect()),
         label: title.clone(),
         frame: Some(frame),
-        collides: Some(args.get("collides").and_then(Value::as_bool).unwrap_or(true)),
+        collides: Some(
+            args.get("collides")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
+        ),
     });
     let (revision, pushed) = commit_pushing(app, caller, b.id, ops).await?;
     let after = reload(app, &b).await?;
-    let g = after.groups.iter().find(|g| g.id == group_id.to_string()).ok_or("The group was made but could not be read back.")?;
+    let g = after
+        .groups
+        .iter()
+        .find(|g| g.id == group_id.to_string())
+        .ok_or("The group was made but could not be read back.")?;
     let names: Vec<String> = items.iter().map(|i| i.short_ref()).collect();
     let mut text = format!(
         "Grouped {} as {}{}{}, {said}.",
@@ -1312,10 +1496,16 @@ async fn arrange(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, F
         .map(|a| a.iter().filter_map(Value::as_str).collect())
         .unwrap_or_default();
     // The centerpiece (canvas/centerpiece): one item or group, or "" to clear.
-    let centerpiece = match args.get("centerpiece").and_then(Value::as_str).map(str::trim) {
+    let centerpiece = match args
+        .get("centerpiece")
+        .and_then(Value::as_str)
+        .map(str::trim)
+    {
         None => None,
         Some("") => Some(None),
-        Some(r) if r.trim().starts_with(['g', 'G']) => Some(Some(format!("group:{}", b.resolve_group(r)?.id))),
+        Some(r) if r.trim().starts_with(['g', 'G']) => {
+            Some(Some(format!("group:{}", b.resolve_group(r)?.id)))
+        }
         Some(r) => Some(Some(format!("item:{}", b.resolve_item(r)?.id))),
     };
     if refs.is_empty() && centerpiece.is_none() {
@@ -1331,7 +1521,10 @@ async fn arrange(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, F
     let mut placed: Vec<String> = vec![];
     if let Some(target) = centerpiece {
         said.push(match &target {
-            Some(_) => format!("{} is now the centerpiece: people open the board on it", opt_str(args, "centerpiece").unwrap_or("").trim()),
+            Some(_) => format!(
+                "{} is now the centerpiece: people open the board on it",
+                opt_str(args, "centerpiece").unwrap_or("").trim()
+            ),
             None => "the board has no centerpiece now".to_string(),
         });
         ops.push(Op::BoardCenterpiece { target });
@@ -1370,7 +1563,12 @@ async fn arrange(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, F
         let mut target = at.target;
         for i in &items {
             let ends = link_ends(&b, i);
-            let scene = Scene { obstacles: &taken, items: &rects, segments: &l.segments, group: None };
+            let scene = Scene {
+                obstacles: &taken,
+                items: &rects,
+                segments: &l.segments,
+                group: None,
+            };
             let spot = place::place_linked(
                 target,
                 if at.side == Side::Near && target != at.target {
@@ -1410,7 +1608,10 @@ async fn arrange(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, F
         said.push(format!("moved {}", at.said));
     }
     if ops.is_empty() {
-        return Err("Say where: near, below, right_of or in, a layout, collides — or out_of_group: true.".into());
+        return Err(
+            "Say where: near, below, right_of or in, a layout, collides — or out_of_group: true."
+                .into(),
+        );
     }
     let (revision, pushed) = commit_pushing(app, caller, b.id, ops).await?;
     let names: Vec<String> = items.iter().map(|i| i.short_ref()).collect();
@@ -1424,8 +1625,8 @@ async fn arrange(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, F
     }
     text.push_str(&moved_aside(&b, &pushed));
     Ok(Out::text(format!("{text} Board at rev {revision}."))
-    .with(json!({ "boardRevision": revision }))
-    .touch(b.id, items.first().map(|i| i.id.clone()), "editing"))
+        .with(json!({ "boardRevision": revision }))
+        .touch(b.id, items.first().map(|i| i.id.clone()), "editing"))
 }
 
 async fn item_delete(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, Fail> {

@@ -51,7 +51,8 @@ use crate::{AppState, NOW, new_id};
 const CSRF_COOKIE: &str = "XSRF-TOKEN";
 const CSRF_HEADER: &str = "x-xsrf-token";
 const REFUSED: &str = "that username and password do not match an account";
-const USERNAME_RULE: &str = "a username may hold lower-case letters, digits, dot, underscore and hyphen";
+const USERNAME_RULE: &str =
+    "a username may hold lower-case letters, digits, dot, underscore and hyphen";
 const MIN_PASSWORD_CHARS: usize = 12;
 /// Bounds the hashing work one request can ask for. argon2 has no 72-byte
 /// cliff the way bcrypt did, so this is about cost, not correctness.
@@ -69,16 +70,28 @@ pub struct CookieName {
     pub secure: &'static str,
 }
 
-pub const SESSION: CookieName = CookieName { plain: "VISARIUM_SESSION", secure: "__Host-visarium_session" };
-pub const SHARE: CookieName = CookieName { plain: "VISARIUM_SHARE", secure: "__Host-visarium_share" };
-pub const FLOW: CookieName = CookieName { plain: "VISARIUM_FLOW", secure: "__Host-visarium_flow" };
+pub const SESSION: CookieName = CookieName {
+    plain: "VISARIUM_SESSION",
+    secure: "__Host-visarium_session",
+};
+pub const SHARE: CookieName = CookieName {
+    plain: "VISARIUM_SHARE",
+    secure: "__Host-visarium_share",
+};
+pub const FLOW: CookieName = CookieName {
+    plain: "VISARIUM_FLOW",
+    secure: "__Host-visarium_flow",
+};
 
 /// Kept for the desktop app, which hands a session to its webview by name.
 pub const SESSION_COOKIE: &str = SESSION.plain;
 
 impl CookieName {
     pub fn read(&self, jar: &CookieJar) -> Option<String> {
-        jar.get(self.secure).or_else(|| jar.get(self.plain)).map(|c| c.value().to_string()).filter(|v| !v.is_empty())
+        jar.get(self.secure)
+            .or_else(|| jar.get(self.plain))
+            .map(|c| c.value().to_string())
+            .filter(|v| !v.is_empty())
     }
     pub fn set(&self, value: &str, secure: bool, max_age: i64) -> HeaderValue {
         let name = if secure { self.secure } else { self.plain };
@@ -92,14 +105,20 @@ impl CookieName {
     /// https would otherwise linger under its plain name.
     pub fn clear(&self, secure: bool) -> [HeaderValue; 2] {
         let gone = |name: &str, secure: bool| {
-            HeaderValue::from_str(&format!("{name}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{}", secure_attr(secure))).unwrap()
+            HeaderValue::from_str(&format!(
+                "{name}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{}",
+                secure_attr(secure)
+            ))
+            .unwrap()
         };
         [gone(self.plain, false), gone(self.secure, secure)]
     }
 }
 
 pub fn is_secure(headers: &HeaderMap) -> bool {
-    headers.get("x-forwarded-proto").is_some_and(|v| v.as_bytes().eq_ignore_ascii_case(b"https"))
+    headers
+        .get("x-forwarded-proto")
+        .is_some_and(|v| v.as_bytes().eq_ignore_ascii_case(b"https"))
 }
 
 fn secure_attr(secure: bool) -> &'static str {
@@ -122,23 +141,35 @@ pub struct User {
 const COLUMNS: &str = "id, username, display_name, is_admin AS admin, deactivated_at, created_at";
 
 pub async fn find_user(db: &SqlitePool, id: &str) -> sqlx::Result<Option<User>> {
-    sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {COLUMNS} FROM app_user WHERE id = ?"))).bind(id).fetch_optional(db).await
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLUMNS} FROM app_user WHERE id = ?"
+    )))
+    .bind(id)
+    .fetch_optional(db)
+    .await
 }
 
 pub async fn any_account(db: &SqlitePool) -> sqlx::Result<bool> {
-    sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM app_user)").fetch_one(db).await
+    sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM app_user)")
+        .fetch_one(db)
+        .await
 }
 
 /// The desktop app's implicit account: created once, admin, no password.
 pub async fn ensure_local_user(db: &SqlitePool) -> sqlx::Result<String> {
-    if let Some(id) = sqlx::query_scalar("SELECT id FROM app_user WHERE username = 'local'").fetch_optional(db).await? {
+    if let Some(id) = sqlx::query_scalar("SELECT id FROM app_user WHERE username = 'local'")
+        .fetch_optional(db)
+        .await?
+    {
         return Ok(id);
     }
     let id = new_id();
-    sqlx::query("INSERT INTO app_user (id, username, display_name, is_admin) VALUES (?, 'local', 'You', 1)")
-        .bind(&id)
-        .execute(db)
-        .await?;
+    sqlx::query(
+        "INSERT INTO app_user (id, username, display_name, is_admin) VALUES (?, 'local', 'You', 1)",
+    )
+    .bind(&id)
+    .execute(db)
+    .await?;
     Ok(id)
 }
 
@@ -295,7 +326,10 @@ async fn lookup(db: &SqlitePool, token: &str) -> sqlx::Result<Option<(SessionRow
     if touched {
         sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE session SET last_seen_at = {NOW}, expires_at = {} WHERE token_hash = ?2",
-            EXPIRY_SQL.replace("?2", "(SELECT expires_at FROM share_link WHERE id = session.share_id)")
+            EXPIRY_SQL.replace(
+                "?2",
+                "(SELECT expires_at FROM share_link WHERE id = session.share_id)"
+            )
         )))
         .bind(idle_offset(Kind::parse(&row.kind)))
         .bind(&row.token_hash)
@@ -306,12 +340,20 @@ async fn lookup(db: &SqlitePool, token: &str) -> sqlx::Result<Option<(SessionRow
 }
 
 pub async fn end_session(db: &SqlitePool, token_hash: &str) -> sqlx::Result<()> {
-    sqlx::query("DELETE FROM session WHERE token_hash = ?").bind(token_hash).execute(db).await.map(|_| ())
+    sqlx::query("DELETE FROM session WHERE token_hash = ?")
+        .bind(token_hash)
+        .execute(db)
+        .await
+        .map(|_| ())
 }
 
 /// Ends every session of one account except `keep` (a token hash): on
 /// password change (keep the caller's), deactivation and reset (keep none).
-pub async fn end_sessions_of(db: &SqlitePool, user_id: &str, keep: Option<&str>) -> sqlx::Result<()> {
+pub async fn end_sessions_of(
+    db: &SqlitePool,
+    user_id: &str,
+    keep: Option<&str>,
+) -> sqlx::Result<()> {
     sqlx::query("DELETE FROM session WHERE user_id = ? AND token_hash IS NOT ?")
         .bind(user_id)
         .bind(keep)
@@ -323,7 +365,11 @@ pub async fn end_sessions_of(db: &SqlitePool, user_id: &str, keep: Option<&str>)
 /// Deletes expired sessions, and invitations a month past their expiry (kept
 /// that long so a late click is told "expired" rather than "not valid").
 pub async fn sweep(db: &SqlitePool) -> sqlx::Result<()> {
-    sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM session WHERE expires_at <= {NOW}"))).execute(db).await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DELETE FROM session WHERE expires_at <= {NOW}"
+    )))
+    .execute(db)
+    .await?;
     sqlx::query("DELETE FROM invitation WHERE expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-30 days')")
         .execute(db)
         .await?;
@@ -333,16 +379,31 @@ pub async fn sweep(db: &SqlitePool) -> sqlx::Result<()> {
 /// "Safari on macOS": enough to recognise a session in the list, and no more
 /// of the user agent than that.
 pub fn browser_label(headers: &HeaderMap) -> String {
-    let ua = headers.get(header::USER_AGENT).and_then(|v| v.to_str().ok()).unwrap_or("");
-    let browser = [("Edg/", "Edge"), ("Firefox/", "Firefox"), ("Chrome/", "Chrome"), ("Safari/", "Safari")]
-        .iter()
-        .find(|(needle, _)| ua.contains(needle))
-        .map_or("A browser", |(_, name)| name);
-    let os = [("iPhone", "iOS"), ("iPad", "iPadOS"), ("Android", "Android"), ("Mac OS X", "macOS"), ("Windows", "Windows"), ("Linux", "Linux")]
-        .iter()
-        .find(|(needle, _)| ua.contains(needle))
-        .map(|(_, name)| format!(" on {name}"))
-        .unwrap_or_default();
+    let ua = headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let browser = [
+        ("Edg/", "Edge"),
+        ("Firefox/", "Firefox"),
+        ("Chrome/", "Chrome"),
+        ("Safari/", "Safari"),
+    ]
+    .iter()
+    .find(|(needle, _)| ua.contains(needle))
+    .map_or("A browser", |(_, name)| name);
+    let os = [
+        ("iPhone", "iOS"),
+        ("iPad", "iPadOS"),
+        ("Android", "Android"),
+        ("Mac OS X", "macOS"),
+        ("Windows", "Windows"),
+        ("Linux", "Linux"),
+    ]
+    .iter()
+    .find(|(needle, _)| ua.contains(needle))
+    .map(|(_, name)| format!(" on {name}"))
+    .unwrap_or_default();
     format!("{browser}{os}")
 }
 
@@ -374,11 +435,21 @@ impl LoginThrottle {
 pub enum Principal {
     Anonymous,
     Local(User),
-    Member { user: User, session: Session },
-    Viewer { link: ShareLink, session: Session },
+    Member {
+        user: User,
+        session: Session,
+    },
+    Viewer {
+        link: ShareLink,
+        session: Session,
+    },
     /// On `/mcp` only. Deliberately not a `user()`: nothing mounted under
     /// `require_user` can be reached with an agent token.
-    Agent { user: User, session: Session, label: String },
+    Agent {
+        user: User,
+        session: Session,
+        label: String,
+    },
 }
 
 impl Principal {
@@ -391,23 +462,33 @@ impl Principal {
     /// The session the request arrived with, member or viewer.
     pub fn session_hash(&self) -> Option<&str> {
         match self {
-            Principal::Member { session, .. } | Principal::Viewer { session, .. } | Principal::Agent { session, .. } => {
-                Some(&session.token_hash)
-            }
+            Principal::Member { session, .. }
+            | Principal::Viewer { session, .. }
+            | Principal::Agent { session, .. } => Some(&session.token_hash),
             _ => None,
         }
     }
 }
 
 fn is_loopback_host(headers: &HeaderMap) -> bool {
-    let Some(host) = headers.get(header::HOST).and_then(|h| h.to_str().ok()) else { return false };
-    let name = host.rsplit_once(':').map_or(host, |(name, port)| if port.ends_with(']') { host } else { name });
+    let Some(host) = headers.get(header::HOST).and_then(|h| h.to_str().ok()) else {
+        return false;
+    };
+    let name = host.rsplit_once(':').map_or(
+        host,
+        |(name, port)| if port.ends_with(']') { host } else { name },
+    );
     matches!(name, "127.0.0.1" | "localhost" | "[::1]")
 }
 
 /// Resolves the caller once per request. A renewed session gets its cookie
 /// renewed too, so an active session's cookie never runs out before it does.
-pub async fn session_layer(State(app): State<AppState>, jar: CookieJar, mut req: Request, next: Next) -> Response {
+pub async fn session_layer(
+    State(app): State<AppState>,
+    jar: CookieJar,
+    mut req: Request,
+    next: Next,
+) -> Response {
     if let Some(local) = &app.local_user {
         // Single-user mode has no password between a request and the library,
         // so a page that resolves some hostname to 127.0.0.1 (DNS rebinding)
@@ -443,7 +524,14 @@ pub async fn session_layer(State(app): State<AppState>, jar: CookieJar, mut req:
         if touched && kind == Kind::Browser {
             renew = Some(SESSION.set(&token, secure, kind.idle_secs()));
         }
-        principal = Principal::Member { user, session: Session { id: row.id, token_hash: row.token_hash, kind } };
+        principal = Principal::Member {
+            user,
+            session: Session {
+                id: row.id,
+                token_hash: row.token_hash,
+                kind,
+            },
+        };
     } else if let Some(token) = SHARE.read(&jar)
         && let Ok(Some((row, touched))) = lookup(&app.db, &token).await
         && let Some(share_id) = &row.share_id
@@ -452,14 +540,29 @@ pub async fn session_layer(State(app): State<AppState>, jar: CookieJar, mut req:
         if touched {
             renew = Some(SHARE.set(&token, secure, SHARE_SESSION_IDLE_SECS));
         }
-        principal = Principal::Viewer { link, session: Session { id: row.id, token_hash: row.token_hash, kind: Kind::Share } };
+        principal = Principal::Viewer {
+            link,
+            session: Session {
+                id: row.id,
+                token_hash: row.token_hash,
+                kind: Kind::Share,
+            },
+        };
     }
     req.extensions_mut().insert(principal);
     let mut response = next.run(req).await;
     // A handler that set its own session cookie (sign-in, sign-out) wins.
-    let own = |c: &HeaderValue| [SESSION.plain, SESSION.secure, SHARE.plain, SHARE.secure].iter().any(|n| c.as_bytes().starts_with(n.as_bytes()));
+    let own = |c: &HeaderValue| {
+        [SESSION.plain, SESSION.secure, SHARE.plain, SHARE.secure]
+            .iter()
+            .any(|n| c.as_bytes().starts_with(n.as_bytes()))
+    };
     if let Some(cookie) = renew
-        && !response.headers().get_all(header::SET_COOKIE).iter().any(own)
+        && !response
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .any(own)
     {
         response.headers_mut().append(header::SET_COOKIE, cookie);
     }
@@ -475,10 +578,15 @@ async fn agent_principal(db: &SqlitePool, headers: &HeaderMap) -> Principal {
     let token = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer ")))
+        .and_then(|v| {
+            v.strip_prefix("Bearer ")
+                .or_else(|| v.strip_prefix("bearer "))
+        })
         .map(str::trim)
         .filter(|t| !t.is_empty());
-    let Some(token) = token else { return Principal::Anonymous };
+    let Some(token) = token else {
+        return Principal::Anonymous;
+    };
     let row: Option<(String, String, String, Option<String>)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT id, token_hash, user_id, label FROM session WHERE token_hash = ? AND kind = 'agent' AND expires_at > {NOW}"
     )))
@@ -487,8 +595,12 @@ async fn agent_principal(db: &SqlitePool, headers: &HeaderMap) -> Principal {
     .await
     .ok()
     .flatten();
-    let Some((id, token_hash, user_id, label)) = row else { return Principal::Anonymous };
-    let Ok(Some(user)) = find_user(db, &user_id).await else { return Principal::Anonymous };
+    let Some((id, token_hash, user_id, label)) = row else {
+        return Principal::Anonymous;
+    };
+    let Ok(Some(user)) = find_user(db, &user_id).await else {
+        return Principal::Anonymous;
+    };
     if user.deactivated_at.is_some() {
         return Principal::Anonymous;
     }
@@ -501,17 +613,29 @@ async fn agent_principal(db: &SqlitePool, headers: &HeaderMap) -> Principal {
     .bind(&token_hash)
     .execute(db)
     .await;
-    Principal::Agent { user, session: Session { id, token_hash, kind: Kind::Agent }, label: label.unwrap_or_else(|| "Agent".into()) }
+    Principal::Agent {
+        user,
+        session: Session {
+            id,
+            token_hash,
+            kind: Kind::Agent,
+        },
+        label: label.unwrap_or_else(|| "Agent".into()),
+    }
 }
 
 pub async fn require_user(mut req: Request, next: Next) -> Response {
-    let user = req.extensions().get::<Principal>().and_then(|p| p.user().cloned());
+    let user = req
+        .extensions()
+        .get::<Principal>()
+        .and_then(|p| p.user().cloned());
     match user {
         Some(user) => {
             req.extensions_mut().insert(user);
             next.run(req).await
         }
-        None => ApiError::unauthorized("this request needs an account; sign in and try again").into_response(),
+        None => ApiError::unauthorized("this request needs an account; sign in and try again")
+            .into_response(),
     }
 }
 
@@ -519,9 +643,11 @@ pub async fn require_viewer(mut req: Request, next: Next) -> Response {
     let link = match req.extensions().get::<Principal>() {
         Some(Principal::Viewer { link, .. }) => link.clone(),
         _ => {
-            return ApiError::unauthorized("this link is no longer active; ask whoever shared it for a new one")
-                .titled("Link not active")
-                .into_response();
+            return ApiError::unauthorized(
+                "this link is no longer active; ask whoever shared it for a new one",
+            )
+            .titled("Link not active")
+            .into_response();
         }
     };
     req.extensions_mut().insert(link);
@@ -532,7 +658,10 @@ pub async fn require_viewer(mut req: Request, next: Next) -> Response {
 /// refuses an unsafe request whose header does not echo it.
 pub async fn csrf_layer(jar: CookieJar, req: Request, next: Next) -> Response {
     let cookie = jar.get(CSRF_COOKIE).map(|c| c.value().to_string());
-    let safe = matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS | Method::TRACE);
+    let safe = matches!(
+        *req.method(),
+        Method::GET | Method::HEAD | Method::OPTIONS | Method::TRACE
+    );
     // `/mcp` reads no cookie, so there is no ambient credential to forge a
     // request with; it checks Origin and content type itself (agent::mcp).
     if !safe && req.uri().path() != MCP_PATH {
@@ -547,8 +676,14 @@ pub async fn csrf_layer(jar: CookieJar, req: Request, next: Next) -> Response {
     let secure = is_secure(req.headers());
     let mut response = next.run(req).await;
     if cookie.is_none() {
-        let value = format!("{CSRF_COOKIE}={}; Path=/; SameSite=Lax{}", random_token(), secure_attr(secure));
-        response.headers_mut().append(header::SET_COOKIE, HeaderValue::from_str(&value).unwrap());
+        let value = format!(
+            "{CSRF_COOKIE}={}; Path=/; SameSite=Lax{}",
+            random_token(),
+            secure_attr(secure)
+        );
+        response
+            .headers_mut()
+            .append(header::SET_COOKIE, HeaderValue::from_str(&value).unwrap());
     }
     response
 }
@@ -557,10 +692,14 @@ pub async fn csrf_layer(jar: CookieJar, req: Request, next: Next) -> Response {
 
 pub fn require_valid_password(password: &str) -> ApiResult<()> {
     if password.chars().count() < MIN_PASSWORD_CHARS {
-        return Err(ApiError::bad_request(format!("a password must be at least {MIN_PASSWORD_CHARS} characters")));
+        return Err(ApiError::bad_request(format!(
+            "a password must be at least {MIN_PASSWORD_CHARS} characters"
+        )));
     }
     if password.len() > MAX_PASSWORD_BYTES {
-        return Err(ApiError::bad_request(format!("a password must be at most {MAX_PASSWORD_BYTES} bytes")));
+        return Err(ApiError::bad_request(format!(
+            "a password must be at most {MAX_PASSWORD_BYTES} bytes"
+        )));
     }
     Ok(())
 }
@@ -576,7 +715,9 @@ fn argon2() -> argon2::Argon2<'static> {
 pub async fn hash_password(password: String) -> ApiResult<String> {
     use argon2::password_hash::PasswordHasher;
     tokio::task::spawn_blocking(move || {
-        argon2().hash_password(password.as_bytes()).map(|h| format!("{{argon2id}}{h}"))
+        argon2()
+            .hash_password(password.as_bytes())
+            .map(|h| format!("{{argon2id}}{h}"))
     })
     .await
     .map_err(|e| ApiError::internal(e.to_string()))?
@@ -600,15 +741,23 @@ pub async fn verify_password(password: String, stored: Option<String>) -> Verifi
     tokio::task::spawn_blocking(move || {
         let stored = stored.unwrap_or_default();
         if let Some(phc) = stored.strip_prefix("{argon2id}") {
-            let ok = PasswordHash::new(phc).is_ok_and(|h| argon2().verify_password(password.as_bytes(), &h).is_ok());
+            let ok = PasswordHash::new(phc)
+                .is_ok_and(|h| argon2().verify_password(password.as_bytes(), &h).is_ok());
             return if ok { Verified::Yes } else { Verified::No };
         }
         if let Some(hash) = stored.strip_prefix("{bcrypt}") {
-            return if bcrypt::verify(&password, hash).unwrap_or(false) { Verified::YesRehash } else { Verified::No };
+            return if bcrypt::verify(&password, hash).unwrap_or(false) {
+                Verified::YesRehash
+            } else {
+                Verified::No
+            };
         }
         let dummy = DUMMY.get_or_init(|| {
             use argon2::password_hash::PasswordHasher;
-            argon2().hash_password(b"not-a-password").unwrap().to_string()
+            argon2()
+                .hash_password(b"not-a-password")
+                .unwrap()
+                .to_string()
         });
         let _ = argon2().verify_password(password.as_bytes(), &PasswordHash::new(dummy).unwrap());
         Verified::No
@@ -625,7 +774,9 @@ pub fn bcrypt_hash_for_tests(password: &str) -> String {
 // --- validation -------------------------------------------------------------
 
 pub fn require_username(username: &str) -> ApiResult<()> {
-    let ok_chars = username.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"._-".contains(&b));
+    let ok_chars = username
+        .bytes()
+        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"._-".contains(&b));
     if !(2..=64).contains(&username.len()) || !ok_chars {
         return Err(ApiError::bad_request(USERNAME_RULE));
     }
@@ -634,14 +785,17 @@ pub fn require_username(username: &str) -> ApiResult<()> {
 
 pub fn require_display_name(name: &str) -> ApiResult<()> {
     if name.trim().is_empty() || name.chars().count() > 64 {
-        return Err(ApiError::bad_request("a display name must be 1–64 characters"));
+        return Err(ApiError::bad_request(
+            "a display name must be 1–64 characters",
+        ));
     }
     Ok(())
 }
 
 fn taken(e: sqlx::Error) -> ApiError {
     if is_unique_violation(&e) {
-        ApiError::conflict("an account with this username already exists").titled("That username is taken")
+        ApiError::conflict("an account with this username already exists")
+            .titled("That username is taken")
     } else {
         e.into()
     }
@@ -656,7 +810,12 @@ pub async fn current(
     let user = principal.user();
     let setup_required = user.is_none() && !any_account(&app.db).await?;
     let multi = app.local_user.is_none();
-    let providers: Vec<_> = app.oidc.iter().filter(|_| multi).map(|p| json!({ "id": p.id, "name": p.name })).collect();
+    let providers: Vec<_> = app
+        .oidc
+        .iter()
+        .filter(|_| multi)
+        .map(|p| json!({ "id": p.id, "name": p.name }))
+        .collect();
     // `singleUser`: there is no sign-in to return to, so the SPA hides Sign out.
     Ok(axum::Json(json!({
         "setupRequired": setup_required,
@@ -683,7 +842,9 @@ pub struct Credentials {
 
 pub fn require_password_sign_in(app: &AppState) -> ApiResult<()> {
     if app.config.password_disabled {
-        return Err(ApiError::not_found("password sign-in is turned off on this instance; use a sign-in provider"));
+        return Err(ApiError::not_found(
+            "password sign-in is turned off on this instance; use a sign-in provider",
+        ));
     }
     Ok(())
 }
@@ -695,7 +856,11 @@ pub async fn sign_in(
     Json(body): Json<Credentials>,
 ) -> ApiResult<Response> {
     require_password_sign_in(&app)?;
-    if body.username.trim().is_empty() || body.password.is_empty() || body.username.len() > 200 || body.password.len() > MAX_PASSWORD_BYTES {
+    if body.username.trim().is_empty()
+        || body.password.is_empty()
+        || body.username.len() > 200
+        || body.password.len() > MAX_PASSWORD_BYTES
+    {
         return Err(ApiError::bad_request("username and password are required"));
     }
     tokio::time::sleep(app.throttle.delay(&body.username)).await;
@@ -716,13 +881,29 @@ pub async fn sign_in(
     app.throttle.succeeded(&body.username);
     if verified == Verified::YesRehash {
         let upgraded = hash_password(body.password).await?;
-        sqlx::query("UPDATE app_user SET password_hash = ? WHERE id = ?").bind(upgraded).bind(&id).execute(&app.db).await?;
+        sqlx::query("UPDATE app_user SET password_hash = ? WHERE id = ?")
+            .bind(upgraded)
+            .bind(&id)
+            .execute(&app.db)
+            .await?;
     }
     let (kind, label) = match body.device {
-        Some(d) => (Kind::Device, d.label.unwrap_or_else(|| "Visarium Desktop".into())),
+        Some(d) => (
+            Kind::Device,
+            d.label.unwrap_or_else(|| "Visarium Desktop".into()),
+        ),
         None => (Kind::Browser, browser_label(&headers)),
     };
-    establish(&app, &headers, principal.session_hash(), &id, kind, &label, StatusCode::OK).await
+    establish(
+        &app,
+        &headers,
+        principal.session_hash(),
+        &id,
+        kind,
+        &label,
+        StatusCode::OK,
+    )
+    .await
 }
 
 /// A new token on every sign-in (no session fixation), replacing whatever
@@ -737,15 +918,26 @@ pub async fn establish(
     status: StatusCode,
 ) -> ApiResult<Response> {
     let token = start_session(app, previous, user_id, kind, label).await?;
-    let user = find_user(&app.db, user_id).await?.ok_or_else(|| ApiError::internal("account vanished"))?;
+    let user = find_user(&app.db, user_id)
+        .await?
+        .ok_or_else(|| ApiError::internal("account vanished"))?;
     let mut response = (status, axum::Json(user)).into_response();
-    response.headers_mut().append(header::SET_COOKIE, SESSION.set(&token, is_secure(headers), kind.idle_secs()));
+    response.headers_mut().append(
+        header::SET_COOKIE,
+        SESSION.set(&token, is_secure(headers), kind.idle_secs()),
+    );
     Ok(response)
 }
 
 /// The part of `establish` a redirecting flow (OIDC) needs: the token, to put
 /// in a cookie on a 302 rather than a JSON body.
-pub async fn start_session(app: &AppState, previous: Option<&str>, user_id: &str, kind: Kind, label: &str) -> ApiResult<String> {
+pub async fn start_session(
+    app: &AppState,
+    previous: Option<&str>,
+    user_id: &str,
+    kind: Kind,
+    label: &str,
+) -> ApiResult<String> {
     if let Some(old) = previous {
         end_session(&app.db, old).await?;
     }
@@ -792,7 +984,16 @@ pub async fn claim(
     let mut tx = app.db.begin().await?;
     let user = claim_in(&mut tx, &body.username, &body.display_name, Some(&hash)).await?;
     tx.commit().await?;
-    establish(&app, &headers, principal.session_hash(), &user.id, Kind::Browser, &browser_label(&headers), StatusCode::CREATED).await
+    establish(
+        &app,
+        &headers,
+        principal.session_hash(),
+        &user.id,
+        Kind::Browser,
+        &browser_label(&headers),
+        StatusCode::CREATED,
+    )
+    .await
 }
 
 /// The first admin, inside the caller's transaction and under `setup_lock`.
@@ -803,7 +1004,9 @@ pub async fn claim_in(
     display_name: &str,
     password_hash: Option<&str>,
 ) -> ApiResult<User> {
-    let exists: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM app_user)").fetch_one(&mut **tx).await?;
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM app_user)")
+        .fetch_one(&mut **tx)
+        .await?;
     if exists {
         return Err(ApiError::conflict("this instance already has an account"));
     }
@@ -832,16 +1035,29 @@ pub fn account_routes() -> Router<AppState> {
 }
 
 pub fn require_admin(user: &User) -> ApiResult<()> {
-    if user.admin { Ok(()) } else { Err(ApiError::forbidden("this account may not do that").titled("Not allowed")) }
+    if user.admin {
+        Ok(())
+    } else {
+        Err(ApiError::forbidden("this account may not do that").titled("Not allowed"))
+    }
 }
 
 fn gone(id: impl std::fmt::Display) -> ApiError {
     ApiError::not_found(format!("no account {id}"))
 }
 
-async fn list_accounts(State(app): State<AppState>, axum::Extension(me): axum::Extension<User>) -> ApiResult<axum::Json<Vec<User>>> {
+async fn list_accounts(
+    State(app): State<AppState>,
+    axum::Extension(me): axum::Extension<User>,
+) -> ApiResult<axum::Json<Vec<User>>> {
     require_admin(&me)?;
-    Ok(axum::Json(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {COLUMNS} FROM app_user ORDER BY created_at"))).fetch_all(&app.db).await?))
+    Ok(axum::Json(
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT {COLUMNS} FROM app_user ORDER BY created_at"
+        )))
+        .fetch_all(&app.db)
+        .await?,
+    ))
 }
 
 #[derive(Deserialize)]
@@ -856,9 +1072,17 @@ async fn edit_self(
     axum::Extension(me): axum::Extension<User>,
     Json(body): Json<SelfEdit>,
 ) -> ApiResult<axum::Json<User>> {
-    if let Some(name) = body.display_name.as_deref().filter(|n| !n.trim().is_empty()) {
+    if let Some(name) = body
+        .display_name
+        .as_deref()
+        .filter(|n| !n.trim().is_empty())
+    {
         require_display_name(name)?;
-        sqlx::query("UPDATE app_user SET display_name = ? WHERE id = ?").bind(name.trim()).bind(&me.id).execute(&app.db).await?;
+        sqlx::query("UPDATE app_user SET display_name = ? WHERE id = ?")
+            .bind(name.trim())
+            .bind(&me.id)
+            .execute(&app.db)
+            .await?;
     }
     if let Some(username) = body.username.as_deref().filter(|u| *u != me.username) {
         require_username(username)?;
@@ -869,7 +1093,11 @@ async fn edit_self(
             .await
             .map_err(taken)?;
     }
-    Ok(axum::Json(find_user(&app.db, &me.id).await?.ok_or_else(|| gone(&me.id))?))
+    Ok(axum::Json(
+        find_user(&app.db, &me.id)
+            .await?
+            .ok_or_else(|| gone(&me.id))?,
+    ))
 }
 
 #[derive(Deserialize)]
@@ -890,13 +1118,20 @@ async fn change_password(
 ) -> ApiResult<StatusCode> {
     require_password_sign_in(&app)?;
     let stored: Option<String> =
-        sqlx::query_scalar("SELECT password_hash FROM app_user WHERE id = ?").bind(&me.id).fetch_one(&app.db).await?;
+        sqlx::query_scalar("SELECT password_hash FROM app_user WHERE id = ?")
+            .bind(&me.id)
+            .fetch_one(&app.db)
+            .await?;
     if stored.is_some() && verify_password(body.current_password, stored).await == Verified::No {
         return Err(ApiError::forbidden("that is not your current password"));
     }
     require_valid_password(&body.new_password)?;
     let hash = hash_password(body.new_password).await?;
-    sqlx::query("UPDATE app_user SET password_hash = ? WHERE id = ?").bind(hash).bind(&me.id).execute(&app.db).await?;
+    sqlx::query("UPDATE app_user SET password_hash = ? WHERE id = ?")
+        .bind(hash)
+        .bind(&me.id)
+        .execute(&app.db)
+        .await?;
     end_sessions_of(&app.db, &me.id, principal.session_hash()).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -907,8 +1142,11 @@ async fn require_another_admin_besides(db: &SqlitePool, target: &User) -> ApiRes
     if !target.admin || target.deactivated_at.is_some() {
         return Ok(());
     }
-    let admins: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM app_user WHERE is_admin AND deactivated_at IS NULL").fetch_one(db).await?;
+    let admins: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM app_user WHERE is_admin AND deactivated_at IS NULL",
+    )
+    .fetch_one(db)
+    .await?;
     if admins > 1 {
         return Ok(());
     }
@@ -935,8 +1173,14 @@ async fn set_admin(
     if !body.granted {
         require_another_admin_besides(&app.db, &target).await?;
     }
-    sqlx::query("UPDATE app_user SET is_admin = ? WHERE id = ?").bind(body.granted).bind(&id).execute(&app.db).await?;
-    Ok(axum::Json(find_user(&app.db, &id).await?.ok_or_else(|| gone(&id))?))
+    sqlx::query("UPDATE app_user SET is_admin = ? WHERE id = ?")
+        .bind(body.granted)
+        .bind(&id)
+        .execute(&app.db)
+        .await?;
+    Ok(axum::Json(
+        find_user(&app.db, &id).await?.ok_or_else(|| gone(&id))?,
+    ))
 }
 
 async fn deactivate(
@@ -948,12 +1192,16 @@ async fn deactivate(
     let id = id.to_string();
     let target = find_user(&app.db, &id).await?.ok_or_else(|| gone(&id))?;
     require_another_admin_besides(&app.db, &target).await?;
-    sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE app_user SET deactivated_at = coalesce(deactivated_at, {NOW}) WHERE id = ?")))
-        .bind(&id)
-        .execute(&app.db)
-        .await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "UPDATE app_user SET deactivated_at = coalesce(deactivated_at, {NOW}) WHERE id = ?"
+    )))
+    .bind(&id)
+    .execute(&app.db)
+    .await?;
     end_sessions_of(&app.db, &id, None).await?;
-    Ok(axum::Json(find_user(&app.db, &id).await?.ok_or_else(|| gone(&id))?))
+    Ok(axum::Json(
+        find_user(&app.db, &id).await?.ok_or_else(|| gone(&id))?,
+    ))
 }
 
 // --- my sessions ------------------------------------------------------------
@@ -1011,11 +1259,13 @@ async fn end_other_sessions(
 ) -> ApiResult<StatusCode> {
     // Agent tokens are listed and revoked in their own place, not here. A
     // password change still ends them (end_sessions_of): that is a reset.
-    sqlx::query("DELETE FROM session WHERE user_id = ? AND token_hash IS NOT ? AND kind <> 'agent'")
-        .bind(&me.id)
-        .bind(principal.session_hash())
-        .execute(&app.db)
-        .await?;
+    sqlx::query(
+        "DELETE FROM session WHERE user_id = ? AND token_hash IS NOT ? AND kind <> 'agent'",
+    )
+    .bind(&me.id)
+    .bind(principal.session_hash())
+    .execute(&app.db)
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1033,7 +1283,12 @@ mod tests {
                 .unwrap(),
         );
         assert_eq!(browser_label(&h), "Safari on macOS");
-        h.insert(header::USER_AGENT, "Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 Chrome/130.0 Safari/537.36 Edg/130.0".parse().unwrap());
+        h.insert(
+            header::USER_AGENT,
+            "Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 Chrome/130.0 Safari/537.36 Edg/130.0"
+                .parse()
+                .unwrap(),
+        );
         assert_eq!(browser_label(&h), "Edge on Windows");
         assert_eq!(browser_label(&HeaderMap::new()), "A browser");
     }
@@ -1042,10 +1297,19 @@ mod tests {
     async fn passwords_verify_and_bcrypt_asks_for_a_rehash() {
         let hash = hash_password("correct horse battery".into()).await.unwrap();
         assert!(hash.starts_with("{argon2id}$argon2id$v=19$"));
-        assert_eq!(verify_password("correct horse battery".into(), Some(hash.clone())).await, Verified::Yes);
-        assert_eq!(verify_password("correct horse batterz".into(), Some(hash)).await, Verified::No);
+        assert_eq!(
+            verify_password("correct horse battery".into(), Some(hash.clone())).await,
+            Verified::Yes
+        );
+        assert_eq!(
+            verify_password("correct horse batterz".into(), Some(hash)).await,
+            Verified::No
+        );
         let old = bcrypt_hash_for_tests("correct horse battery");
-        assert_eq!(verify_password("correct horse battery".into(), Some(old)).await, Verified::YesRehash);
+        assert_eq!(
+            verify_password("correct horse battery".into(), Some(old)).await,
+            Verified::YesRehash
+        );
         assert_eq!(verify_password("anything".into(), None).await, Verified::No);
     }
 }

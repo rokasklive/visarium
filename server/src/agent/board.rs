@@ -208,7 +208,11 @@ impl BoardData {
     /// Whether the board pushes this item aside: its group's setting, or its
     /// own when it has none (canvas/collision).
     pub fn collides(&self, i: &ItemRow) -> bool {
-        match i.group_id.as_deref().and_then(|g| self.groups.iter().find(|x| x.id == g)) {
+        match i
+            .group_id
+            .as_deref()
+            .and_then(|g| self.groups.iter().find(|x| x.id == g))
+        {
             Some(g) => g.collides,
             None => i.collides,
         }
@@ -305,7 +309,11 @@ impl BoardData {
         let (kind, id) = self.centerpiece.as_deref()?.split_once(':')?;
         match kind {
             "group" => self.group(id).map(Group::short_ref),
-            _ => self.items.iter().find(|i| i.id == id).map(ItemRow::short_ref),
+            _ => self
+                .items
+                .iter()
+                .find(|i| i.id == id)
+                .map(ItemRow::short_ref),
         }
     }
 
@@ -360,7 +368,11 @@ impl BoardData {
                 return Err(format!(
                     "{} has no passage '{element}'. Its passages: {}. To point at a paragraph, end it with ` ^name` (item_edit), then link {}#^name.",
                     item.short_ref(),
-                    if names.is_empty() { "none".into() } else { names.join(", ") },
+                    if names.is_empty() {
+                        "none".into()
+                    } else {
+                        names.join(", ")
+                    },
                     item.short_ref()
                 ));
             }
@@ -375,7 +387,11 @@ impl BoardData {
                     if tasks.is_empty() {
                         "none".into()
                     } else {
-                        tasks.iter().map(|t| t.id.as_str()).collect::<Vec<_>>().join(", ")
+                        tasks
+                            .iter()
+                            .map(|t| t.id.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     }
                 ));
             }
@@ -424,7 +440,11 @@ impl BoardData {
         };
         if let Some(note) = self.item(item_id).filter(|i| i.kind == "note") {
             let names = crate::agent::blocks::block_names(note.body.as_deref().unwrap_or(""));
-            return if names.iter().any(|n| n == element) { Anchored::Whole } else { Anchored::Broken };
+            return if names.iter().any(|n| n == element) {
+                Anchored::Whole
+            } else {
+                Anchored::Broken
+            };
         }
         if let Some(list) = self.item(item_id).filter(|i| i.kind == "checklist") {
             return match self.checklist(list) {

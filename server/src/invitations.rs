@@ -26,7 +26,9 @@ pub const RESET_SECS: i64 = 86_400;
 
 /// Admin-only: make, list and revoke.
 pub fn admin_routes() -> Router<AppState> {
-    Router::new().route("/invitations", get(list).post(create)).route("/invitations/{id}", delete(revoke))
+    Router::new()
+        .route("/invitations", get(list).post(create))
+        .route("/invitations/{id}", delete(revoke))
 }
 
 /// Open: what a link is, and redeeming it.
@@ -70,18 +72,32 @@ async fn create(
     Json(body): Json<NewInvitation>,
 ) -> ApiResult<(StatusCode, axum::Json<serde_json::Value>)> {
     auth::require_admin(&me)?;
-    let note = body.note.as_deref().map(str::trim).filter(|n| !n.is_empty()).map(|n| n.chars().take(120).collect::<String>());
+    let note = body
+        .note
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .map(|n| n.chars().take(120).collect::<String>());
     let (purpose, user_id, secs) = match body.purpose.as_deref().unwrap_or("join") {
         "join" => ("join", None, JOIN_SECS),
         "reset" => {
-            let id = body.user_id.ok_or_else(|| ApiError::bad_request("a reset link needs the account it resets"))?.to_string();
-            let user = auth::find_user(&app.db, &id).await?.ok_or_else(|| ApiError::not_found(format!("no account {id}")))?;
+            let id = body
+                .user_id
+                .ok_or_else(|| ApiError::bad_request("a reset link needs the account it resets"))?
+                .to_string();
+            let user = auth::find_user(&app.db, &id)
+                .await?
+                .ok_or_else(|| ApiError::not_found(format!("no account {id}")))?;
             if user.deactivated_at.is_some() {
                 return Err(ApiError::conflict("that account is deactivated"));
             }
             ("reset", Some(id), RESET_SECS)
         }
-        other => return Err(ApiError::bad_request(format!("'{other}' is not an invitation purpose; use join or reset"))),
+        other => {
+            return Err(ApiError::bad_request(format!(
+                "'{other}' is not an invitation purpose; use join or reset"
+            )));
+        }
     };
     let token = auth::random_token();
     let id = new_id();
@@ -99,7 +115,11 @@ async fn create(
     .bind(format!("+{secs} seconds"))
     .execute(&app.db)
     .await?;
-    let view: InvitationView = sqlx::query_as(sqlx::AssertSqlSafe(format!("{VIEW_SQL} WHERE i.id = ?"))).bind(&id).fetch_one(&app.db).await?;
+    let view: InvitationView =
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{VIEW_SQL} WHERE i.id = ?")))
+            .bind(&id)
+            .fetch_one(&app.db)
+            .await?;
     // The only time the token exists outside the invitee's hands.
     let mut out = serde_json::to_value(view).unwrap();
     out["link"] = json!(format!("/invite#{token}"));
@@ -107,18 +127,30 @@ async fn create(
 }
 
 /// Unused and unexpired, newest first.
-async fn list(State(app): State<AppState>, axum::Extension(me): axum::Extension<User>) -> ApiResult<axum::Json<Vec<InvitationView>>> {
+async fn list(
+    State(app): State<AppState>,
+    axum::Extension(me): axum::Extension<User>,
+) -> ApiResult<axum::Json<Vec<InvitationView>>> {
     auth::require_admin(&me)?;
     Ok(axum::Json(
-        sqlx::query_as(sqlx::AssertSqlSafe(format!("{VIEW_SQL} WHERE i.used_at IS NULL AND i.expires_at > {NOW} ORDER BY i.created_at DESC")))
-            .fetch_all(&app.db)
-            .await?,
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "{VIEW_SQL} WHERE i.used_at IS NULL AND i.expires_at > {NOW} ORDER BY i.created_at DESC"
+        )))
+        .fetch_all(&app.db)
+        .await?,
     ))
 }
 
-async fn revoke(State(app): State<AppState>, axum::Extension(me): axum::Extension<User>, Path(id): Path<Uuid>) -> ApiResult<StatusCode> {
+async fn revoke(
+    State(app): State<AppState>,
+    axum::Extension(me): axum::Extension<User>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<StatusCode> {
     auth::require_admin(&me)?;
-    let done = sqlx::query("DELETE FROM invitation WHERE id = ? AND used_at IS NULL").bind(id.to_string()).execute(&app.db).await?;
+    let done = sqlx::query("DELETE FROM invitation WHERE id = ? AND used_at IS NULL")
+        .bind(id.to_string())
+        .execute(&app.db)
+        .await?;
     if done.rows_affected() == 0 {
         return Err(ApiError::not_found(format!("no unused invitation {id}")));
     }
@@ -139,7 +171,10 @@ struct Row {
     expired: bool,
 }
 
-async fn find<'e>(db: impl sqlx::SqliteExecutor<'e>, token_hash: &str) -> sqlx::Result<Option<Row>> {
+async fn find<'e>(
+    db: impl sqlx::SqliteExecutor<'e>,
+    token_hash: &str,
+) -> sqlx::Result<Option<Row>> {
     sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT id, purpose, user_id, admin, note, expires_at, used_at IS NOT NULL AS used, expires_at <= {NOW} AS expired \
            FROM invitation WHERE token_hash = ?"
@@ -152,13 +187,23 @@ async fn find<'e>(db: impl sqlx::SqliteExecutor<'e>, token_hash: &str) -> sqlx::
 /// The three ways a link can be dead, each with a code the SPA words, and the
 /// same codes `oidc.rs` puts on its error redirect.
 fn usable(row: Option<Row>, purpose: &str) -> ApiResult<Row> {
-    let dead = |code: &str, detail: &str| ApiError::new(StatusCode::GONE, detail).titled("Link not usable").with("code", json!(code));
+    let dead = |code: &str, detail: &str| {
+        ApiError::new(StatusCode::GONE, detail)
+            .titled("Link not usable")
+            .with("code", json!(code))
+    };
     match row {
         Some(r) if r.purpose != purpose => Err(dead("invite-invalid", "this link is not valid")),
         Some(r) if r.used => Err(dead("invite-used", "this link has already been used")),
-        Some(r) if r.expired => Err(dead("invite-expired", "this link has expired; ask an admin for a new one")),
+        Some(r) if r.expired => Err(dead(
+            "invite-expired",
+            "this link has expired; ask an admin for a new one",
+        )),
         Some(r) => Ok(r),
-        None => Err(dead("invite-invalid", "this link is not valid; it may have been revoked")),
+        None => Err(dead(
+            "invite-invalid",
+            "this link is not valid; it may have been revoked",
+        )),
     }
 }
 
@@ -179,7 +224,10 @@ struct TokenBody {
 
 /// What the `/invite` page needs to draw itself: join or reset, and for
 /// whom. Says why a dead link is dead.
-async fn inspect(State(app): State<AppState>, Json(body): Json<TokenBody>) -> ApiResult<axum::Json<serde_json::Value>> {
+async fn inspect(
+    State(app): State<AppState>,
+    Json(body): Json<TokenBody>,
+) -> ApiResult<axum::Json<serde_json::Value>> {
     let row = find(&app.db, &auth::hash_token(&body.token)).await?;
     let purpose = row.as_ref().map(|r| r.purpose.clone()).unwrap_or_default();
     let row = usable(row, &purpose)?;
@@ -204,12 +252,15 @@ pub async fn join_in(
     password_hash: Option<&str>,
 ) -> ApiResult<User> {
     let row = usable(find(&mut **tx, token_hash).await?, "join")?;
-    let user = auth::insert_user(&mut **tx, username, display_name, password_hash, row.admin).await?;
-    let used = sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE invitation SET used_at = {NOW}, user_id = ? WHERE id = ? AND used_at IS NULL")))
-        .bind(&user.id)
-        .bind(&row.id)
-        .execute(&mut **tx)
-        .await?;
+    let user =
+        auth::insert_user(&mut **tx, username, display_name, password_hash, row.admin).await?;
+    let used = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "UPDATE invitation SET used_at = {NOW}, user_id = ? WHERE id = ? AND used_at IS NULL"
+    )))
+    .bind(&user.id)
+    .bind(&row.id)
+    .execute(&mut **tx)
+    .await?;
     if used.rows_affected() != 1 {
         return Err(usable(Some(Row { used: true, ..row }), "join").unwrap_err());
     }
@@ -237,14 +288,26 @@ async fn redeem(
     auth::require_password_sign_in(&app)?;
     auth::require_valid_password(&body.password)?;
     let hash_of_token = auth::hash_token(&body.token);
-    let purpose = find(&app.db, &hash_of_token).await?.map(|r| r.purpose).unwrap_or_default();
+    let purpose = find(&app.db, &hash_of_token)
+        .await?
+        .map(|r| r.purpose)
+        .unwrap_or_default();
     if purpose == "reset" {
         let password = auth::hash_password(body.password).await?;
         let mut tx = app.db.begin().await?;
         let row = usable(find(&mut *tx, &hash_of_token).await?, "reset")?;
         let user_id = row.user_id.clone().unwrap_or_default();
-        sqlx::query("UPDATE app_user SET password_hash = ? WHERE id = ?").bind(password).bind(&user_id).execute(&mut *tx).await?;
-        sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE invitation SET used_at = {NOW} WHERE id = ?"))).bind(&row.id).execute(&mut *tx).await?;
+        sqlx::query("UPDATE app_user SET password_hash = ? WHERE id = ?")
+            .bind(password)
+            .bind(&user_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE invitation SET used_at = {NOW} WHERE id = ?"
+        )))
+        .bind(&row.id)
+        .execute(&mut *tx)
+        .await?;
         tx.commit().await?;
         auth::end_sessions_of(&app.db, &user_id, None).await?;
         return Ok(StatusCode::NO_CONTENT.into_response());
@@ -255,10 +318,25 @@ async fn redeem(
     auth::require_display_name(&display_name)?;
     let password = auth::hash_password(body.password).await?;
     let mut tx = app.db.begin().await?;
-    let user = join_in(&mut tx, &hash_of_token, &username, &display_name, Some(&password)).await?;
+    let user = join_in(
+        &mut tx,
+        &hash_of_token,
+        &username,
+        &display_name,
+        Some(&password),
+    )
+    .await?;
     tx.commit().await?;
-    auth::establish(&app, &headers, principal.session_hash(), &user.id, Kind::Browser, &auth::browser_label(&headers), StatusCode::CREATED)
-        .await
+    auth::establish(
+        &app,
+        &headers,
+        principal.session_hash(),
+        &user.id,
+        Kind::Browser,
+        &auth::browser_label(&headers),
+        StatusCode::CREATED,
+    )
+    .await
 }
 
 /// Join through a provider: checks the link now (so a dead one is refused on
@@ -273,13 +351,26 @@ async fn redeem_with_provider(
 ) -> ApiResult<Response> {
     let token_hash = auth::hash_token(&body.token);
     usable(find(&app.db, &token_hash).await?, "join")?;
-    match oidc::begin(&app, &headers, &provider, Intent::Invite { token_hash }, "/".into()).await {
+    match oidc::begin(
+        &app,
+        &headers,
+        &provider,
+        Intent::Invite { token_hash },
+        "/".into(),
+    )
+    .await
+    {
         Ok((url, cookie)) => {
             let mut response = axum::Json(json!({ "redirect": url })).into_response();
             response.headers_mut().append(header::SET_COOKIE, cookie);
             Ok(response)
         }
-        Err("unknown-provider") => Err(ApiError::not_found(format!("no sign-in provider '{provider}' on this instance"))),
-        Err(code) => Err(ApiError::new(StatusCode::BAD_GATEWAY, format!("could not start sign-in ({code})"))),
+        Err("unknown-provider") => Err(ApiError::not_found(format!(
+            "no sign-in provider '{provider}' on this instance"
+        ))),
+        Err(code) => Err(ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            format!("could not start sign-in ({code})"),
+        )),
     }
 }

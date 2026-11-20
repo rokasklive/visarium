@@ -62,19 +62,33 @@ fn save(file: &Path, port: u16) -> Result<(), Problem> {
     if let Some(dir) = file.parent() {
         std::fs::create_dir_all(dir).map_err(failed)?;
     }
-    std::fs::write(file, serde_json::to_vec_pretty(&Saved { port }).expect("a port serialises")).map_err(failed)
+    std::fs::write(
+        file,
+        serde_json::to_vec_pretty(&Saved { port }).expect("a port serialises"),
+    )
+    .map_err(failed)
 }
 
 fn origin(port: u16) -> Url {
-    format!("http://127.0.0.1:{port}/").parse().expect("a loopback URL")
+    format!("http://127.0.0.1:{port}/")
+        .parse()
+        .expect("a loopback URL")
 }
 
 impl LocalPort {
     /// Starts serving `state` on `listener`.
-    pub fn start(state: visarium::AppState, file: PathBuf, listener: tokio::net::TcpListener) -> std::io::Result<LocalPort> {
+    pub fn start(
+        state: visarium::AppState,
+        file: PathBuf,
+        listener: tokio::net::TcpListener,
+    ) -> std::io::Result<LocalPort> {
         let port = listener.local_addr()?.port();
         let server = tauri::async_runtime::spawn(visarium::serve(state.clone(), listener));
-        Ok(LocalPort { state, file, live: Mutex::new(Live { port, server }) })
+        Ok(LocalPort {
+            state,
+            file,
+            live: Mutex::new(Live { port, server }),
+        })
     }
 
     /// The library's address now: `http://127.0.0.1:{port}/`.
@@ -87,11 +101,18 @@ impl LocalPort {
     fn swap(&self, listener: tokio::net::TcpListener) -> std::io::Result<Live> {
         let port = listener.local_addr()?.port();
         let server = tauri::async_runtime::spawn(visarium::serve(self.state.clone(), listener));
-        Ok(std::mem::replace(&mut *self.live.lock().unwrap(), Live { port, server }))
+        Ok(std::mem::replace(
+            &mut *self.live.lock().unwrap(),
+            Live { port, server },
+        ))
     }
 
     fn info(&self) -> PortInfo {
-        PortInfo { preferred: preferred(&self.file), actual: self.live.lock().unwrap().port, default: DEFAULT_PORT }
+        PortInfo {
+            preferred: preferred(&self.file),
+            actual: self.live.lock().unwrap().port,
+            default: DEFAULT_PORT,
+        }
     }
 }
 
@@ -112,9 +133,16 @@ pub fn local_port(port: State<'_, LocalPort>) -> PortInfo {
 
 /// Moves the library to `value` now, and from then on.
 #[tauri::command]
-pub async fn set_local_port(app: AppHandle, port: State<'_, LocalPort>, value: u16) -> Result<PortInfo, Problem> {
+pub async fn set_local_port(
+    app: AppHandle,
+    port: State<'_, LocalPort>,
+    value: u16,
+) -> Result<PortInfo, Problem> {
     if value < 1024 {
-        return Err(Problem::new("local", "choose a port from 1024 to 65535; lower ones need administrator rights"));
+        return Err(Problem::new(
+            "local",
+            "choose a port from 1024 to 65535; lower ones need administrator rights",
+        ));
     }
     if value == port.live.lock().unwrap().port {
         save(&port.file, value)?;
@@ -123,9 +151,16 @@ pub async fn set_local_port(app: AppHandle, port: State<'_, LocalPort>, value: u
     // Bound before anything changes: a port that is not free leaves all as it was.
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", value))
         .await
-        .map_err(|e| Problem::new("local", format!("port {value} is not free ({e}); choose another")))?;
+        .map_err(|e| {
+            Problem::new(
+                "local",
+                format!("port {value} is not free ({e}); choose another"),
+            )
+        })?;
     save(&port.file, value)?;
-    let old = port.swap(listener).map_err(|e| Problem::new("local", e.to_string()))?;
+    let old = port
+        .swap(listener)
+        .map_err(|e| Problem::new("local", e.to_string()))?;
     let library = origin(value);
     allow(&app, &library).map_err(|e| Problem::new("local", e.to_string()))?;
     drag_out::allow(&app, &library).map_err(|e| Problem::new("local", e.to_string()))?;
@@ -184,8 +219,13 @@ mod tests {
         })
         .await
         .unwrap();
-        sqlx::query("INSERT INTO canvas (id, title) VALUES ('b1', 'Kept across the move')").execute(&state.db).await.unwrap();
-        let first = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        sqlx::query("INSERT INTO canvas (id, title) VALUES ('b1', 'Kept across the move')")
+            .execute(&state.db)
+            .await
+            .unwrap();
+        let first = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
         let local = LocalPort::start(state, dir.join("local-server.json"), first).unwrap();
         let before = local.library();
         let http = reqwest::Client::new();
@@ -193,32 +233,56 @@ mod tests {
             let http = http.clone();
             async move { http.get(url.join("api/boards").unwrap()).send().await }
         };
-        assert!(boards(before.clone()).await.unwrap().text().await.unwrap().contains("Kept across the move"));
+        assert!(
+            boards(before.clone())
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap()
+                .contains("Kept across the move")
+        );
 
-        let second = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let second = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
         let old = local.swap(second).unwrap();
         let after = local.library();
         assert_ne!(after, before);
         assert_eq!(old.port, before.port().unwrap());
         assert!(
-            boards(after.clone()).await.unwrap().text().await.unwrap().contains("Kept across the move"),
+            boards(after.clone())
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap()
+                .contains("Kept across the move"),
             "the same library answers at the new address"
         );
 
         old.server.abort();
         tokio::time::sleep(Duration::from_millis(200)).await;
-        assert!(boards(before).await.is_err(), "the old address no longer answers");
+        assert!(
+            boards(before).await.is_err(),
+            "the old address no longer answers"
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
     fn a_saved_port_is_read_back_and_a_bad_one_ignored() {
-        let file = std::env::temp_dir().join(format!("visarium-port-file-{}.json", std::process::id()));
+        let file =
+            std::env::temp_dir().join(format!("visarium-port-file-{}.json", std::process::id()));
         assert_eq!(preferred(&file.with_extension("missing")), DEFAULT_PORT);
         save(&file, 48000).unwrap();
         assert_eq!(preferred(&file), 48000);
         std::fs::write(&file, b"{\"port\": 80}").unwrap();
-        assert_eq!(preferred(&file), DEFAULT_PORT, "a privileged port is not used");
+        assert_eq!(
+            preferred(&file),
+            DEFAULT_PORT,
+            "a privileged port is not used"
+        );
         let _ = std::fs::remove_file(file);
     }
 }

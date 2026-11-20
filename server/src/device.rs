@@ -25,9 +25,9 @@ use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
+use crate::AppState;
 use crate::auth::{self, Kind, User};
 use crate::error::{ApiError, ApiResult, Json};
-use crate::AppState;
 
 /// A code is good for this long, once.
 pub const CODE_TTL: Duration = Duration::from_secs(60);
@@ -52,7 +52,11 @@ impl Codes {
     /// Removes it whatever happens next: a code is single-use even when the
     /// verifier turns out wrong.
     fn take(&self, code: &str) -> Option<Pending> {
-        self.0.lock().unwrap().remove(code).filter(|p| p.issued.elapsed() < CODE_TTL)
+        self.0
+            .lock()
+            .unwrap()
+            .remove(code)
+            .filter(|p| p.issued.elapsed() < CODE_TTL)
     }
 }
 
@@ -76,7 +80,8 @@ struct Authorize {
 }
 
 fn is_base64url(s: &str) -> bool {
-    s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    s.bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 async fn authorize(
@@ -85,21 +90,39 @@ async fn authorize(
     Json(body): Json<Authorize>,
 ) -> ApiResult<axum::Json<serde_json::Value>> {
     if body.port < 1024 {
-        return Err(ApiError::bad_request("the desktop app listens on a port above 1023"));
+        return Err(ApiError::bad_request(
+            "the desktop app listens on a port above 1023",
+        ));
     }
     if body.challenge.len() != 43 || !is_base64url(&body.challenge) {
-        return Err(ApiError::bad_request("the challenge must be an S256 PKCE challenge"));
+        return Err(ApiError::bad_request(
+            "the challenge must be an S256 PKCE challenge",
+        ));
     }
     if body.state.is_empty() || body.state.len() > 128 || !is_base64url(&body.state) {
-        return Err(ApiError::bad_request("the state must be 1–128 base64url characters"));
+        return Err(ApiError::bad_request(
+            "the state must be 1–128 base64url characters",
+        ));
     }
-    let label = body.label.as_deref().map(str::trim).filter(|l| !l.is_empty()).unwrap_or("Visarium Desktop");
+    let label = body
+        .label
+        .as_deref()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .unwrap_or("Visarium Desktop");
     let code = auth::random_token();
     app.device_codes.insert(
         code.clone(),
-        Pending { user_id: me.id, challenge: body.challenge, label: label.chars().take(80).collect(), issued: Instant::now() },
+        Pending {
+            user_id: me.id,
+            challenge: body.challenge,
+            label: label.chars().take(80).collect(),
+            issued: Instant::now(),
+        },
     );
-    Ok(axum::Json(json!({ "redirect": format!("http://127.0.0.1:{}/callback?code={code}&state={}", body.port, body.state) })))
+    Ok(axum::Json(
+        json!({ "redirect": format!("http://127.0.0.1:{}/callback?code={code}&state={}", body.port, body.state) }),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -110,16 +133,36 @@ struct Exchange {
 
 /// Code + verifier → a device token: a `device` session the member can see
 /// and revoke from any browser, which survives server restarts.
-async fn exchange(State(app): State<AppState>, Json(body): Json<Exchange>) -> ApiResult<(StatusCode, axum::Json<serde_json::Value>)> {
-    let refused = || ApiError::unauthorized("that sign-in code is not valid; sign in again from the desktop app");
+async fn exchange(
+    State(app): State<AppState>,
+    Json(body): Json<Exchange>,
+) -> ApiResult<(StatusCode, axum::Json<serde_json::Value>)> {
+    let refused = || {
+        ApiError::unauthorized("that sign-in code is not valid; sign in again from the desktop app")
+    };
     let pending = app.device_codes.take(&body.code).ok_or_else(refused)?;
-    let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(body.verifier.as_bytes()));
+    let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(Sha256::digest(body.verifier.as_bytes()));
     if challenge != pending.challenge {
         return Err(refused());
     }
-    let user = auth::find_user(&app.db, &pending.user_id).await?.filter(|u| u.deactivated_at.is_none()).ok_or_else(refused)?;
-    let token = auth::create_session(&app.db, Kind::Device, Some(&user.id), None, None, Some(&pending.label)).await?;
-    Ok((StatusCode::CREATED, axum::Json(json!({ "token": token, "user": user }))))
+    let user = auth::find_user(&app.db, &pending.user_id)
+        .await?
+        .filter(|u| u.deactivated_at.is_none())
+        .ok_or_else(refused)?;
+    let token = auth::create_session(
+        &app.db,
+        Kind::Device,
+        Some(&user.id),
+        None,
+        None,
+        Some(&pending.label),
+    )
+    .await?;
+    Ok((
+        StatusCode::CREATED,
+        axum::Json(json!({ "token": token, "user": user })),
+    ))
 }
 
 #[cfg(test)]
@@ -128,8 +171,9 @@ mod tests {
     fn rfc7636_appendix_b_challenge() {
         use base64::Engine;
         use sha2::{Digest, Sha256};
-        let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .encode(Sha256::digest(b"dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"));
+        let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(
+            b"dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+        ));
         assert_eq!(challenge, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
     }
 }

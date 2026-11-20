@@ -11,8 +11,8 @@ pub mod agent;
 pub mod assets;
 pub mod auth;
 pub mod boards;
-pub mod collision;
 pub mod collections;
+pub mod collision;
 pub mod device;
 pub mod error;
 pub mod invitations;
@@ -102,7 +102,9 @@ pub async fn open(config: Config) -> anyhow_lite::Result<AppState> {
             return Err("VISARIUM_AUTH_PASSWORD=off needs at least one VISARIUM_OIDC_* provider, or nobody could sign in".into());
         }
         if !config.providers.is_empty() && config.public_url.is_none() {
-            return Err("VISARIUM_PUBLIC_URL is required when a sign-in provider is configured".into());
+            return Err(
+                "VISARIUM_PUBLIC_URL is required when a sign-in provider is configured".into(),
+            );
         }
     }
     for dir in [&config.assets, &config.derivatives] {
@@ -118,10 +120,17 @@ pub async fn open(config: Config) -> anyhow_lite::Result<AppState> {
         .synchronous(SqliteSynchronous::Normal)
         .foreign_keys(true)
         .busy_timeout(Duration::from_secs(10));
-    let db = SqlitePoolOptions::new().max_connections(8).connect_with(options).await?;
+    let db = SqlitePoolOptions::new()
+        .max_connections(8)
+        .connect_with(options)
+        .await?;
     sqlx::migrate!("./migrations").run(&db).await?;
 
-    let local_user = if config.single_user { Some(auth::ensure_local_user(&db).await?) } else { None };
+    let local_user = if config.single_user {
+        Some(auth::ensure_local_user(&db).await?)
+    } else {
+        None
+    };
     let http = oidc::Http::default();
     let mut providers = Vec::new();
     if !config.single_user {
@@ -139,7 +148,9 @@ pub async fn open(config: Config) -> anyhow_lite::Result<AppState> {
             }
         });
     }
-    let cpus = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2);
+    let cpus = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(2);
     let app = Arc::new(App {
         db,
         config,
@@ -189,11 +200,18 @@ pub fn router(state: AppState) -> Router {
         .route_layer(require_user.clone());
 
     // Share-link viewers: reads of one board, nothing that writes (ADR-0026).
-    let shared_api = sharing::viewer_routes().route_layer(require_viewer.clone()).layer(from_fn(sharing::private_headers));
+    let shared_api = sharing::viewer_routes()
+        .route_layer(require_viewer.clone())
+        .layer(from_fn(sharing::private_headers));
 
     // Open: who am I, signing in, and redeeming the secrets that grant access.
     let api = Router::new()
-        .route("/session", get(auth::current).post(auth::sign_in).delete(auth::sign_out))
+        .route(
+            "/session",
+            get(auth::current)
+                .post(auth::sign_in)
+                .delete(auth::sign_out),
+        )
         .route("/setup", post(auth::claim))
         .route("/shared/session", post(sharing::redeem))
         .merge(invitations::public_routes())
@@ -212,8 +230,14 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .nest("/api", api)
         .merge(agents)
-        .route("/ws/canvas/{id}", get(realtime::upgrade).route_layer(require_user))
-        .route("/ws/shared", get(realtime::upgrade_viewer).route_layer(require_viewer))
+        .route(
+            "/ws/canvas/{id}",
+            get(realtime::upgrade).route_layer(require_user),
+        )
+        .route(
+            "/ws/shared",
+            get(realtime::upgrade_viewer).route_layer(require_viewer),
+        )
         .merge(oidc::routes())
         .route("/health", get(health))
         .route("/health/{probe}", get(health))
@@ -230,7 +254,9 @@ pub async fn serve(state: AppState, listener: tokio::net::TcpListener) -> std::i
 }
 
 async fn meta(State(app): State<AppState>) -> Json<serde_json::Value> {
-    Json(json!({ "name": "visarium", "version": app.config.version, "protocolVersion": PROTOCOL_VERSION }))
+    Json(
+        json!({ "name": "visarium", "version": app.config.version, "protocolVersion": PROTOCOL_VERSION }),
+    )
 }
 
 async fn health() -> Json<serde_json::Value> {
@@ -249,30 +275,57 @@ struct Web;
 /// answering HTML to something expecting JSON.
 async fn spa(uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
-    if ["health", "ws", "auth", "mcp"].iter().any(|p| path == *p || path.starts_with(&format!("{p}/"))) {
+    if ["health", "ws", "auth", "mcp"]
+        .iter()
+        .any(|p| path == *p || path.starts_with(&format!("{p}/")))
+    {
         return ApiError::not_found("no such endpoint").into_response();
     }
     if let Some(file) = Web::get(path) {
         let mime = mime_guess::from_path(path).first_or_octet_stream();
         // Vite fingerprints everything under /assets, so those never change.
-        let cache = if path.starts_with("assets/") { "public, max-age=31536000, immutable" } else { "no-cache" };
-        return ([(header::CONTENT_TYPE, mime.as_ref()), (header::CACHE_CONTROL, cache)], file.data).into_response();
+        let cache = if path.starts_with("assets/") {
+            "public, max-age=31536000, immutable"
+        } else {
+            "no-cache"
+        };
+        return (
+            [
+                (header::CONTENT_TYPE, mime.as_ref()),
+                (header::CACHE_CONTROL, cache),
+            ],
+            file.data,
+        )
+            .into_response();
     }
     let last = path.rsplit('/').next().unwrap_or("");
     match Web::get("index.html") {
         Some(index) if !last.contains('.') => {
-            let mut page =
-                ([(header::CONTENT_TYPE, "text/html; charset=utf-8"), (header::CACHE_CONTROL, "no-cache")], index.data).into_response();
+            let mut page = (
+                [
+                    (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+                    (header::CACHE_CONTROL, "no-cache"),
+                ],
+                index.data,
+            )
+                .into_response();
             // Pages whose address carries a secret in its fragment: never
             // indexed, never sending the address onwards (ADR-0026).
             if matches!(path, "s" | "invite" | "device") {
-                page.headers_mut().insert("referrer-policy", header::HeaderValue::from_static("no-referrer"));
-                page.headers_mut().insert("x-robots-tag", header::HeaderValue::from_static("noindex"));
+                page.headers_mut().insert(
+                    "referrer-policy",
+                    header::HeaderValue::from_static("no-referrer"),
+                );
+                page.headers_mut()
+                    .insert("x-robots-tag", header::HeaderValue::from_static("noindex"));
             }
             page
         }
         Some(_) => StatusCode::NOT_FOUND.into_response(),
-        None => (StatusCode::NOT_FOUND, "this build has no web bundle; run `pnpm build` or use `pnpm dev`")
+        None => (
+            StatusCode::NOT_FOUND,
+            "this build has no web bundle; run `pnpm build` or use `pnpm dev`",
+        )
             .into_response(),
     }
 }

@@ -55,14 +55,22 @@ pub fn refused(ip: IpAddr) -> bool {
 
 fn not_an_image(e: crate::error::ApiError) -> Fail {
     if e.status == axum::http::StatusCode::UNSUPPORTED_MEDIA_TYPE {
-        format!("That is not an image the board can show ({}). Nothing was created.", e.detail)
+        format!(
+            "That is not an image the board can show ({}). Nothing was created.",
+            e.detail
+        )
     } else {
         format!("{} Nothing was created.", e.detail)
     }
 }
 
 /// Bytes given in the call, as base64.
-pub async fn from_data(app: &AppState, data: &str, filename: Option<String>, uploader: &str) -> Result<Asset, Fail> {
+pub async fn from_data(
+    app: &AppState,
+    data: &str,
+    filename: Option<String>,
+    uploader: &str,
+) -> Result<Asset, Fail> {
     let data = data.trim();
     let data = data.split_once(";base64,").map(|(_, d)| d).unwrap_or(data);
     if data.len() / 4 * 3 > MAX_DATA_BYTES + 3 {
@@ -76,18 +84,28 @@ pub async fn from_data(app: &AppState, data: &str, filename: Option<String>, upl
         .map_err(|e| format!("data is not base64 ({e}). Nothing was created."))?;
     let mut spool = Spool::new(app).await.map_err(|e| e.detail)?;
     spool.push(&bytes).await.map_err(|e| e.detail)?;
-    spool.store(app, filename, uploader).await.map_err(not_an_image)
+    spool
+        .store(app, filename, uploader)
+        .await
+        .map_err(not_an_image)
 }
 
 /// The image at a public URL.
 pub async fn from_url(app: &AppState, raw: &str, uploader: &str) -> Result<Asset, Fail> {
     let allow_private = app.allow_private_imports.load(Ordering::Relaxed);
-    let mut url = Url::parse(raw.trim()).map_err(|e| format!("'{raw}' is not a URL ({e}). Nothing was created."))?;
+    let mut url = Url::parse(raw.trim())
+        .map_err(|e| format!("'{raw}' is not a URL ({e}). Nothing was created."))?;
     for _ in 0..=MAX_REDIRECTS {
         if !matches!(url.scheme(), "http" | "https") {
-            return Err(format!("Only http and https URLs can be imported, not {}. Nothing was created.", url.scheme()));
+            return Err(format!(
+                "Only http and https URLs can be imported, not {}. Nothing was created.",
+                url.scheme()
+            ));
         }
-        let host = url.host_str().ok_or("The URL has no host. Nothing was created.")?.to_string();
+        let host = url
+            .host_str()
+            .ok_or("The URL has no host. Nothing was created.")?
+            .to_string();
         let port = url.port_or_known_default().unwrap_or(80);
         let addrs: Vec<SocketAddr> = match host.trim_matches(['[', ']']).parse::<IpAddr>() {
             Ok(ip) => vec![SocketAddr::new(ip, port)],
@@ -121,11 +139,16 @@ pub async fn from_url(app: &AppState, raw: &str, uploader: &str) -> Result<Asset
                 .get(reqwest::header::LOCATION)
                 .and_then(|l| l.to_str().ok())
                 .ok_or("A redirect without a Location. Nothing was created.")?;
-            url = url.join(to).map_err(|e| format!("A redirect to '{to}' is not a URL ({e}). Nothing was created."))?;
+            url = url.join(to).map_err(|e| {
+                format!("A redirect to '{to}' is not a URL ({e}). Nothing was created.")
+            })?;
             continue;
         }
         if !response.status().is_success() {
-            return Err(format!("{url} answered {}. Nothing was created.", response.status()));
+            return Err(format!(
+                "{url} answered {}. Nothing was created.",
+                response.status()
+            ));
         }
         let filename = url
             .path_segments()
@@ -133,12 +156,24 @@ pub async fn from_url(app: &AppState, raw: &str, uploader: &str) -> Result<Asset
             .filter(|s| !s.is_empty())
             .map(str::to_string);
         let mut spool = Spool::new(app).await.map_err(|e| e.detail)?;
-        while let Some(chunk) = response.chunk().await.map_err(|e| format!("Reading {url} failed ({e}). Nothing was created."))? {
-            spool.push(&chunk).await.map_err(|e| format!("{} Nothing was created.", e.detail))?;
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|e| format!("Reading {url} failed ({e}). Nothing was created."))?
+        {
+            spool
+                .push(&chunk)
+                .await
+                .map_err(|e| format!("{} Nothing was created.", e.detail))?;
         }
-        return spool.store(app, filename, uploader).await.map_err(not_an_image);
+        return spool
+            .store(app, filename, uploader)
+            .await
+            .map_err(not_an_image);
     }
-    Err(format!("{raw} redirected more than {MAX_REDIRECTS} times. Nothing was created."))
+    Err(format!(
+        "{raw} redirected more than {MAX_REDIRECTS} times. Nothing was created."
+    ))
 }
 
 #[cfg(test)]
@@ -173,7 +208,13 @@ mod tests {
 
     #[test]
     fn public_addresses_are_allowed() {
-        for ip in ["93.184.216.34", "1.1.1.1", "100.128.0.1", "2606:4700::1111", "::ffff:93.184.216.34"] {
+        for ip in [
+            "93.184.216.34",
+            "1.1.1.1",
+            "100.128.0.1",
+            "2606:4700::1111",
+            "::ffff:93.184.216.34",
+        ] {
             assert!(!refused(ip.parse().unwrap()), "{ip} is public");
         }
     }

@@ -14,12 +14,13 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::Engine;
 use openidconnect::core::{
-    CoreIdToken, CoreIdTokenClaims, CoreJsonWebKeySet, CoreJwsSigningAlgorithm, CoreProviderMetadata, CoreResponseType,
-    CoreRsaPrivateSigningKey, CoreSubjectIdentifierType,
+    CoreIdToken, CoreIdTokenClaims, CoreJsonWebKeySet, CoreJwsSigningAlgorithm,
+    CoreProviderMetadata, CoreResponseType, CoreRsaPrivateSigningKey, CoreSubjectIdentifierType,
 };
 use openidconnect::{
-    Audience, AuthUrl, EmptyAdditionalClaims, EmptyAdditionalProviderMetadata, EndUserEmail, EndUserName, IssuerUrl, JsonWebKeyId,
-    JsonWebKeySetUrl, LocalizedClaim, Nonce, PrivateSigningKey, ResponseTypes, StandardClaims, SubjectIdentifier, TokenUrl,
+    Audience, AuthUrl, EmptyAdditionalClaims, EmptyAdditionalProviderMetadata, EndUserEmail,
+    EndUserName, IssuerUrl, JsonWebKeyId, JsonWebKeySetUrl, LocalizedClaim, Nonce,
+    PrivateSigningKey, ResponseTypes, StandardClaims, SubjectIdentifier, TokenUrl,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -38,7 +39,12 @@ pub struct Person {
 
 impl Person {
     pub fn new(sub: &str, email: &str) -> Self {
-        Self { sub: sub.into(), email: Some(email.into()), email_verified: true, name: Some(sub.to_uppercase()) }
+        Self {
+            sub: sub.into(),
+            email: Some(email.into()),
+            email_verified: true,
+            name: Some(sub.to_uppercase()),
+        }
     }
 }
 
@@ -67,10 +73,15 @@ impl Issuer {
         use rsa::pkcs1::EncodeRsaPrivateKey;
         let private = rsa::PrivateKey::new(&mut rand::rng(), 2048).unwrap();
         let pem = private.to_pkcs1_pem(rsa::pkcs1::LineEnding::LF).unwrap();
-        let key = CoreRsaPrivateSigningKey::from_pem(&pem, Some(JsonWebKeyId::new("k1".into()))).unwrap();
+        let key =
+            CoreRsaPrivateSigningKey::from_pem(&pem, Some(JsonWebKeyId::new("k1".into()))).unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr: SocketAddr = listener.local_addr().unwrap();
-        let issuer = Self { url: format!("http://{addr}"), inner: Default::default(), key: Arc::new(key) };
+        let issuer = Self {
+            url: format!("http://{addr}"),
+            inner: Default::default(),
+            key: Arc::new(key),
+        };
         let app = Router::new()
             .route("/.well-known/openid-configuration", get(discovery))
             .route("/jwks", get(jwks))
@@ -130,12 +141,32 @@ async fn authorize(State(i): State<Issuer>, Query(q): Query<AuthorizeQuery>) -> 
     assert_eq!(q.client_id, CLIENT_ID);
     assert_eq!(q.code_challenge_method, "S256", "PKCE must be S256");
     let Some(person) = i.inner.lock().unwrap().next.take() else {
-        return (StatusCode::FOUND, [(header::LOCATION, format!("{}?error=access_denied&state={}", q.redirect_uri, q.state))])
+        return (
+            StatusCode::FOUND,
+            [(
+                header::LOCATION,
+                format!("{}?error=access_denied&state={}", q.redirect_uri, q.state),
+            )],
+        )
             .into_response();
     };
     let code = uuid::Uuid::new_v4().to_string();
-    i.inner.lock().unwrap().codes.insert(code.clone(), Pending { person, nonce: q.nonce, challenge: q.code_challenge });
-    (StatusCode::FOUND, [(header::LOCATION, format!("{}?code={code}&state={}", q.redirect_uri, q.state))]).into_response()
+    i.inner.lock().unwrap().codes.insert(
+        code.clone(),
+        Pending {
+            person,
+            nonce: q.nonce,
+            challenge: q.code_challenge,
+        },
+    );
+    (
+        StatusCode::FOUND,
+        [(
+            header::LOCATION,
+            format!("{}?code={code}&state={}", q.redirect_uri, q.state),
+        )],
+    )
+        .into_response()
 }
 
 #[derive(Deserialize)]
@@ -146,18 +177,32 @@ struct TokenForm {
 
 async fn token(State(i): State<Issuer>, Form(f): Form<TokenForm>) -> Response {
     let Some(p) = i.inner.lock().unwrap().codes.remove(&f.code) else {
-        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "invalid_grant" }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "invalid_grant" })),
+        )
+            .into_response();
     };
-    let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(f.code_verifier.as_bytes()));
+    let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(Sha256::digest(f.code_verifier.as_bytes()));
     if challenge != p.challenge {
-        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "invalid_grant", "error_description": "PKCE" }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "invalid_grant", "error_description": "PKCE" })),
+        )
+            .into_response();
     }
     let now = chrono::Utc::now();
     let mut standard = StandardClaims::new(SubjectIdentifier::new(p.person.sub.clone()));
     standard = standard
         .set_email(p.person.email.clone().map(EndUserEmail::new))
         .set_email_verified(Some(p.person.email_verified))
-        .set_name(p.person.name.clone().map(|n| LocalizedClaim::from(EndUserName::new(n))));
+        .set_name(
+            p.person
+                .name
+                .clone()
+                .map(|n| LocalizedClaim::from(EndUserName::new(n))),
+        );
     let claims = CoreIdTokenClaims::new(
         IssuerUrl::new(i.url.clone()).unwrap(),
         vec![Audience::new(CLIENT_ID.into())],
@@ -167,6 +212,13 @@ async fn token(State(i): State<Issuer>, Form(f): Form<TokenForm>) -> Response {
         EmptyAdditionalClaims {},
     )
     .set_nonce(Some(Nonce::new(p.nonce)));
-    let id_token = CoreIdToken::new(claims, i.key.as_ref(), CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha256, None, None).unwrap();
+    let id_token = CoreIdToken::new(
+        claims,
+        i.key.as_ref(),
+        CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha256,
+        None,
+        None,
+    )
+    .unwrap();
     Json(json!({ "access_token": "at", "token_type": "Bearer", "expires_in": 300, "id_token": id_token.to_string() })).into_response()
 }

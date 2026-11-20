@@ -42,7 +42,9 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route(
             "/assets",
-            get(library).post(upload).layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES + 1024 * 1024)),
+            get(library)
+                .post(upload)
+                .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES + 1024 * 1024)),
         )
         .route("/assets/{id}", get(get_asset).patch(rename).delete(delete))
         .route("/assets/{id}/content", get(content))
@@ -98,11 +100,13 @@ impl AssetView {
 }
 
 async fn find(app: &AppState, id: &Uuid) -> ApiResult<Asset> {
-    sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {COLUMNS} FROM asset WHERE id = ?")))
-        .bind(id.to_string())
-        .fetch_optional(&app.db)
-        .await?
-        .ok_or_else(|| ApiError::not_found(format!("no asset {id}")))
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLUMNS} FROM asset WHERE id = ?"
+    )))
+    .bind(id.to_string())
+    .fetch_optional(&app.db)
+    .await?
+    .ok_or_else(|| ApiError::not_found(format!("no asset {id}")))
 }
 
 // --- images -----------------------------------------------------------------
@@ -133,13 +137,19 @@ struct Probe {
 /// Reads the header only. Width and height are as displayed: an EXIF
 /// quarter-turn swaps them, because that is the shape the canvas will draw.
 fn probe(path: &Path) -> Result<Probe, String> {
-    let reader = ImageReader::open(path).map_err(|e| e.to_string())?.with_guessed_format().map_err(|e| e.to_string())?;
+    let reader = ImageReader::open(path)
+        .map_err(|e| e.to_string())?
+        .with_guessed_format()
+        .map_err(|e| e.to_string())?;
     let format = reader.format().ok_or("not a recognised image format")?;
-    let (mime, extension) = mime_and_extension(format).ok_or_else(|| format!("{format:?} is not supported"))?;
+    let (mime, extension) =
+        mime_and_extension(format).ok_or_else(|| format!("{format:?} is not supported"))?;
     let mut decoder = reader.into_decoder().map_err(|e| e.to_string())?;
     let (w, h) = decoder.dimensions();
     let quarter_turn = matches!(
-        decoder.orientation().unwrap_or(image::metadata::Orientation::NoTransforms),
+        decoder
+            .orientation()
+            .unwrap_or(image::metadata::Orientation::NoTransforms),
         image::metadata::Orientation::Rotate90
             | image::metadata::Orientation::Rotate270
             | image::metadata::Orientation::Rotate90FlipH
@@ -149,13 +159,23 @@ fn probe(path: &Path) -> Result<Probe, String> {
     if width == 0 || height == 0 {
         return Err("the image has no pixels".into());
     }
-    Ok(Probe { width, height, mime, extension })
+    Ok(Probe {
+        width,
+        height,
+        mime,
+        extension,
+    })
 }
 
 fn decode_oriented(path: &Path) -> Result<DynamicImage, String> {
-    let reader = ImageReader::open(path).map_err(|e| e.to_string())?.with_guessed_format().map_err(|e| e.to_string())?;
+    let reader = ImageReader::open(path)
+        .map_err(|e| e.to_string())?
+        .with_guessed_format()
+        .map_err(|e| e.to_string())?;
     let mut decoder = reader.into_decoder().map_err(|e| e.to_string())?;
-    let orientation = decoder.orientation().unwrap_or(image::metadata::Orientation::NoTransforms);
+    let orientation = decoder
+        .orientation()
+        .unwrap_or(image::metadata::Orientation::NoTransforms);
     let mut img = DynamicImage::from_decoder(decoder).map_err(|e| e.to_string())?;
     img.apply_orientation(orientation);
     Ok(img)
@@ -195,7 +215,9 @@ fn write_atomically(target: &Path, bytes: &[u8]) -> std::io::Result<()> {
 
 fn derivative_path(root: &Path, asset_id: &str, width: u32) -> PathBuf {
     let flat = asset_id.replace('-', "");
-    root.join(&flat[0..2]).join(&flat[2..4]).join(format!("{asset_id}-{width}.webp"))
+    root.join(&flat[0..2])
+        .join(&flat[2..4])
+        .join(format!("{asset_id}-{width}.webp"))
 }
 
 fn original_path(root: &Path, storage_key: &str) -> ApiResult<PathBuf> {
@@ -211,11 +233,18 @@ async fn materialise(app: &AppState, asset: &Asset, widths: Vec<u32>) -> ApiResu
     let original = original_path(&app.config.assets, &asset.storage_key)?;
     let root = app.config.derivatives.clone();
     let id = asset.id.clone();
-    let todo: Vec<u32> = widths.into_iter().filter(|w| !derivative_path(&root, &id, *w).exists()).collect();
+    let todo: Vec<u32> = widths
+        .into_iter()
+        .filter(|w| !derivative_path(&root, &id, *w).exists())
+        .collect();
     if todo.is_empty() {
         return Ok(());
     }
-    let _permit = app.image_permits.acquire().await.map_err(|e| ApiError::internal(e.to_string()))?;
+    let _permit = app
+        .image_permits
+        .acquire()
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?;
     tokio::task::spawn_blocking(move || -> Result<(), String> {
         let mut current = decode_oriented(&original)?;
         let dims = (current.width(), current.height());
@@ -223,7 +252,8 @@ async fn materialise(app: &AppState, asset: &Asset, widths: Vec<u32>) -> ApiResu
         sorted.sort_unstable_by(|a, b| b.cmp(a));
         for width in sorted {
             current = shrink(&current, width, dims);
-            write_atomically(&derivative_path(&root, &id, width), &encode_webp(&current)?).map_err(|e| e.to_string())?;
+            write_atomically(&derivative_path(&root, &id, width), &encode_webp(&current)?)
+                .map_err(|e| e.to_string())?;
         }
         Ok(())
     })
@@ -254,15 +284,27 @@ pub struct Spool {
 
 impl Spool {
     pub async fn new(app: &AppState) -> ApiResult<Self> {
-        let temp = TempFile(app.config.assets.join(format!(".incoming-{}.tmp", Uuid::new_v4().simple())));
+        let temp = TempFile(
+            app.config
+                .assets
+                .join(format!(".incoming-{}.tmp", Uuid::new_v4().simple())),
+        );
         let file = tokio::fs::File::create(&temp.0).await?;
-        Ok(Spool { temp, file, hasher: Sha256::new(), size: 0 })
+        Ok(Spool {
+            temp,
+            file,
+            hasher: Sha256::new(),
+            size: 0,
+        })
     }
 
     pub async fn push(&mut self, chunk: &[u8]) -> ApiResult<()> {
         self.size += chunk.len();
         if self.size > MAX_UPLOAD_BYTES {
-            return Err(ApiError::new(StatusCode::PAYLOAD_TOO_LARGE, "an image may be at most 200 MB"));
+            return Err(ApiError::new(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "an image may be at most 200 MB",
+            ));
         }
         self.hasher.update(chunk);
         self.file.write_all(chunk).await?;
@@ -270,13 +312,26 @@ impl Spool {
     }
 
     /// Stores what arrived as an asset, or says why it is not an image.
-    pub async fn store(mut self, app: &AppState, filename: Option<String>, uploader: &str) -> ApiResult<Asset> {
+    pub async fn store(
+        mut self,
+        app: &AppState,
+        filename: Option<String>,
+        uploader: &str,
+    ) -> ApiResult<Asset> {
         self.file.flush().await?;
         if self.size == 0 {
             return Err(unreadable("the upload was empty"));
         }
         let hash = hex::encode(self.hasher.finalize());
-        ingest(app, &self.temp.0, &hash, self.size as i64, filename, uploader).await
+        ingest(
+            app,
+            &self.temp.0,
+            &hash,
+            self.size as i64,
+            filename,
+            uploader,
+        )
+        .await
     }
 }
 
@@ -298,10 +353,19 @@ async fn upload(
         let asset = spool.store(&app, filename, &me.id).await?;
         return Ok((StatusCode::CREATED, axum::Json(AssetView::of(asset, None))));
     }
-    Err(ApiError::bad_request("a multipart field named 'file' is required"))
+    Err(ApiError::bad_request(
+        "a multipart field named 'file' is required",
+    ))
 }
 
-async fn ingest(app: &AppState, spooled: &Path, hash: &str, size: i64, filename: Option<String>, uploader: &str) -> ApiResult<Asset> {
+async fn ingest(
+    app: &AppState,
+    spooled: &Path,
+    hash: &str,
+    size: i64,
+    filename: Option<String>,
+    uploader: &str,
+) -> ApiResult<Asset> {
     let path = spooled.to_path_buf();
     let info = tokio::task::spawn_blocking(move || probe(&path))
         .await
@@ -335,13 +399,20 @@ async fn ingest(app: &AppState, spooled: &Path, hash: &str, size: i64, filename:
     .await?;
     let asset = match inserted {
         Some(a) => a,
-        None => sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {COLUMNS} FROM asset WHERE content_hash = ?")))
+        None => {
+            sqlx::query_as(sqlx::AssertSqlSafe(format!(
+                "SELECT {COLUMNS} FROM asset WHERE content_hash = ?"
+            )))
             .bind(hash)
             .fetch_one(&app.db)
-            .await?,
+            .await?
+        }
     };
 
-    let ladder: Vec<u32> = WIDTHS.into_iter().filter(|w| (*w as i64) < asset.width).collect();
+    let ladder: Vec<u32> = WIDTHS
+        .into_iter()
+        .filter(|w| (*w as i64) < asset.width)
+        .collect();
     if let Err(e) = materialise(app, &asset, ladder).await {
         tracing::warn!(asset = %asset.id, "could not pre-generate derivatives: {}", e.detail);
     }
@@ -371,7 +442,9 @@ impl Sort {
         match value.map(str::to_ascii_lowercase).as_deref() {
             None | Some("") | Some("recent") => Ok(Sort::Recent),
             Some("name") => Ok(Sort::Name),
-            Some(other) => Err(ApiError::bad_request(format!("no sort order called {other}"))),
+            Some(other) => Err(ApiError::bad_request(format!(
+                "no sort order called {other}"
+            ))),
         }
     }
     fn wire(self) -> &'static str {
@@ -393,7 +466,11 @@ struct PageCursor {
 
 impl PageCursor {
     fn encode(&self) -> String {
-        let key = self.key.as_deref().map(|k| B64.encode(k)).unwrap_or_default();
+        let key = self
+            .key
+            .as_deref()
+            .map(|k| B64.encode(k))
+            .unwrap_or_default();
         B64.encode(format!("{}:{key}:{}", self.sort.wire(), self.id))
     }
     fn decode(encoded: &str) -> Option<Self> {
@@ -402,7 +479,11 @@ impl PageCursor {
         let sort = Sort::parse(Some(parts.next()?)).ok()?;
         let key = parts.next()?;
         let id = Uuid::parse_str(parts.next()?).ok()?.to_string();
-        let key = if key.is_empty() { None } else { Some(String::from_utf8(B64.decode(key).ok()?).ok()?) };
+        let key = if key.is_empty() {
+            None
+        } else {
+            Some(String::from_utf8(B64.decode(key).ok()?).ok()?)
+        };
         if sort == Sort::Recent && key.is_none() {
             return None;
         }
@@ -418,7 +499,10 @@ struct LibraryRow {
     name_key: Option<String>,
 }
 
-async fn library(State(app): State<AppState>, Query(p): Query<LibraryParams>) -> ApiResult<axum::Json<serde_json::Value>> {
+async fn library(
+    State(app): State<AppState>,
+    Query(p): Query<LibraryParams>,
+) -> ApiResult<axum::Json<serde_json::Value>> {
     let sort = Sort::parse(p.sort.as_deref())?;
     let deleted = matches!(p.deleted.as_deref(), Some("true" | "1" | "yes" | "on"));
     let limit = match p.limit {
@@ -428,7 +512,8 @@ async fn library(State(app): State<AppState>, Query(p): Query<LibraryParams>) ->
     let cursor = match p.cursor.as_deref().filter(|c| !c.is_empty()) {
         None => None,
         Some(raw) => {
-            let c = PageCursor::decode(raw).ok_or_else(|| ApiError::bad_request("malformed cursor"))?;
+            let c =
+                PageCursor::decode(raw).ok_or_else(|| ApiError::bad_request("malformed cursor"))?;
             if c.sort != sort {
                 return Err(ApiError::bad_request(format!(
                     "this cursor pages a {}-ordered library; start again to sort by {}",
@@ -448,10 +533,11 @@ async fn library(State(app): State<AppState>, Query(p): Query<LibraryParams>) ->
     );
     let mut binds: Vec<String> = Vec::new();
     if let Some(collection) = p.collection {
-        let exists: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM collection WHERE id = ?)")
-            .bind(collection.to_string())
-            .fetch_one(&app.db)
-            .await?;
+        let exists: bool =
+            sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM collection WHERE id = ?)")
+                .bind(collection.to_string())
+                .fetch_one(&app.db)
+                .await?;
         if !exists {
             return Err(ApiError::not_found(format!("no collection {collection}")));
         }
@@ -462,7 +548,12 @@ async fn library(State(app): State<AppState>, Query(p): Query<LibraryParams>) ->
         // ponytail: SQLite's LIKE folds ASCII case only; ICU is the upgrade if
         // non-Latin filenames need case-insensitive search.
         sql.push_str(" AND original_filename LIKE ? ESCAPE '!'");
-        binds.push(format!("%{}%", term.replace('!', "!!").replace('%', "!%").replace('_', "!_")));
+        binds.push(format!(
+            "%{}%",
+            term.replace('!', "!!")
+                .replace('%', "!%")
+                .replace('_', "!_")
+        ));
     }
     if let Some(c) = &cursor {
         match (sort, &c.key) {
@@ -505,13 +596,19 @@ async fn library(State(app): State<AppState>, Query(p): Query<LibraryParams>) ->
         }
         .encode()
     });
-    let assets: Vec<AssetView> = rows.into_iter().map(|r| AssetView::of(r.asset, Some(r.boards))).collect();
+    let assets: Vec<AssetView> = rows
+        .into_iter()
+        .map(|r| AssetView::of(r.asset, Some(r.boards)))
+        .collect();
     Ok(axum::Json(json!({ "assets": assets, "nextCursor": next })))
 }
 
 // --- one asset --------------------------------------------------------------
 
-async fn get_asset(State(app): State<AppState>, UrlPath(id): UrlPath<Uuid>) -> ApiResult<axum::Json<AssetView>> {
+async fn get_asset(
+    State(app): State<AppState>,
+    UrlPath(id): UrlPath<Uuid>,
+) -> ApiResult<axum::Json<AssetView>> {
     Ok(axum::Json(AssetView::of(find(&app, &id).await?, None)))
 }
 
@@ -519,11 +616,21 @@ fn not_modified(headers: &HeaderMap, etag: &str) -> bool {
     headers
         .get(header::IF_NONE_MATCH)
         .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v.split(',').any(|t| t.trim().trim_start_matches("W/") == etag || t.trim() == "*"))
+        .is_some_and(|v| {
+            v.split(',')
+                .any(|t| t.trim().trim_start_matches("W/") == etag || t.trim() == "*")
+        })
 }
 
-async fn send_file(path: &Path, content_type: &str, etag: &str, disposition: Option<String>) -> ApiResult<Response> {
-    let file = tokio::fs::File::open(path).await.map_err(|_| ApiError::not_found("the stored file is missing"))?;
+async fn send_file(
+    path: &Path,
+    content_type: &str,
+    etag: &str,
+    disposition: Option<String>,
+) -> ApiResult<Response> {
+    let file = tokio::fs::File::open(path)
+        .await
+        .map_err(|_| ApiError::not_found("the stored file is missing"))?;
     let len = file.metadata().await?.len();
     let mut response = Response::builder()
         .header(header::CONTENT_TYPE, content_type)
@@ -533,11 +640,20 @@ async fn send_file(path: &Path, content_type: &str, etag: &str, disposition: Opt
     if let Some(d) = disposition {
         response = response.header(header::CONTENT_DISPOSITION, d);
     }
-    Ok(response.body(Body::from_stream(tokio_util::io::ReaderStream::new(file))).unwrap())
+    Ok(response
+        .body(Body::from_stream(tokio_util::io::ReaderStream::new(file)))
+        .unwrap())
 }
 
 fn not_modified_response(etag: &str) -> Response {
-    (StatusCode::NOT_MODIFIED, [(header::ETAG, etag.to_string()), (header::CACHE_CONTROL, IMMUTABLE.into())]).into_response()
+    (
+        StatusCode::NOT_MODIFIED,
+        [
+            (header::ETAG, etag.to_string()),
+            (header::CACHE_CONTROL, IMMUTABLE.into()),
+        ],
+    )
+        .into_response()
 }
 
 /// `inline`, with the original name in both the ASCII and the RFC 5987 forms,
@@ -546,8 +662,16 @@ fn disposition(filename: Option<&str>) -> String {
     match filename.filter(|f| !f.trim().is_empty()) {
         None => "inline".into(),
         Some(name) => {
-            let ascii: String =
-                name.chars().map(|c| if c.is_ascii_graphic() && c != '"' && c != '\\' || c == ' ' { c } else { '_' }).collect();
+            let ascii: String = name
+                .chars()
+                .map(|c| {
+                    if c.is_ascii_graphic() && c != '"' && c != '\\' || c == ' ' {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
+                .collect();
             let encoded: String = name
                 .bytes()
                 .map(|b| {
@@ -563,14 +687,24 @@ fn disposition(filename: Option<&str>) -> String {
     }
 }
 
-async fn content(State(app): State<AppState>, UrlPath(id): UrlPath<Uuid>, headers: HeaderMap) -> ApiResult<Response> {
+async fn content(
+    State(app): State<AppState>,
+    UrlPath(id): UrlPath<Uuid>,
+    headers: HeaderMap,
+) -> ApiResult<Response> {
     let asset = find(&app, &id).await?;
     let etag = format!("\"{}\"", asset.content_hash);
     if not_modified(&headers, &etag) {
         return Ok(not_modified_response(&etag));
     }
     let path = original_path(&app.config.assets, &asset.storage_key)?;
-    send_file(&path, &asset.mime_type, &etag, Some(disposition(asset.original_filename.as_deref()))).await
+    send_file(
+        &path,
+        &asset.mime_type,
+        &etag,
+        Some(disposition(asset.original_filename.as_deref())),
+    )
+    .await
 }
 
 async fn derivative(
@@ -583,9 +717,16 @@ async fn derivative(
 
 /// One rung of the WebP ladder, for members and for share-link viewers (who
 /// get this and never the original).
-pub async fn serve_derivative(app: &AppState, id: &Uuid, width: u32, headers: &HeaderMap) -> ApiResult<Response> {
+pub async fn serve_derivative(
+    app: &AppState,
+    id: &Uuid,
+    width: u32,
+    headers: &HeaderMap,
+) -> ApiResult<Response> {
     if !WIDTHS.contains(&width) {
-        return Err(ApiError::bad_request(format!("no derivative tier at width {width}; the ladder is {WIDTHS:?}")));
+        return Err(ApiError::bad_request(format!(
+            "no derivative tier at width {width}; the ladder is {WIDTHS:?}"
+        )));
     }
     let asset = find(app, id).await?;
     let etag = format!("\"{}-{width}\"", asset.content_hash);
@@ -593,30 +734,55 @@ pub async fn serve_derivative(app: &AppState, id: &Uuid, width: u32, headers: &H
         return Ok(not_modified_response(&etag));
     }
     materialise(app, &asset, vec![width]).await?;
-    send_file(&derivative_path(&app.config.derivatives, &asset.id, width), "image/webp", &etag, None).await
+    send_file(
+        &derivative_path(&app.config.derivatives, &asset.id, width),
+        "image/webp",
+        &etag,
+        None,
+    )
+    .await
 }
 
 /// An image as an agent sees it (ADR-0031): the derivative rung at or above
 /// `width` (the largest when none is), cropped as the board shows it. A crop
 /// is cut from the derivative and sent as PNG; otherwise the WebP goes as is.
 /// Returns the bytes, their type, and the width sent.
-pub async fn view(app: &AppState, asset_id: &str, width: u32, crop: Option<(f64, f64, f64, f64)>) -> ApiResult<(Vec<u8>, &'static str, u32)> {
+pub async fn view(
+    app: &AppState,
+    asset_id: &str,
+    width: u32,
+    crop: Option<(f64, f64, f64, f64)>,
+) -> ApiResult<(Vec<u8>, &'static str, u32)> {
     let id = Uuid::parse_str(asset_id).map_err(|_| ApiError::bad_request("not an asset id"))?;
     let asset = find(app, &id).await?;
-    let rung = WIDTHS.iter().rev().copied().find(|w| *w >= width).unwrap_or(WIDTHS[0]);
+    let rung = WIDTHS
+        .iter()
+        .rev()
+        .copied()
+        .find(|w| *w >= width)
+        .unwrap_or(WIDTHS[0]);
     materialise(app, &asset, vec![rung]).await?;
     let path = derivative_path(&app.config.derivatives, &asset.id, rung);
-    let bytes = tokio::fs::read(&path).await.map_err(|e| ApiError::internal(e.to_string()))?;
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?;
     let Some((x, y, w, h)) = crop else {
         let sent = (rung as i64).min(asset.width) as u32;
         return Ok((bytes, "image/webp", sent));
     };
     tokio::task::spawn_blocking(move || -> Result<(Vec<u8>, &'static str, u32), String> {
-        let img = image::load_from_memory_with_format(&bytes, ImageFormat::WebP).map_err(|e| e.to_string())?;
+        let img = image::load_from_memory_with_format(&bytes, ImageFormat::WebP)
+            .map_err(|e| e.to_string())?;
         let (iw, ih) = (img.width() as f64, img.height() as f64);
-        let cut = img.crop_imm((x * iw) as u32, (y * ih) as u32, ((w * iw) as u32).max(1), ((h * ih) as u32).max(1));
+        let cut = img.crop_imm(
+            (x * iw) as u32,
+            (y * ih) as u32,
+            ((w * iw) as u32).max(1),
+            ((h * ih) as u32).max(1),
+        );
         let mut out = std::io::Cursor::new(Vec::new());
-        cut.write_to(&mut out, ImageFormat::Png).map_err(|e| e.to_string())?;
+        cut.write_to(&mut out, ImageFormat::Png)
+            .map_err(|e| e.to_string())?;
         Ok((out.into_inner(), "image/png", cut.width()))
     })
     .await
@@ -638,18 +804,24 @@ async fn rename(
     if name.is_empty() || name.chars().count() > 200 {
         return Err(ApiError::bad_request("a filename must be 1–200 characters"));
     }
-    let renamed: Option<Asset> =
-        sqlx::query_as(sqlx::AssertSqlSafe(format!("UPDATE asset SET original_filename = ? WHERE id = ? RETURNING {COLUMNS}")))
-            .bind(name)
-            .bind(id.to_string())
-            .fetch_optional(&app.db)
-            .await?;
-    Ok(axum::Json(AssetView::of(renamed.ok_or_else(|| ApiError::not_found(format!("no asset {id}")))?, None)))
+    let renamed: Option<Asset> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "UPDATE asset SET original_filename = ? WHERE id = ? RETURNING {COLUMNS}"
+    )))
+    .bind(name)
+    .bind(id.to_string())
+    .fetch_optional(&app.db)
+    .await?;
+    Ok(axum::Json(AssetView::of(
+        renamed.ok_or_else(|| ApiError::not_found(format!("no asset {id}")))?,
+        None,
+    )))
 }
 
 fn may_delete(asset: &Asset, me: &User) -> ApiResult<()> {
     if !me.admin && asset.uploaded_by.as_deref().is_some_and(|u| u != me.id) {
-        return Err(ApiError::forbidden("only the person who uploaded this image, or an admin, can delete it"));
+        return Err(ApiError::forbidden(
+            "only the person who uploaded this image, or an admin, can delete it",
+        ));
     }
     Ok(())
 }
@@ -671,14 +843,17 @@ async fn delete(
     let asset = find(&app, &id).await?;
     may_delete(&asset, &me)?;
     if matches!(p.with_items.as_deref(), Some("true" | "1" | "yes" | "on")) {
-        let placements: Vec<(String, String)> =
-            sqlx::query_as("SELECT canvas_id, id FROM canvas_item WHERE asset_id = ? ORDER BY canvas_id")
-                .bind(&asset.id)
-                .fetch_all(&app.db)
-                .await?;
+        let placements: Vec<(String, String)> = sqlx::query_as(
+            "SELECT canvas_id, id FROM canvas_item WHERE asset_id = ? ORDER BY canvas_id",
+        )
+        .bind(&asset.id)
+        .fetch_all(&app.db)
+        .await?;
         let mut by_board: Vec<(String, Vec<Op>)> = Vec::new();
         for (board, item) in placements {
-            let op = Op::ItemDelete { item_id: Uuid::parse_str(&item).unwrap() };
+            let op = Op::ItemDelete {
+                item_id: Uuid::parse_str(&item).unwrap(),
+            };
             match by_board.last_mut() {
                 Some((b, ops)) if *b == board => ops.push(op),
                 _ => by_board.push((board, vec![op])),
@@ -686,15 +861,20 @@ async fn delete(
         }
         for (board, mut ops) in by_board {
             let board = Uuid::parse_str(&board).unwrap();
-            let actor = boards::Actor { user_id: me.id.clone(), agent: None };
+            let actor = boards::Actor {
+                user_id: me.id.clone(),
+                agent: None,
+            };
             let (from, to) = boards::apply(&app, &board, &mut ops, &actor).await?;
             app.rooms.announce(&board, None, from, to, &ops);
         }
     } else {
-        let boards: i64 = sqlx::query_scalar("SELECT count(DISTINCT canvas_id) FROM canvas_item WHERE asset_id = ?")
-            .bind(&asset.id)
-            .fetch_one(&app.db)
-            .await?;
+        let boards: i64 = sqlx::query_scalar(
+            "SELECT count(DISTINCT canvas_id) FROM canvas_item WHERE asset_id = ?",
+        )
+        .bind(&asset.id)
+        .fetch_one(&app.db)
+        .await?;
         if boards > 0 {
             let usage: Vec<(String, String, i64)> = sqlx::query_as(
                 "SELECT c.id, c.title, count(*) FROM canvas_item i JOIN canvas c ON c.id = i.canvas_id
@@ -704,8 +884,10 @@ async fn delete(
             .bind(NAMED_BOARDS)
             .fetch_all(&app.db)
             .await?;
-            let named: Vec<_> =
-                usage.into_iter().map(|(id, title, items)| json!({ "boardId": id, "title": title, "items": items })).collect();
+            let named: Vec<_> = usage
+                .into_iter()
+                .map(|(id, title, items)| json!({ "boardId": id, "title": title, "items": items }))
+                .collect();
             return Err(ApiError::conflict(format!(
                 "this image is still on {boards} board(s). Removing it from them is a separate step."
             ))
@@ -714,10 +896,12 @@ async fn delete(
             .with("boardCount", json!(boards)));
         }
     }
-    sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE asset SET deleted_at = {NOW} WHERE id = ? AND deleted_at IS NULL")))
-        .bind(&asset.id)
-        .execute(&app.db)
-        .await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "UPDATE asset SET deleted_at = {NOW} WHERE id = ? AND deleted_at IS NULL"
+    )))
+    .bind(&asset.id)
+    .execute(&app.db)
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -728,7 +912,10 @@ async fn restore(
 ) -> ApiResult<axum::Json<AssetView>> {
     let asset = find(&app, &id).await?;
     may_delete(&asset, &me)?;
-    sqlx::query("UPDATE asset SET deleted_at = NULL WHERE id = ?").bind(&asset.id).execute(&app.db).await?;
+    sqlx::query("UPDATE asset SET deleted_at = NULL WHERE id = ?")
+        .bind(&asset.id)
+        .execute(&app.db)
+        .await?;
     Ok(axum::Json(AssetView::of(find(&app, &id).await?, None)))
 }
 
@@ -741,18 +928,34 @@ async fn purge(
 ) -> ApiResult<StatusCode> {
     let asset = find(&app, &id).await?;
     if !me.admin {
-        return Err(ApiError::forbidden("only an admin can remove an image's bytes"));
+        return Err(ApiError::forbidden(
+            "only an admin can remove an image's bytes",
+        ));
     }
     if asset.deleted_at.is_none() {
-        return Err(ApiError::conflict("delete this asset first; purging is only ever the second step"));
+        return Err(ApiError::conflict(
+            "delete this asset first; purging is only ever the second step",
+        ));
     }
-    sqlx::query("DELETE FROM asset WHERE id = ?").bind(&asset.id).execute(&app.db).await.map_err(|e| {
-        if is_foreign_key_violation(&e) { ApiError::conflict("this image is on a board again; delete it first") } else { e.into() }
-    })?;
-    let original = tokio::fs::remove_file(original_path(&app.config.assets, &asset.storage_key)?).await.is_ok();
+    sqlx::query("DELETE FROM asset WHERE id = ?")
+        .bind(&asset.id)
+        .execute(&app.db)
+        .await
+        .map_err(|e| {
+            if is_foreign_key_violation(&e) {
+                ApiError::conflict("this image is on a board again; delete it first")
+            } else {
+                e.into()
+            }
+        })?;
+    let original = tokio::fs::remove_file(original_path(&app.config.assets, &asset.storage_key)?)
+        .await
+        .is_ok();
     let mut tiers = 0;
     for w in WIDTHS {
-        tiers += tokio::fs::remove_file(derivative_path(&app.config.derivatives, &asset.id, w)).await.is_ok() as u32;
+        tiers += tokio::fs::remove_file(derivative_path(&app.config.derivatives, &asset.id, w))
+            .await
+            .is_ok() as u32;
     }
     tracing::info!(asset = %asset.id, original, tiers, "purged asset");
     Ok(StatusCode::NO_CONTENT)
@@ -766,9 +969,21 @@ mod tests {
     #[test]
     fn cursor_round_trips_and_rejects_junk() {
         for c in [
-            PageCursor { sort: Sort::Recent, key: Some("2026-01-01T00:00:00.000Z".into()), id: new_id() },
-            PageCursor { sort: Sort::Name, key: Some("img_0042.jpg: a:b".into()), id: new_id() },
-            PageCursor { sort: Sort::Name, key: None, id: new_id() },
+            PageCursor {
+                sort: Sort::Recent,
+                key: Some("2026-01-01T00:00:00.000Z".into()),
+                id: new_id(),
+            },
+            PageCursor {
+                sort: Sort::Name,
+                key: Some("img_0042.jpg: a:b".into()),
+                id: new_id(),
+            },
+            PageCursor {
+                sort: Sort::Name,
+                key: None,
+                id: new_id(),
+            },
         ] {
             assert_eq!(PageCursor::decode(&c.encode()), Some(c));
         }
@@ -779,7 +994,10 @@ mod tests {
     #[test]
     fn shrink_never_upscales_and_keeps_aspect() {
         let img = DynamicImage::new_rgb8(400, 300);
-        assert_eq!(shrink(&img, 1024, (400, 300)).dimensions_tuple(), (400, 300));
+        assert_eq!(
+            shrink(&img, 1024, (400, 300)).dimensions_tuple(),
+            (400, 300)
+        );
         assert_eq!(shrink(&img, 64, (400, 300)).dimensions_tuple(), (64, 48));
     }
 
