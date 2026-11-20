@@ -14,12 +14,17 @@ export const SIGNED_IN_USER = {
   id: '01a01640-6b72-7d60-968b-88be186f32aa',
   username: 'ada',
   displayName: 'Ada Lovelace',
+  role: 'admin',
   admin: true,
   deactivatedAt: null,
   createdAt: '2026-01-01T00:00:00Z',
 };
 
-export async function signedIn(page: Page): Promise<void> {
+export async function signedIn(
+  page: Page,
+  user: Record<string, unknown> = SIGNED_IN_USER,
+  extra: Record<string, unknown> = {},
+): Promise<void> {
   /*
    * The sidebar, answered as empty.
    *
@@ -57,7 +62,7 @@ export async function signedIn(page: Page): Promise<void> {
   await page.route('**/api/session', (route) => {
     // DELETE is the sign-out; anything else is the boot question.
     if (route.request().method() === 'DELETE') return route.fulfill({ status: 204 });
-    return route.fulfill({ json: { setupRequired: false, user: SIGNED_IN_USER } });
+    return route.fulfill({ json: { setupRequired: false, user, ...extra } });
   });
 }
 

@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::auth::{self, Kind, Principal, User};
+use crate::auth::{self, Kind, Principal, Role, User};
 use crate::error::{ApiError, ApiResult, Json};
 use crate::oidc::{self, Intent};
 use crate::{AppState, NOW, new_id};
@@ -24,7 +24,8 @@ use crate::{AppState, NOW, new_id};
 pub const JOIN_SECS: i64 = 7 * 86_400;
 pub const RESET_SECS: i64 = 86_400;
 
-/// Admin-only: make, list and revoke.
+/// Moderators and admins: make, list and revoke. A moderator's reach is
+/// members only (`auth::require_staff_over`).
 pub fn admin_routes() -> Router<AppState> {
     Router::new()
         .route("/invitations", get(list).post(create))
@@ -44,6 +45,8 @@ pub fn public_routes() -> Router<AppState> {
 struct InvitationView {
     id: String,
     purpose: String,
+    role: Role,
+    /// `role == admin`, for clients that predate roles.
     admin: bool,
     note: Option<String>,
     /// reset: whose password.
@@ -52,13 +55,15 @@ struct InvitationView {
     expires_at: String,
 }
 
-const VIEW_SQL: &str = "SELECT i.id, i.purpose, i.admin, i.note, u.username, i.created_at, i.expires_at \
+const VIEW_SQL: &str = "SELECT i.id, i.purpose, i.role, i.role = 'admin' AS admin, i.note, u.username, i.created_at, i.expires_at \
                           FROM invitation i LEFT JOIN app_user u ON u.id = i.user_id";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NewInvitation {
     purpose: Option<String>,
+    /// join: the new account's role. `admin: true` is the older spelling.
+    role: Option<Role>,
     #[serde(default)]
     admin: bool,
     note: Option<String>,
@@ -71,7 +76,11 @@ async fn create(
     axum::Extension(me): axum::Extension<User>,
     Json(body): Json<NewInvitation>,
 ) -> ApiResult<(StatusCode, axum::Json<serde_json::Value>)> {
-    auth::require_admin(&me)?;
+    let role = body.role.unwrap_or(if body.admin {
+        Role::Admin
+    } else {
+        Role::Member
+    });
     let note = body
         .note
         .as_deref()
@@ -88,6 +97,7 @@ async fn create(
             let user = auth::find_user(&app.db, &id)
                 .await?
                 .ok_or_else(|| ApiError::not_found(format!("no account {id}")))?;
+            auth::require_staff_over(&me, user.role)?;
             if user.deactivated_at.is_some() {
                 return Err(ApiError::conflict("that account is deactivated"));
             }
@@ -99,17 +109,20 @@ async fn create(
             )));
         }
     };
+    if purpose == "join" {
+        auth::require_staff_over(&me, role)?;
+    }
     let token = auth::random_token();
     let id = new_id();
     sqlx::query(
-        "INSERT INTO invitation (id, token_hash, purpose, user_id, admin, note, created_by, expires_at) \
+        "INSERT INTO invitation (id, token_hash, purpose, user_id, role, note, created_by, expires_at) \
          VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?))",
     )
     .bind(&id)
     .bind(auth::hash_token(&token))
     .bind(purpose)
     .bind(&user_id)
-    .bind(purpose == "join" && body.admin)
+    .bind(if purpose == "join" { role } else { Role::Member })
     .bind(&note)
     .bind(&me.id)
     .bind(format!("+{secs} seconds"))
@@ -120,7 +133,7 @@ async fn create(
             .bind(&id)
             .fetch_one(&app.db)
             .await?;
-    tracing::info!(invitation = %id, purpose, by = %me.id, "invitation created");
+    tracing::info!(invitation = %id, purpose, role = role.as_str(), by = %me.id, "invitation created");
     // The only time the token exists outside the invitee's hands.
     let mut out = serde_json::to_value(view).unwrap();
     out["link"] = json!(format!("/invite#{token}"));
@@ -132,7 +145,7 @@ async fn list(
     State(app): State<AppState>,
     axum::Extension(me): axum::Extension<User>,
 ) -> ApiResult<axum::Json<Vec<InvitationView>>> {
-    auth::require_admin(&me)?;
+    auth::require_role(&me, Role::Moderator)?;
     Ok(axum::Json(
         sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "{VIEW_SQL} WHERE i.used_at IS NULL AND i.expires_at > {NOW} ORDER BY i.created_at DESC"
@@ -147,7 +160,20 @@ async fn revoke(
     axum::Extension(me): axum::Extension<User>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<StatusCode> {
-    auth::require_admin(&me)?;
+    // Whose rank the link carries: the joiner's role, or the reset account's.
+    let target: Option<Role> = sqlx::query_scalar(
+        "SELECT CASE WHEN i.purpose = 'reset' THEN u.role ELSE i.role END \
+           FROM invitation i LEFT JOIN app_user u ON u.id = i.user_id \
+          WHERE i.id = ? AND i.used_at IS NULL",
+    )
+    .bind(id.to_string())
+    .fetch_optional(&app.db)
+    .await?
+    .flatten();
+    let Some(target) = target else {
+        return Err(ApiError::not_found(format!("no unused invitation {id}")));
+    };
+    auth::require_staff_over(&me, target)?;
     let done = sqlx::query("DELETE FROM invitation WHERE id = ? AND used_at IS NULL")
         .bind(id.to_string())
         .execute(&app.db)
@@ -166,7 +192,7 @@ struct Row {
     id: String,
     purpose: String,
     user_id: Option<String>,
-    admin: bool,
+    role: Role,
     note: Option<String>,
     expires_at: String,
     used: bool,
@@ -178,7 +204,7 @@ async fn find<'e>(
     token_hash: &str,
 ) -> sqlx::Result<Option<Row>> {
     sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT id, purpose, user_id, admin, note, expires_at, used_at IS NOT NULL AS used, expires_at <= {NOW} AS expired \
+        "SELECT id, purpose, user_id, role, note, expires_at, used_at IS NOT NULL AS used, expires_at <= {NOW} AS expired \
            FROM invitation WHERE token_hash = ?"
     )))
     .bind(token_hash)
@@ -238,7 +264,7 @@ async fn inspect(
         None => None,
     };
     Ok(axum::Json(json!({
-        "purpose": row.purpose, "admin": row.admin, "note": row.note, "username": username, "expiresAt": row.expires_at,
+        "purpose": row.purpose, "role": row.role, "admin": row.role == Role::Admin, "note": row.note, "username": username, "expiresAt": row.expires_at,
         "passwordEnabled": !app.config.password_disabled,
     })))
 }
@@ -255,7 +281,7 @@ pub async fn join_in(
 ) -> ApiResult<User> {
     let row = usable(find(&mut **tx, token_hash).await?, "join")?;
     let user =
-        auth::insert_user(&mut **tx, username, display_name, password_hash, row.admin).await?;
+        auth::insert_user(&mut **tx, username, display_name, password_hash, row.role).await?;
     let used = sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE invitation SET used_at = {NOW}, user_id = ? WHERE id = ? AND used_at IS NULL"
     )))

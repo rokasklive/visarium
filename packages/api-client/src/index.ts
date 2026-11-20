@@ -17,9 +17,12 @@ export type {
   NewAgentToken,
   operations,
   paths,
+  Role,
   SessionView,
   SharedBoard,
   SharedSession,
   ShareLink,
+  SignInProvider,
+  SignInProviders,
 } from './generated/schema';
 export * from './meta';

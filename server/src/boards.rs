@@ -1628,11 +1628,11 @@ pub async fn rename_board(app: &AppState, id: &Uuid, title: &str, by: &str) -> A
     Ok(board)
 }
 
-/// Only the person who made a board, or an admin, deletes it.
+/// Only the person who made a board, a moderator or an admin deletes it.
 pub fn may_delete(me: &User, board: &Board) -> ApiResult<()> {
-    if !me.admin && board.owner_id.as_deref() != Some(me.id.as_str()) {
+    if me.role < crate::auth::Role::Moderator && board.owner_id.as_deref() != Some(me.id.as_str()) {
         return Err(ApiError::forbidden(
-            "only the person who made this board, or an admin, can delete it",
+            "only the person who made this board, a moderator or an admin, can delete it",
         ));
     }
     Ok(())

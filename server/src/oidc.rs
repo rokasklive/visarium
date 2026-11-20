@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use axum::Router;
@@ -39,7 +39,7 @@ use crate::error::{ApiError, ApiResult};
 
 /// An OIDC attempt has this long from leaving for the provider to coming back.
 pub const FLOW_TTL: Duration = Duration::from_secs(600);
-const GOOGLE_ISSUER: &str = "https://accounts.google.com";
+pub const GOOGLE_ISSUER: &str = "https://accounts.google.com";
 
 // --- configuration ----------------------------------------------------------
 
@@ -171,6 +171,9 @@ impl<'c> AsyncHttpClient<'c> for Http {
 pub struct Provider {
     pub id: String,
     pub name: String,
+    /// Set by `VISARIUM_OIDC_*`: read-only in the app, and wins over a stored
+    /// provider of the same id.
+    pub from_env: bool,
     config: ProviderConfig,
     /// Discovery document and JWKS. Fetched at startup if the provider
     /// answers, otherwise on first use; fetched again when an ID token is
@@ -179,10 +182,11 @@ pub struct Provider {
 }
 
 impl Provider {
-    pub async fn new(config: ProviderConfig, http: &Http) -> Self {
+    pub async fn new(config: ProviderConfig, http: &Http, from_env: bool) -> Self {
         let provider = Self {
             id: config.id.clone(),
             name: config.name.clone(),
+            from_env,
             config,
             metadata: RwLock::new(None),
         };
@@ -235,6 +239,124 @@ impl Provider {
         )
         .set_redirect_uri(RedirectUrl::new(redirect).map_err(|e| e.to_string())?))
     }
+}
+
+/// The providers sign-in offers right now. Swapped whole when an admin changes
+/// one (`reload`); a flow in progress looks its provider up again by id.
+pub type Providers = std::sync::RwLock<Vec<Arc<Provider>>>;
+
+/// A provider an admin set up in the app (`oidc_provider`).
+#[derive(Clone, Debug, sqlx::FromRow)]
+pub struct Stored {
+    pub id: String,
+    pub name: String,
+    pub issuer: String,
+    pub client_id: String,
+    pub client_secret: String,
+    pub enabled: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl Stored {
+    fn config(&self) -> ProviderConfig {
+        ProviderConfig {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            issuer: self.issuer.clone(),
+            client_id: self.client_id.clone(),
+            client_secret: self.client_secret.clone(),
+        }
+    }
+}
+
+pub async fn stored(db: &sqlx::SqlitePool) -> sqlx::Result<Vec<Stored>> {
+    sqlx::query_as("SELECT * FROM oidc_provider ORDER BY id <> 'google', id")
+        .fetch_all(db)
+        .await
+}
+
+/// The active list: environment providers, then enabled stored ones whose id
+/// the environment does not use. A provider whose settings did not change is
+/// kept as it is, with the discovery document it already fetched.
+pub async fn build(
+    env: &[ProviderConfig],
+    stored: &[Stored],
+    old: &[Arc<Provider>],
+    http: &Http,
+) -> Vec<Arc<Provider>> {
+    let wanted = env.iter().map(|c| (c.clone(), true)).chain(
+        stored
+            .iter()
+            .filter(|s| s.enabled && !env.iter().any(|e| e.id == s.id))
+            .map(|s| (s.config(), false)),
+    );
+    let mut out = Vec::new();
+    for (config, from_env) in wanted {
+        match old
+            .iter()
+            .find(|p| p.config == config && p.from_env == from_env)
+        {
+            Some(p) => out.push(p.clone()),
+            None => out.push(Arc::new(Provider::new(config, http, from_env).await)),
+        }
+    }
+    out
+}
+
+/// Re-reads stored providers and swaps the active list.
+pub async fn reload(app: &AppState) -> sqlx::Result<()> {
+    let stored = stored(&app.db).await?;
+    let old = active(app);
+    let next = build(&app.config.providers, &stored, &old, &app.http).await;
+    *app.oidc.write().unwrap() = next;
+    Ok(())
+}
+
+/// A snapshot of the active providers; empty in single-user mode.
+pub fn active(app: &AppState) -> Vec<Arc<Provider>> {
+    if app.local_user.is_some() {
+        return Vec::new();
+    }
+    app.oidc.read().unwrap().clone()
+}
+
+/// Fetches an issuer's discovery document, to refuse a provider that would
+/// never work before it is saved.
+pub async fn discover(issuer: &str, http: &Http) -> Result<(), String> {
+    let url = IssuerUrl::new(issuer.to_string())
+        .map_err(|e| format!("\"{issuer}\" is not a valid issuer URL: {e}"))?;
+    CoreProviderMetadata::discover_async(url, http)
+        .await
+        .map(|_| ())
+        .map_err(|e| {
+            format!("could not read the OpenID Connect discovery document at {issuer}/.well-known/openid-configuration: {e}")
+        })
+}
+
+/// Whether anybody, and the admin making a change, could still sign in with
+/// these methods. Used at startup and before every provider change.
+/// `actor`: the admin's password (if any) and their linked provider ids.
+pub fn way_in(
+    password_enabled: bool,
+    providers: &[String],
+    actor: Option<(bool, &[String])>,
+) -> Result<(), &'static str> {
+    if !password_enabled && providers.is_empty() {
+        return Err(
+            "password sign-in is off and no sign-in provider would be left, so nobody could sign in",
+        );
+    }
+    if let Some((has_password, linked)) = actor {
+        let keeps_one =
+            (password_enabled && has_password) || linked.iter().any(|l| providers.contains(l));
+        if !keeps_one {
+            return Err(
+                "you would lose your own way in: set a password or link another provider first",
+            );
+        }
+    }
+    Ok(())
 }
 
 // --- flows in progress ------------------------------------------------------
@@ -340,11 +462,8 @@ pub struct StartQuery {
     return_to: Option<String>,
 }
 
-fn find<'a>(app: &'a AppState, id: &str) -> Option<&'a Provider> {
-    if app.local_user.is_some() {
-        return None;
-    }
-    app.oidc.iter().find(|p| p.id == id)
+fn find(app: &AppState, id: &str) -> Option<Arc<Provider>> {
+    active(app).into_iter().find(|p| p.id == id)
 }
 
 async fn start(
@@ -474,6 +593,9 @@ async fn callback(
                 failed("cancelled")
             } else if q.state.as_deref() != Some(flow.state.as_str()) {
                 failed("expired")
+            } else if find(&app, &provider).is_none() {
+                // Turned off or removed while this sign-in was at the provider.
+                failed("provider-gone")
             } else {
                 match verify(&app, &provider, q.code.unwrap_or_default(), &flow).await {
                     Ok(identity) => finish(&app, &headers, &principal, identity, flow).await,
@@ -795,7 +917,7 @@ async fn list_identities(
     let named: Vec<_> = identities
         .into_iter()
         .map(|i| {
-            let name = app.oidc.iter().find(|p| p.id == i.provider).map_or(i.provider.clone(), |p| p.name.clone());
+            let name = find(&app, &i.provider).map_or(i.provider.clone(), |p| p.name.clone());
             serde_json::json!({ "provider": i.provider, "name": name, "email": i.email, "createdAt": i.created_at })
         })
         .collect();
@@ -843,6 +965,24 @@ async fn unlink(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn way_in_needs_a_method_for_everyone_and_for_the_admin() {
+        let google = vec!["google".to_string()];
+        assert!(
+            way_in(false, &[], None).is_err(),
+            "passwords off, no provider"
+        );
+        assert!(way_in(true, &[], None).is_ok());
+        assert!(way_in(false, &google, None).is_ok());
+        // An admin with only Google, removing Google, passwords on.
+        assert!(way_in(true, &[], Some((false, &google))).is_err());
+        // The same admin with a password keeps a way in.
+        assert!(way_in(true, &[], Some((true, &google))).is_ok());
+        // A password does not count while passwords are off.
+        assert!(way_in(false, &["authentik".into()], Some((true, &google))).is_err());
+        assert!(way_in(false, &google, Some((false, &google))).is_ok());
+    }
 
     fn vars(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
         pairs

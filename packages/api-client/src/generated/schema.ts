@@ -40,23 +40,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/accounts/{id}/admin": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /** Grant or revoke admin */
-        put: operations["setAdmin"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/accounts/me/password": {
         parameters: {
             query?: never;
@@ -261,7 +244,8 @@ export interface paths {
         put?: never;
         /** Deactivate an account. Everything it made stays attributed to it */
         post: operations["deactivate"];
-        delete?: never;
+        /** Undo a deactivation. Ended sessions and tokens stay ended */
+        delete: operations["deactivate"];
         options?: never;
         head?: never;
         patch?: never;
@@ -436,14 +420,13 @@ export interface components {
         MembershipResult: {
             skipped?: string[];
         };
-        AdminFlag: {
-            granted?: boolean;
-        };
         AppUser: {
             /** Format: uuid */
             id?: string;
             username?: string;
             displayName?: string;
+            role?: Role;
+            /** `role === "admin"`, kept for older clients. */
             admin?: boolean;
             /** Format: date-time */
             deactivatedAt?: string;
@@ -1094,32 +1077,6 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
-            };
-        };
-    };
-    setAdmin: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AdminFlag"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["AppUser"];
-                };
             };
         };
     };
@@ -1941,9 +1898,13 @@ export interface Identities {
     identities: { provider: string; name: string; email?: string | null; createdAt: string }[];
 }
 
+/** An account's rank, lowest first. */
+export type Role = "member" | "moderator" | "admin";
+
 export interface Invitation {
     id: string;
     purpose: "join" | "reset";
+    role: Role;
     admin: boolean;
     note?: string | null;
     /** reset: whose password. */
@@ -1956,6 +1917,7 @@ export interface Invitation {
 
 export interface InvitationInfo {
     purpose: "join" | "reset";
+    role: Role;
     admin: boolean;
     note?: string | null;
     username?: string | null;
@@ -1975,6 +1937,29 @@ export interface ShareLink {
     lastUsedAt?: string | null;
     /** Only in the answer that created it: `/s#{token}`. */
     link?: string;
+}
+
+/** A sign-in provider as Instance Settings shows it. Never carries the secret. */
+export interface SignInProvider {
+    id: string;
+    name: string;
+    issuer: string;
+    clientId: string;
+    hasSecret: boolean;
+    enabled: boolean;
+    /** Set by VISARIUM_OIDC_*: read-only here. */
+    fromEnv: boolean;
+    /** What to register with the provider; null without VISARIUM_PUBLIC_URL. */
+    redirectUri: string | null;
+    linkedAccounts?: number;
+    createdAt?: string;
+    updatedAt?: string;
+}
+
+export interface SignInProviders {
+    providers: SignInProvider[];
+    publicUrl: string | null;
+    passwordEnabled: boolean;
 }
 
 export interface SharedSession {
@@ -2035,7 +2020,7 @@ export interface paths {
         get: Read<NoParams, { 200: Json<Invitation[]> }>;
         post: Op<
             NoParams,
-            Body<{ purpose?: "join" | "reset"; admin?: boolean; note?: string; userId?: string }>,
+            Body<{ purpose?: "join" | "reset"; role?: Role; admin?: boolean; note?: string; userId?: string }>,
             { 201: Json<Invitation> }
         >;
     };
@@ -2102,5 +2087,26 @@ export interface paths {
             Body<{ code: string; verifier: string }>,
             { 201: Json<{ token: string; user: components["schemas"]["AppUser"] }> }
         >;
+    };
+    "/api/accounts/{id}/role": {
+        parameters: NoParams;
+        /** Admins only. Takes effect on the account's next request */
+        put: Op<PathParams<{ id: string }>, Body<{ role: Role }>, { 200: Json<components["schemas"]["AppUser"]> }>;
+    };
+    "/api/instance/providers": {
+        parameters: NoParams;
+        /** Admins only: every sign-in provider, environment ones first, no secrets */
+        get: Read<NoParams, { 200: Json<SignInProviders> }>;
+    };
+    "/api/instance/providers/{id}": {
+        parameters: NoParams;
+        /** Add or edit a stored provider. An empty secret keeps the stored one */
+        put: Op<
+            PathParams<{ id: string }>,
+            Body<{ name?: string; issuer?: string; clientId?: string; clientSecret?: string; enabled?: boolean }>,
+            { 200: Json<SignInProvider> }
+        >;
+        /** 409 with linkedAccounts/strandedAccounts unless ?confirm=true */
+        delete: Read<{ path: { id: string }; query?: { confirm?: boolean } }, { 204: Empty }>;
     };
 }

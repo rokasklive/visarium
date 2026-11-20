@@ -345,8 +345,8 @@ async fn auth_csrf_and_accounts() {
     let demote = c
         .json(
             "PUT",
-            &format!("/api/accounts/{me}/admin"),
-            json!({ "granted": false }),
+            &format!("/api/accounts/{me}/role"),
+            json!({ "role": "moderator" }),
         )
         .await;
     assert_eq!(
@@ -2767,6 +2767,11 @@ async fn migration_0005_keeps_sessions_and_numbers_items_per_kind() {
     db.close().await;
 
     let app = visarium::open(config).await.unwrap();
+    let role: String = sqlx::query_scalar("SELECT role FROM app_user WHERE id = 'u1'")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(role, "admin", "0009 keeps an admin an admin");
     let sessions: Vec<(String, String)> =
         sqlx::query_as("SELECT id, kind FROM session ORDER BY id")
             .fetch_all(&app.db)
@@ -3800,5 +3805,309 @@ async fn a_note_reports_its_passages_and_links_to_them() {
         .collect();
     froms.sort();
     assert_eq!(froms, vec!["^a", "^b"]);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// --- roles and Instance Settings (instance-administration) ------------------
+
+/// Joins through a fresh invitation from `staff`, signed in on a new client.
+async fn join(staff: &mut Client, body: Value, username: &str) -> (Client, String) {
+    let token = invite(staff, body).await;
+    let mut c = Client::new(staff.router.clone());
+    c.get("/api/session").await;
+    let joined = c
+        .json(
+            "POST",
+            "/api/invitations/redeem",
+            json!({ "token": token, "username": username, "displayName": username, "password": "a long enough password" }),
+        )
+        .await;
+    assert_eq!(joined.status, StatusCode::CREATED, "{}", joined.json());
+    let id = joined.json()["id"].as_str().unwrap().to_string();
+    (c, id)
+}
+
+#[tokio::test]
+async fn moderators_run_members_but_not_staff_or_setup() {
+    let (mut admin, _app, dir) = signed_in().await;
+    let ada = admin.get("/api/session").await.json()["user"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (mut mo, mo_id) = join(&mut admin, json!({ "role": "moderator" }), "mo").await;
+    let me = mo.get("/api/session").await.json()["user"].clone();
+    assert_eq!(
+        (me["role"].as_str(), me["admin"].as_bool()),
+        (Some("moderator"), Some(false))
+    );
+    let (mut bob, bob_id) = join(&mut mo, json!({}), "bob").await;
+    assert_eq!(
+        bob.get("/api/session").await.json()["user"]["role"],
+        "member"
+    );
+
+    // Moderators invite members only.
+    let up = mo
+        .json("POST", "/api/invitations", json!({ "role": "moderator" }))
+        .await;
+    assert_eq!(up.status, StatusCode::FORBIDDEN);
+    assert_eq!(mo.get("/api/accounts").await.status, StatusCode::OK);
+    assert_eq!(bob.get("/api/accounts").await.status, StatusCode::FORBIDDEN);
+
+    // Resets and deactivation: members yes, staff no.
+    let reset = |id: &str| json!({ "purpose": "reset", "userId": id });
+    assert_eq!(
+        mo.json("POST", "/api/invitations", reset(&bob_id))
+            .await
+            .status,
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        mo.json("POST", "/api/invitations", reset(&ada))
+            .await
+            .status,
+        StatusCode::FORBIDDEN
+    );
+    let off = mo
+        .json(
+            "POST",
+            &format!("/api/accounts/{bob_id}/deactivation"),
+            json!(null),
+        )
+        .await;
+    assert_eq!(off.status, StatusCode::OK, "{}", off.json());
+    assert_eq!(
+        bob.get("/api/boards").await.status,
+        StatusCode::UNAUTHORIZED,
+        "sessions ended"
+    );
+    let back = mo
+        .json(
+            "DELETE",
+            &format!("/api/accounts/{bob_id}/deactivation"),
+            json!(null),
+        )
+        .await;
+    assert_eq!(
+        (back.status, back.json()["deactivatedAt"].is_null()),
+        (StatusCode::OK, true)
+    );
+    assert_eq!(
+        mo.json(
+            "POST",
+            &format!("/api/accounts/{ada}/deactivation"),
+            json!(null)
+        )
+        .await
+        .status,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        mo.json(
+            "POST",
+            &format!("/api/accounts/{mo_id}/deactivation"),
+            json!(null)
+        )
+        .await
+        .status,
+        StatusCode::FORBIDDEN,
+        "moderators do not act on moderators, themselves included"
+    );
+
+    // Content: any board, every share link.
+    let board = admin
+        .json("POST", "/api/boards", json!({ "title": "Ada's" }))
+        .await
+        .json()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(mo.get("/api/shares").await.status, StatusCode::OK);
+    assert_eq!(
+        mo.send("DELETE", &format!("/api/boards/{board}"), None, vec![], &[])
+            .await
+            .status,
+        StatusCode::NO_CONTENT
+    );
+
+    // Setup is admin-only: roles and providers.
+    let promote = |role: &str| json!({ "role": role });
+    assert_eq!(
+        mo.json(
+            "PUT",
+            &format!("/api/accounts/{bob_id}/role"),
+            promote("moderator")
+        )
+        .await
+        .status,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        mo.get("/api/instance/providers").await.status,
+        StatusCode::FORBIDDEN
+    );
+    let made = admin
+        .json(
+            "PUT",
+            &format!("/api/accounts/{bob_id}/role"),
+            promote("moderator"),
+        )
+        .await;
+    assert_eq!(made.json()["role"], "moderator");
+    assert_eq!(
+        mo.json(
+            "POST",
+            &format!("/api/accounts/{bob_id}/deactivation"),
+            json!(null)
+        )
+        .await
+        .status,
+        StatusCode::FORBIDDEN,
+        "bob is a moderator now"
+    );
+    let last = admin
+        .json(
+            "PUT",
+            &format!("/api/accounts/{ada}/role"),
+            promote("moderator"),
+        )
+        .await;
+    assert_eq!(
+        last.status,
+        StatusCode::CONFLICT,
+        "the last admin stays an admin"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn providers_are_set_up_in_the_app() {
+    let issuer = Issuer::start().await;
+    let (app, dir) = with_provider(&issuer, |_| {}).await;
+    let mut admin = Client::new(visarium::router(app.clone()));
+    admin.get("/api/session").await;
+    admin
+        .json(
+            "POST",
+            "/api/setup",
+            json!({ "username": "ada", "displayName": "Ada", "password": "correct horse battery" }),
+        )
+        .await;
+
+    // The environment's provider is listed, read-only.
+    let list = admin.get("/api/instance/providers").await.json();
+    assert_eq!(
+        (
+            list["providers"][0]["id"].as_str(),
+            list["providers"][0]["fromEnv"].as_bool()
+        ),
+        (Some("test"), Some(true))
+    );
+    let env = admin
+        .json(
+            "PUT",
+            "/api/instance/providers/test",
+            json!({ "clientId": "x", "clientSecret": "y" }),
+        )
+        .await;
+    assert_eq!(env.status, StatusCode::CONFLICT);
+
+    // A bad issuer is refused before anything is saved.
+    let bad = admin
+        .json(
+            "PUT",
+            "/api/instance/providers/second",
+            json!({ "issuer": "http://127.0.0.1:1", "clientId": "x", "clientSecret": "y" }),
+        )
+        .await;
+    assert_eq!(bad.status, StatusCode::BAD_REQUEST, "{}", bad.json());
+
+    // Added, offered at once, secret never returned.
+    let body = json!({ "name": "Second", "issuer": issuer.url, "clientId": issuer::CLIENT_ID, "clientSecret": issuer::CLIENT_SECRET });
+    let saved = admin
+        .json("PUT", "/api/instance/providers/second", body)
+        .await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.json());
+    assert_eq!(
+        saved.json()["redirectUri"],
+        "http://localhost:8080/auth/oidc/second/callback"
+    );
+    let session = admin.get("/api/session").await.json();
+    assert_eq!(
+        session["providers"][1],
+        json!({ "id": "second", "name": "Second" })
+    );
+    let listed = admin.get("/api/instance/providers").await;
+    assert!(!String::from_utf8_lossy(&listed.body).contains(issuer::CLIENT_SECRET));
+    assert_eq!(listed.json()["providers"][1]["hasSecret"], true);
+
+    // Renamed without a secret: it still signs in, and links Ada.
+    let renamed = admin
+        .json(
+            "PUT",
+            "/api/instance/providers/second",
+            json!({ "name": "Second SSO" }),
+        )
+        .await;
+    assert_eq!(renamed.status, StatusCode::OK, "{}", renamed.json());
+    let linked = sso(
+        &mut admin,
+        &issuer,
+        "/auth/oidc/second/start?intent=link&return=/settings",
+        Person::new("ada-second", "ada@example.com"),
+    )
+    .await;
+    assert_eq!(location(&linked), "/settings");
+
+    // Removal asks first, with counts; Ada keeps her password, so none stranded.
+    let ask = admin
+        .send(
+            "DELETE",
+            "/api/instance/providers/second",
+            None,
+            vec![],
+            &[],
+        )
+        .await;
+    assert_eq!(
+        (
+            ask.status,
+            ask.json()["linkedAccounts"].as_i64(),
+            ask.json()["strandedAccounts"].as_i64()
+        ),
+        (StatusCode::CONFLICT, Some(1), Some(0))
+    );
+
+    // A sign-in that left before the provider went fails on its way back.
+    let mut other = Client::new(visarium::router(app.clone()));
+    other.get("/api/session").await;
+    let callback = to_callback(
+        &mut other,
+        &issuer,
+        "/auth/oidc/second/start?intent=sign-in&return=/",
+        Person::new("ada-second", "ada@example.com"),
+    )
+    .await;
+    let gone = admin
+        .send(
+            "DELETE",
+            "/api/instance/providers/second?confirm=true",
+            None,
+            vec![],
+            &[],
+        )
+        .await;
+    assert_eq!(gone.status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        location(&other.get(&callback).await),
+        "/sign-in?error=provider-gone"
+    );
+    assert_eq!(
+        admin.get("/api/session").await.json()["providers"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
     let _ = std::fs::remove_dir_all(dir);
 }

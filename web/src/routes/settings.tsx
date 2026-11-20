@@ -1,37 +1,31 @@
-import { createFileRoute } from '@tanstack/react-router';
+import { createFileRoute, Link } from '@tanstack/react-router';
 import { type FormEvent, useEffect, useState } from 'react';
 import {
-  absoluteLink,
   mcpUrl,
-  useAccounts,
   useAgentSettings,
   useAgentTokens,
   useChangePassword,
   useCreateAgentToken,
-  useCreateInvitation,
-  useDeactivateAccount,
   useEditSelf,
   useEndSession,
   useIdentities,
-  useInvitations,
   useRevokeAgentToken,
-  useRevokeInvitation,
   useSessions,
-  useSetAdmin,
   useSetAgentGrant,
   useSetAgentSettings,
   useUnlinkIdentity,
 } from '~/api/accounts';
-import { copyText, type LocalPort, localPort, setLocalPort } from '~/api/desktop';
+import { type LocalPort, localPort, setLocalPort } from '~/api/desktop';
 import { type Account, providerStart, useSession } from '~/api/session';
-import { ConfirmButton } from '~/components/confirm-button';
+import { CopyField, GhostButton, SectionHeading, TextField } from '~/components/settings-ui';
 import { useShortcutLegend } from '~/features/canvas/shortcut-legend';
 import { About, Diagnostics } from '~/features/settings/about';
 
 export const Route = createFileRoute('/settings')({ component: Settings });
 
 /**
- * Your account, and — if you administer this instance — everyone else's.
+ * Your own account and this device. Everyone else's accounts, and the
+ * instance itself, are in Instance Settings (`instance.tsx`), for staff.
  *
  * A document route, so 24px spacing rather than the toolbar's 8px. Three type
  * sizes, one radius, ghost buttons, and no filled control anywhere: this is a
@@ -52,7 +46,6 @@ function Settings() {
     ['security', 'Security', !!me && shared],
     ['agents', 'Agents', !!me],
     ['canvas', 'Canvas', true],
-    ['accounts', 'Accounts', !!me?.admin && shared],
     ['diagnostics', 'Diagnostics', !!me],
     ['about', 'About', !!me],
   ];
@@ -92,7 +85,15 @@ function Settings() {
         ) : null}
         {me ? <AgentsSection singleUser={!shared} /> : null}
         <CanvasSection />
-        {me?.admin && shared ? <AdminSection meId={me.id} /> : null}
+        {me?.role && me.role !== 'member' && shared ? (
+          <p className="mb-6 border-b border-line pb-6 text-ink-dim">
+            Accounts, invitations and sign-in for this instance are in{' '}
+            <Link to="/instance" className="text-ink underline">
+              Instance Settings
+            </Link>
+            .
+          </p>
+        ) : null}
         {me ? (
           <div id="diagnostics" className="scroll-mt-6">
             <Diagnostics Heading={SectionHeading} Button={GhostButton} />
@@ -124,63 +125,6 @@ function CanvasSection() {
 }
 
 /** A section heading. 11px uppercase is what makes small text read as a heading. */
-function SectionHeading({ children }: { children: string }) {
-  return <h2 className="mb-3 text-[11px] uppercase tracking-wide text-ink-dim">{children}</h2>;
-}
-
-function TextField({
-  label,
-  value,
-  onChange,
-  type = 'text',
-  autoComplete,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  type?: 'text' | 'password';
-  autoComplete: string;
-}) {
-  return (
-    <label className="mb-3 block">
-      <span className="mb-1 block text-[11px] uppercase tracking-wide text-ink-dim">{label}</span>
-      <input
-        type={type}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        autoComplete={autoComplete}
-        className="w-full max-w-[320px] rounded-sm border border-line bg-surface-raised px-2 py-1 text-ink placeholder:text-ink-disabled"
-      />
-    </label>
-  );
-}
-
-function GhostButton({
-  children,
-  disabled,
-  onClick,
-  type = 'button',
-  label,
-}: {
-  children: string;
-  disabled?: boolean;
-  onClick?: () => void;
-  type?: 'button' | 'submit';
-  label?: string;
-}) {
-  return (
-    <button
-      type={type === 'submit' ? 'submit' : 'button'}
-      onClick={onClick}
-      disabled={disabled}
-      aria-label={label}
-      className="rounded-sm border border-line px-2 py-0.5 text-ink-dim hover:bg-surface-raised hover:text-ink disabled:text-ink-disabled"
-    >
-      {children}
-    </button>
-  );
-}
-
 function SelfSection({ me, singleUser }: { me: Account; singleUser: boolean }) {
   const edit = useEditSelf();
   const [displayName, setDisplayName] = useState(me.displayName ?? '');
@@ -538,56 +482,6 @@ function AgentsSection({ singleUser }: { singleUser: boolean }) {
 }
 
 /** A value to copy: a read-only field that selects itself, and a copy button. */
-function CopyField({
-  label,
-  value,
-  testId,
-  lines,
-}: {
-  label: string;
-  value: string;
-  testId: string;
-  /** A multi-line value gets a text area this many lines tall. */
-  lines?: number;
-}) {
-  const [copied, setCopied] = useState(false);
-  const field =
-    'w-full min-w-0 rounded-sm border border-line bg-surface-raised px-2 py-1 font-mono text-[11px] text-ink';
-  return (
-    <div className="mb-3">
-      <span className="mb-1 block text-[11px] uppercase tracking-wide text-ink-dim">{label}</span>
-      <div className="flex items-start gap-2">
-        {lines ? (
-          <textarea
-            readOnly
-            value={value}
-            rows={lines}
-            aria-label={label}
-            data-testid={testId}
-            onFocus={(e) => e.target.select()}
-            className={`${field} resize-none`}
-          />
-        ) : (
-          <input
-            readOnly
-            value={value}
-            aria-label={label}
-            data-testid={testId}
-            onFocus={(e) => e.target.select()}
-            className={field}
-          />
-        )}
-        <GhostButton
-          label={`Copy ${label}`}
-          onClick={() => void copyText(value).then((ok) => setCopied(ok))}
-        >
-          {copied ? 'copied' : 'copy'}
-        </GhostButton>
-      </div>
-    </div>
-  );
-}
-
 /**
  * The desktop app's local port (desktop/src/local_port.rs): fixed so an agent's
  * address stays put, and moved at once when changed here — the app serves the
@@ -662,190 +556,3 @@ function LocalPortControl() {
  * not a management console. An instance has a handful of people on it, and a
  * screen built for hundreds would be a screen built for nobody.
  */
-function AdminSection({ meId }: { meId: string | undefined }) {
-  const accounts = useAccounts(true);
-  const invitations = useInvitations(true);
-  const invite = useCreateInvitation();
-  const revoke = useRevokeInvitation();
-  const setAdmin = useSetAdmin();
-  const deactivate = useDeactivateAccount();
-
-  const [note, setNote] = useState('');
-  const [asAdmin, setAsAdmin] = useState(false);
-  /** The link just made, shown once: the server keeps only its hash. */
-  const [made, setMade] = useState<{ link: string; what: string } | null>(null);
-
-  const problem = invite.error ?? revoke.error ?? setAdmin.error ?? deactivate.error;
-
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    if (invite.isPending) return;
-    invite.mutate(
-      { purpose: 'join', admin: asAdmin, ...(note.trim() ? { note: note.trim() } : {}) },
-      {
-        onSuccess: (inv) => {
-          setMade(inv.link ? { link: absoluteLink(inv.link), what: 'Invitation' } : null);
-          setNote('');
-          setAsAdmin(false);
-        },
-      },
-    );
-  }
-
-  function resetLink(account: Account) {
-    if (!account.id) return;
-    invite.mutate(
-      { purpose: 'reset', userId: account.id },
-      {
-        onSuccess: (inv) =>
-          setMade(
-            inv.link
-              ? { link: absoluteLink(inv.link), what: `Reset link for ${account.displayName}` }
-              : null,
-          ),
-      },
-    );
-  }
-
-  return (
-    <section id="accounts" className="mb-6 scroll-mt-6 border-b border-line pb-6">
-      <SectionHeading>Accounts on this instance</SectionHeading>
-
-      {/*
-       * Said in words, like every other route's. A list that is empty because it
-       * is still loading and a list that is empty because it failed look
-       * identical, and one of them invites creating an account that exists.
-       */}
-      {accounts.isError && <p className="mb-6 text-ink">accounts could not be loaded</p>}
-      {accounts.isPending && <p className="mb-6 text-ink-dim">loading…</p>}
-
-      <ul className="mb-6">
-        {accounts.data?.map((account) => (
-          <li
-            key={account.id}
-            className="group flex items-center gap-2 border-b border-line py-1.5"
-          >
-            <span className="min-w-0 flex-1 truncate text-ink">
-              {account.displayName}
-              <span className="ml-2 text-ink-dim">{account.username}</span>
-            </span>
-            {account.admin && <span className="shrink-0 text-[11px] text-ink-dim">admin</span>}
-            {account.deactivatedAt && (
-              <span className="shrink-0 text-[11px] text-ink-disabled">deactivated</span>
-            )}
-            {!account.deactivatedAt && account.id !== meId && (
-              <GhostButton
-                label={`${account.admin ? 'Remove admin from' : 'Make admin'} ${account.displayName}`}
-                disabled={setAdmin.isPending}
-                onClick={() =>
-                  account.id && setAdmin.mutate({ id: account.id, granted: !account.admin })
-                }
-              >
-                {account.admin ? 'remove admin' : 'make admin'}
-              </GhostButton>
-            )}
-            {!account.deactivatedAt && account.id !== meId && (
-              <GhostButton
-                label={`Make a password reset link for ${account.displayName}`}
-                disabled={invite.isPending}
-                onClick={() => resetLink(account)}
-              >
-                reset link
-              </GhostButton>
-            )}
-            {!account.deactivatedAt && account.id !== meId && (
-              // Deactivation signs them out at once and is not deletion:
-              // everything they made stays theirs. Said here because the two
-              // are easy to confuse.
-              <ConfirmButton
-                label={`Deactivate ${account.displayName}`}
-                disabled={deactivate.isPending}
-                question={`Deactivate ${account.displayName}? They are signed out immediately. Everything they made stays theirs.`}
-                onConfirm={() => {
-                  if (account.id) deactivate.mutate(account.id);
-                }}
-                className="rounded-sm border border-line px-2 py-0.5 text-ink-dim hover:bg-surface-raised hover:text-ink disabled:text-ink-disabled"
-              >
-                deactivate
-              </ConfirmButton>
-            )}
-          </li>
-        ))}
-      </ul>
-
-      <SectionHeading>Invite someone</SectionHeading>
-      <form onSubmit={submit}>
-        <TextField
-          label="Note (who it is for)"
-          value={note}
-          onChange={setNote}
-          autoComplete="off"
-        />
-        <label className="mb-3 flex items-center gap-2 text-ink-dim">
-          <input type="checkbox" checked={asAdmin} onChange={(e) => setAsAdmin(e.target.checked)} />
-          They will administer this instance
-        </label>
-        <GhostButton type="submit" disabled={invite.isPending}>
-          Make an invitation link
-        </GhostButton>
-      </form>
-
-      {made && (
-        <div className="mt-3">
-          <span className="mb-1 block text-[11px] uppercase tracking-wide text-ink-dim">
-            {made.what}
-          </span>
-          <input
-            readOnly
-            value={made.link}
-            aria-label={made.what}
-            onFocus={(e) => e.target.select()}
-            className="w-full max-w-[480px] rounded-sm border border-line bg-surface-raised px-2 py-1 text-ink"
-          />
-          <p className="mt-1 text-[11px] text-ink-dim">Shown once. Copy it and send it to them.</p>
-        </div>
-      )}
-
-      {problem && (
-        <p className="mt-2 text-ink" role="alert">
-          {problem.message}
-        </p>
-      )}
-
-      {(invitations.data?.length ?? 0) > 0 && (
-        <>
-          <h3 className="mt-6 mb-2 text-[11px] uppercase tracking-wide text-ink-dim">
-            Waiting to be used
-          </h3>
-          <ul>
-            {invitations.data?.map((inv) => (
-              <li key={inv.id} className="flex items-center gap-2 border-b border-line py-1.5">
-                <span className="min-w-0 flex-1 truncate text-ink">
-                  {inv.purpose === 'reset' ? `Reset for ${inv.username}` : inv.note || 'Invitation'}
-                  <span className="ml-2 text-ink-dim">
-                    {inv.admin ? 'admin · ' : ''}until{' '}
-                    {new Date(inv.expiresAt).toLocaleDateString()}
-                  </span>
-                </span>
-                <GhostButton
-                  label="Revoke this link"
-                  disabled={revoke.isPending}
-                  onClick={() => revoke.mutate(inv.id)}
-                >
-                  revoke
-                </GhostButton>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-
-      {/* The honest cost of not depending on SMTP, stated where it applies. */}
-      <p className="mt-3 text-[11px] text-ink-dim">
-        There is no email on this instance: you send the link yourself. They choose their own
-        password, or sign in with a provider. A link works once, for seven days (a reset link, one
-        day).
-      </p>
-    </section>
-  );
-}

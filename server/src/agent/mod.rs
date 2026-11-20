@@ -888,7 +888,7 @@ fn tools(manage_boards: bool) -> Value {
               "inputSchema": { "type": "object", "properties": { "board": board, "title": r("Optional: the copy's title."), "request_id": request_id }, "required": ["board"] },
               "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false } }),
             json!({ "name": "board_delete", "title": "Delete a board",
-              "description": "Deletes a board for good, after your person confirms in your client; nothing is deleted without their yes. Only the board's owner or an admin can delete it.",
+              "description": "Deletes a board for good, after your person confirms in your client; nothing is deleted without their yes. Only the board's owner, a moderator or an admin can delete it.",
               "inputSchema": { "type": "object", "properties": { "board": board }, "required": ["board"] },
               "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false } }),
         ]);

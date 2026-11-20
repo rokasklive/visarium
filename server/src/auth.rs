@@ -133,12 +133,38 @@ pub struct User {
     pub id: String,
     pub username: String,
     pub display_name: String,
+    pub role: Role,
+    /// `role == admin`, kept for clients that predate roles (older desktop
+    /// builds read it). Drop a release after roles ship.
     pub admin: bool,
     pub deactivated_at: Option<String>,
     pub created_at: String,
 }
 
-const COLUMNS: &str = "id, username, display_name, is_admin AS admin, deactivated_at, created_at";
+/// An account's rank, lowest first: the derived order is the rank order.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, sqlx::Type,
+)]
+#[serde(rename_all = "lowercase")]
+#[sqlx(rename_all = "lowercase")]
+pub enum Role {
+    Member,
+    Moderator,
+    Admin,
+}
+
+impl Role {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Role::Member => "member",
+            Role::Moderator => "moderator",
+            Role::Admin => "admin",
+        }
+    }
+}
+
+const COLUMNS: &str =
+    "id, username, display_name, role, role = 'admin' AS admin, deactivated_at, created_at";
 
 pub async fn find_user(db: &SqlitePool, id: &str) -> sqlx::Result<Option<User>> {
     sqlx::query_as(sqlx::AssertSqlSafe(format!(
@@ -165,7 +191,7 @@ pub async fn ensure_local_user(db: &SqlitePool) -> sqlx::Result<String> {
     }
     let id = new_id();
     sqlx::query(
-        "INSERT INTO app_user (id, username, display_name, is_admin) VALUES (?, 'local', 'You', 1)",
+        "INSERT INTO app_user (id, username, display_name, role) VALUES (?, 'local', 'You', 'admin')",
     )
     .bind(&id)
     .execute(db)
@@ -181,20 +207,20 @@ pub async fn insert_user<'e>(
     username: &str,
     display_name: &str,
     password_hash: Option<&str>,
-    admin: bool,
+    role: Role,
 ) -> ApiResult<User> {
     sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "INSERT INTO app_user (id, username, display_name, password_hash, is_admin) VALUES (?, ?, ?, ?, ?) RETURNING {COLUMNS}"
+        "INSERT INTO app_user (id, username, display_name, password_hash, role) VALUES (?, ?, ?, ?, ?) RETURNING {COLUMNS}"
     )))
     .bind(new_id())
     .bind(username)
     .bind(display_name.trim())
     .bind(password_hash)
-    .bind(admin)
+    .bind(role)
     .fetch_one(db)
     .await
     .map_err(taken)
-    .inspect(|user: &User| tracing::info!(user = %user.id, admin, "account created"))
+    .inspect(|user: &User| tracing::info!(user = %user.id, role = role.as_str(), "account created"))
 }
 
 // --- sessions ---------------------------------------------------------------
@@ -835,10 +861,8 @@ pub async fn current(
     let user = principal.user();
     let setup_required = user.is_none() && !any_account(&app.db).await?;
     let multi = app.local_user.is_none();
-    let providers: Vec<_> = app
-        .oidc
+    let providers: Vec<_> = crate::oidc::active(&app)
         .iter()
-        .filter(|_| multi)
         .map(|p| json!({ "id": p.id, "name": p.name }))
         .collect();
     // `singleUser`: there is no sign-in to return to, so the SPA hides Sign out.
@@ -1045,7 +1069,14 @@ pub async fn claim_in(
     if exists {
         return Err(ApiError::conflict("this instance already has an account"));
     }
-    let user = insert_user(&mut **tx, username, display_name, password_hash, true).await?;
+    let user = insert_user(
+        &mut **tx,
+        username,
+        display_name,
+        password_hash,
+        Role::Admin,
+    )
+    .await?;
     for sql in [
         "UPDATE canvas SET owner_id = ? WHERE owner_id IS NULL",
         "UPDATE collection SET owner_id = ? WHERE owner_id IS NULL",
@@ -1063,17 +1094,46 @@ pub fn account_routes() -> Router<AppState> {
         .route("/accounts", get(list_accounts))
         .route("/accounts/me", patch(edit_self))
         .route("/accounts/me/password", put(change_password))
-        .route("/accounts/{id}/admin", put(set_admin))
-        .route("/accounts/{id}/deactivation", post(deactivate))
+        .route("/accounts/{id}/role", put(set_role))
+        .route(
+            "/accounts/{id}/deactivation",
+            post(deactivate).delete(reactivate),
+        )
         .route("/sessions", get(list_sessions).delete(end_other_sessions))
         .route("/sessions/{id}", delete(end_one_session))
 }
 
 pub fn require_admin(user: &User) -> ApiResult<()> {
-    if user.admin {
+    require_role(user, Role::Admin)
+}
+
+/// At least `role`: `require_role(me, Moderator)` admits moderators and admins.
+pub fn require_role(user: &User, role: Role) -> ApiResult<()> {
+    if user.role >= role {
         Ok(())
     } else {
         Err(ApiError::forbidden("this account may not do that").titled("Not allowed"))
+    }
+}
+
+/// Whether `me` may act on an account of rank `target`: an admin on anyone,
+/// a moderator only on members. Moderators never act on each other.
+pub fn may_act_on(me: Role, target: Role) -> bool {
+    me == Role::Admin || (me == Role::Moderator && target == Role::Member)
+}
+
+/// `require_role(Moderator)` plus `may_act_on` the target account.
+pub fn require_staff_over(me: &User, target: Role) -> ApiResult<()> {
+    require_role(me, Role::Moderator)?;
+    if may_act_on(me.role, target) {
+        Ok(())
+    } else {
+        Err(ApiError::forbidden(format!(
+            "a {} cannot do that to a {}'s account; ask an admin",
+            me.role.as_str(),
+            target.as_str()
+        ))
+        .titled("Not allowed"))
     }
 }
 
@@ -1085,7 +1145,7 @@ async fn list_accounts(
     State(app): State<AppState>,
     axum::Extension(me): axum::Extension<User>,
 ) -> ApiResult<axum::Json<Vec<User>>> {
-    require_admin(&me)?;
+    require_role(&me, Role::Moderator)?;
     Ok(axum::Json(
         sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {COLUMNS} FROM app_user ORDER BY created_at"
@@ -1182,11 +1242,11 @@ async fn change_password(
 /// The last active admin can be neither demoted nor deactivated: the instance
 /// would be left with nobody who can invite anyone.
 async fn require_another_admin_besides(db: &SqlitePool, target: &User) -> ApiResult<()> {
-    if !target.admin || target.deactivated_at.is_some() {
+    if target.role != Role::Admin || target.deactivated_at.is_some() {
         return Ok(());
     }
     let admins: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM app_user WHERE is_admin AND deactivated_at IS NULL",
+        "SELECT count(*) FROM app_user WHERE role = 'admin' AND deactivated_at IS NULL",
     )
     .fetch_one(db)
     .await?;
@@ -1199,29 +1259,30 @@ async fn require_another_admin_besides(db: &SqlitePool, target: &User) -> ApiRes
 }
 
 #[derive(Deserialize)]
-struct AdminFlag {
-    #[serde(default)]
-    granted: bool,
+struct RoleChange {
+    role: Role,
 }
 
-async fn set_admin(
+/// Admins only. Takes effect on the account's next request: `User` is read
+/// fresh from the database for each one, so nobody is signed out.
+async fn set_role(
     State(app): State<AppState>,
     axum::Extension(me): axum::Extension<User>,
     Path(id): Path<Uuid>,
-    Json(body): Json<AdminFlag>,
+    Json(body): Json<RoleChange>,
 ) -> ApiResult<axum::Json<User>> {
     require_admin(&me)?;
     let id = id.to_string();
     let target = find_user(&app.db, &id).await?.ok_or_else(|| gone(&id))?;
-    if !body.granted {
+    if body.role != Role::Admin {
         require_another_admin_besides(&app.db, &target).await?;
     }
-    sqlx::query("UPDATE app_user SET is_admin = ? WHERE id = ?")
-        .bind(body.granted)
+    sqlx::query("UPDATE app_user SET role = ? WHERE id = ?")
+        .bind(body.role)
         .bind(&id)
         .execute(&app.db)
         .await?;
-    tracing::info!(user = %id, admin = body.granted, by = %me.id, "admin changed");
+    tracing::info!(user = %id, role = body.role.as_str(), from = target.role.as_str(), by = %me.id, "role changed");
     Ok(axum::Json(
         find_user(&app.db, &id).await?.ok_or_else(|| gone(&id))?,
     ))
@@ -1232,9 +1293,9 @@ async fn deactivate(
     axum::Extension(me): axum::Extension<User>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<axum::Json<User>> {
-    require_admin(&me)?;
     let id = id.to_string();
     let target = find_user(&app.db, &id).await?.ok_or_else(|| gone(&id))?;
+    require_staff_over(&me, target.role)?;
     require_another_admin_besides(&app.db, &target).await?;
     sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE app_user SET deactivated_at = coalesce(deactivated_at, {NOW}) WHERE id = ?"
@@ -1244,6 +1305,25 @@ async fn deactivate(
     .await?;
     end_sessions_of(&app.db, &id, None).await?;
     tracing::info!(user = %id, by = %me.id, "account deactivated");
+    Ok(axum::Json(
+        find_user(&app.db, &id).await?.ok_or_else(|| gone(&id))?,
+    ))
+}
+
+/// Undoes a deactivation. Sessions and agent tokens it ended stay ended.
+async fn reactivate(
+    State(app): State<AppState>,
+    axum::Extension(me): axum::Extension<User>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<axum::Json<User>> {
+    let id = id.to_string();
+    let target = find_user(&app.db, &id).await?.ok_or_else(|| gone(&id))?;
+    require_staff_over(&me, target.role)?;
+    sqlx::query("UPDATE app_user SET deactivated_at = NULL WHERE id = ?")
+        .bind(&id)
+        .execute(&app.db)
+        .await?;
+    tracing::info!(user = %id, by = %me.id, "account reactivated");
     Ok(axum::Json(
         find_user(&app.db, &id).await?.ok_or_else(|| gone(&id))?,
     ))
@@ -1319,6 +1399,27 @@ async fn end_other_sessions(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn staff_act_only_on_lower_ranks_and_admins_on_all() {
+        use Role::*;
+        let allowed = [
+            (Admin, Admin),
+            (Admin, Moderator),
+            (Admin, Member),
+            (Moderator, Member),
+        ];
+        for me in [Member, Moderator, Admin] {
+            for target in [Member, Moderator, Admin] {
+                assert_eq!(
+                    may_act_on(me, target),
+                    allowed.contains(&(me, target)),
+                    "{me:?} on {target:?}"
+                );
+            }
+        }
+        assert!(Member < Moderator && Moderator < Admin);
+    }
 
     #[test]
     fn labels_name_browser_and_system_only() {

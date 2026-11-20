@@ -6,12 +6,15 @@ import {
   type Identities,
   type Invitation,
   type NewAgentToken,
+  type Role,
   type SessionView,
+  type ShareLink,
+  type SignInProviders,
 } from '@visarium/api-client';
 import { type Account, problemDetail, sessionKey } from './session';
 
 /**
- * Editing an account: your own, and — for an admin — everyone else's.
+ * Editing an account: your own, and — for staff — everyone else's.
  *
  * There is nothing here about a picture, because an account has none. What
  * identifies a person is their display name, and it is set in one text field.
@@ -54,7 +57,14 @@ export function useChangePassword() {
   });
 }
 
-// --- the admin's view -----------------------------------------------------
+// --- staff: moderators and admins -----------------------------------------
+
+/** Mirrors the server's rule: an admin acts on anyone, a moderator on members. */
+export function mayActOn(me: Role | undefined, target: Role | undefined): boolean {
+  return me === 'admin' || (me === 'moderator' && (target ?? 'member') === 'member');
+}
+
+export const isStaff = (role: Role | undefined) => role === 'moderator' || role === 'admin';
 
 export function useAccounts(enabled: boolean) {
   return useQuery({
@@ -76,11 +86,11 @@ function useAdminMutation<T>(mutationFn: (input: T) => Promise<unknown>) {
   });
 }
 
-export function useSetAdmin() {
-  return useAdminMutation(async ({ id, granted }: { id: string; granted: boolean }) => {
-    const { data, error } = await api.PUT('/api/accounts/{id}/admin', {
+export function useSetRole() {
+  return useAdminMutation(async ({ id, role }: { id: string; role: Role }) => {
+    const { data, error } = await api.PUT('/api/accounts/{id}/role', {
       params: { path: { id } },
-      body: { granted },
+      body: { role },
     });
     // The last-admin guard answers 409 with a sentence explaining why, and that
     // sentence is the point — a bare refusal on a control that works for every
@@ -97,6 +107,110 @@ export function useDeactivateAccount() {
     });
     if (!data) throw new Error(problemDetail(error, 'that account could not be deactivated'));
     return data;
+  });
+}
+
+export function useReactivateAccount() {
+  return useAdminMutation(async (id: string) => {
+    const { data, error } = await api.DELETE('/api/accounts/{id}/deactivation', {
+      params: { path: { id } },
+    });
+    if (!data) throw new Error(problemDetail(error, 'that account could not be reactivated'));
+    return data;
+  });
+}
+
+// --- every share link on the instance (staff) -----------------------------
+
+const allSharesKey = ['shares', 'all'] as const;
+
+export function useAllShares(enabled: boolean) {
+  return useQuery({
+    queryKey: allSharesKey,
+    enabled,
+    queryFn: async (): Promise<ShareLink[]> => {
+      const { data, response } = await api.GET('/api/shares');
+      if (!data) throw new Error(`could not list the share links: ${response.status}`);
+      return data;
+    },
+  });
+}
+
+export function useRevokeAnyShare() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error, response } = await api.DELETE('/api/shares/{id}', {
+        params: { path: { id } },
+      });
+      if (!response.ok) throw new Error(problemDetail(error, 'that link could not be revoked'));
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['shares'] }),
+  });
+}
+
+// --- sign-in providers (admins) -------------------------------------------
+
+const providersKey = ['instance-providers'] as const;
+
+export function useProviders(enabled: boolean) {
+  return useQuery({
+    queryKey: providersKey,
+    enabled,
+    queryFn: async (): Promise<SignInProviders> => {
+      const { data, response } = await api.GET('/api/instance/providers');
+      if (!data) throw new Error(`could not list the sign-in providers: ${response.status}`);
+      return data;
+    },
+  });
+}
+
+function useProviderMutation<T>(mutationFn: (input: T) => Promise<unknown>) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: providersKey });
+      // The sign-in screen's buttons come from the session.
+      void queryClient.invalidateQueries({ queryKey: sessionKey });
+    },
+  });
+}
+
+export type ProviderEdit = {
+  id: string;
+  name?: string;
+  issuer?: string;
+  clientId?: string;
+  clientSecret?: string;
+  enabled?: boolean;
+};
+
+export function useSaveProvider() {
+  return useProviderMutation(async ({ id, ...body }: ProviderEdit) => {
+    const { data, error } = await api.PUT('/api/instance/providers/{id}', {
+      params: { path: { id } },
+      body,
+    });
+    if (!data) throw new Error(problemDetail(error, 'that provider could not be saved'));
+    return data;
+  });
+}
+
+/** Without `confirm`, the server answers with how many accounts it would strand. */
+export class RemovalNeedsConfirm extends Error {}
+
+export function useRemoveProvider() {
+  return useProviderMutation(async ({ id, confirm }: { id: string; confirm: boolean }) => {
+    const { error, response } = await api.DELETE('/api/instance/providers/{id}', {
+      params: { path: { id }, query: confirm ? { confirm: true } : {} },
+    });
+    if (response.ok) return;
+    const message = problemDetail(error, 'that provider could not be removed');
+    const asks = (error as { title?: unknown } | undefined)?.title === 'Confirm removal';
+    throw asks
+      ? new RemovalNeedsConfirm(message.replace(/ Send confirm=true.*$/, ''))
+      : new Error(message);
   });
 }
 
@@ -252,7 +366,7 @@ export function mcpUrl(): string {
   return `${window.location.origin}/mcp`;
 }
 
-// --- invitations (admins) -------------------------------------------------
+// --- invitations (staff) -------------------------------------------------
 
 const invitationsKey = ['invitations'] as const;
 
@@ -273,7 +387,7 @@ export function useCreateInvitation() {
   return useMutation({
     mutationFn: async (invitation: {
       purpose: 'join' | 'reset';
-      admin?: boolean;
+      role?: Role;
       note?: string;
       userId?: string;
     }): Promise<Invitation> => {

@@ -57,6 +57,7 @@ export function Shell({ children }: { children: ReactNode }) {
         <NavLink to="/">Boards</NavLink>
         <NavLink to="/library">Library</NavLink>
         <NavLink to="/settings">Settings</NavLink>
+        <InstanceLink />
         <BoardTitle />
         <SignedInPerson />
         {/*
@@ -177,6 +178,14 @@ function BoardTitle() {
       </button>
     </>
   );
+}
+
+/** Instance Settings, for moderators and admins of a shared instance. */
+function InstanceLink() {
+  const session = useSession().data;
+  const role = session?.user?.role;
+  if (session?.singleUser || (role !== 'moderator' && role !== 'admin')) return null;
+  return <NavLink to="/instance">Instance</NavLink>;
 }
 
 function NavLink({ to, children }: { to: string; children: ReactNode }) {

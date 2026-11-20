@@ -173,13 +173,13 @@ async fn list_for_board(
     ))
 }
 
-/// Every working link on the instance: admins only.
+/// Every working link on the instance: moderators and admins.
 async fn list_all(
     State(app): State<AppState>,
     axum::Extension(me): axum::Extension<User>,
 ) -> ApiResult<axum::Json<Vec<ShareLink>>> {
     require_sharing(&app)?;
-    auth::require_admin(&me)?;
+    auth::require_role(&me, auth::Role::Moderator)?;
     Ok(axum::Json(
         sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "{LINK_SQL} WHERE {} ORDER BY l.created_at DESC",

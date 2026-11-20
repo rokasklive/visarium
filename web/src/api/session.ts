@@ -150,6 +150,7 @@ export const SIGN_IN_ERRORS: Record<string, string> = {
   'invite-expired': 'That invitation has expired. Ask an admin for a new one.',
   'invite-invalid': 'That invitation is not valid. It may have been revoked.',
   'provider-unreachable': 'The sign-in provider could not be reached. Try again shortly.',
+  'provider-gone': 'That sign-in provider is no longer available on this instance.',
 };
 
 export function signInError(code: string | null): string | null {

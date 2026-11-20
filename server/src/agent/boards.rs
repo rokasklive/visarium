@@ -166,7 +166,7 @@ async fn delete(
     let board = boards::board(app, &found.id).await.map_err(|e| e.detail)?;
     if boards::may_delete(&caller.user, &board).is_err() {
         return Err(format!(
-            "Only the board's owner or an admin can delete \"{}\", and {} is neither. Nothing was deleted.",
+            "Only the board's owner, a moderator or an admin can delete \"{}\", and {} is none of these. Nothing was deleted.",
             board.title, caller.user.display_name
         ));
     }

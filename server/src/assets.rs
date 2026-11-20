@@ -830,9 +830,11 @@ async fn rename(
 }
 
 fn may_delete(asset: &Asset, me: &User) -> ApiResult<()> {
-    if !me.admin && asset.uploaded_by.as_deref().is_some_and(|u| u != me.id) {
+    if me.role < crate::auth::Role::Moderator
+        && asset.uploaded_by.as_deref().is_some_and(|u| u != me.id)
+    {
         return Err(ApiError::forbidden(
-            "only the person who uploaded this image, or an admin, can delete it",
+            "only the person who uploaded this image, a moderator or an admin, can delete it",
         ));
     }
     Ok(())

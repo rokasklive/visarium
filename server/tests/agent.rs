@@ -111,13 +111,15 @@ fn config(single_user: bool) -> (visarium::Config, PathBuf) {
 
 async fn person(app: &visarium::AppState, username: &str, name: &str) -> String {
     let id = uuid::Uuid::now_v7().to_string();
-    sqlx::query("INSERT INTO app_user (id, username, display_name, is_admin) VALUES (?, ?, ?, 0)")
-        .bind(&id)
-        .bind(username)
-        .bind(name)
-        .execute(&app.db)
-        .await
-        .unwrap();
+    sqlx::query(
+        "INSERT INTO app_user (id, username, display_name, role) VALUES (?, ?, ?, 'member')",
+    )
+    .bind(&id)
+    .bind(username)
+    .bind(name)
+    .execute(&app.db)
+    .await
+    .unwrap();
     id
 }
 
@@ -2075,7 +2077,7 @@ async fn only_an_owner_or_admins_agent_deletes_a_board() {
         r["content"][0]["text"]
             .as_str()
             .unwrap()
-            .contains("owner or an admin"),
+            .contains("a moderator or an admin"),
         "{r}"
     );
     assert_eq!(w.titles().await, ["Offline sync"]);

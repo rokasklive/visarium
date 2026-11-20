@@ -11,6 +11,7 @@ import { routeTree } from '~/routeTree.gen';
  *   routes/boards.$boardId   `/boards/:boardId` the canvas
  *   routes/library.tsx       `/library`        the reference library
  *   routes/settings.tsx      `/settings`
+ *   routes/instance.tsx      `/instance`       Instance Settings (staff)
  */
 export const router = createRouter({
   routeTree,

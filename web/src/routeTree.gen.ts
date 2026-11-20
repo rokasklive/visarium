@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as InstanceRouteImport } from './routes/instance'
 import { Route as LibraryRouteImport } from './routes/library'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as BoardsBoardIdRouteImport } from './routes/boards.$boardId'
@@ -17,6 +18,11 @@ import { Route as BoardsBoardIdRouteImport } from './routes/boards.$boardId'
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const InstanceRoute = InstanceRouteImport.update({
+  id: '/instance',
+  path: '/instance',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LibraryRoute = LibraryRouteImport.update({
@@ -37,12 +43,14 @@ const BoardsBoardIdRoute = BoardsBoardIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/instance': typeof InstanceRoute
   '/library': typeof LibraryRoute
   '/settings': typeof SettingsRoute
   '/boards/$boardId': typeof BoardsBoardIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/instance': typeof InstanceRoute
   '/library': typeof LibraryRoute
   '/settings': typeof SettingsRoute
   '/boards/$boardId': typeof BoardsBoardIdRoute
@@ -50,20 +58,28 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/instance': typeof InstanceRoute
   '/library': typeof LibraryRoute
   '/settings': typeof SettingsRoute
   '/boards/$boardId': typeof BoardsBoardIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/library' | '/settings' | '/boards/$boardId'
+  fullPaths: '/' | '/instance' | '/library' | '/settings' | '/boards/$boardId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/library' | '/settings' | '/boards/$boardId'
-  id: '__root__' | '/' | '/library' | '/settings' | '/boards/$boardId'
+  to: '/' | '/instance' | '/library' | '/settings' | '/boards/$boardId'
+  id:
+    | '__root__'
+    | '/'
+    | '/instance'
+    | '/library'
+    | '/settings'
+    | '/boards/$boardId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  InstanceRoute: typeof InstanceRoute
   LibraryRoute: typeof LibraryRoute
   SettingsRoute: typeof SettingsRoute
   BoardsBoardIdRoute: typeof BoardsBoardIdRoute
@@ -76,6 +92,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/instance': {
+      id: '/instance'
+      path: '/instance'
+      fullPath: '/instance'
+      preLoaderRoute: typeof InstanceRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/library': {
@@ -104,6 +127,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  InstanceRoute: InstanceRoute,
   LibraryRoute: LibraryRoute,
   SettingsRoute: SettingsRoute,
   BoardsBoardIdRoute: BoardsBoardIdRoute,

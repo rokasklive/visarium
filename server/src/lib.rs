@@ -15,6 +15,7 @@ pub mod collections;
 pub mod collision;
 pub mod device;
 pub mod error;
+pub mod instance;
 pub mod invitations;
 pub mod oidc;
 pub mod realtime;
@@ -68,7 +69,7 @@ pub struct App {
     pub db: SqlitePool,
     pub config: Config,
     pub throttle: auth::LoginThrottle,
-    pub oidc: Vec<oidc::Provider>,
+    pub oidc: oidc::Providers,
     pub http: oidc::Http,
     pub flows: oidc::Flows,
     pub device_codes: device::Codes,
@@ -98,15 +99,8 @@ pub const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 const SWEEP_EVERY: Duration = Duration::from_secs(3600);
 
 pub async fn open(config: Config) -> anyhow_lite::Result<AppState> {
-    if !config.single_user {
-        if config.password_disabled && config.providers.is_empty() {
-            return Err("VISARIUM_AUTH_PASSWORD=off needs at least one VISARIUM_OIDC_* provider, or nobody could sign in".into());
-        }
-        if !config.providers.is_empty() && config.public_url.is_none() {
-            return Err(
-                "VISARIUM_PUBLIC_URL is required when a sign-in provider is configured".into(),
-            );
-        }
+    if !config.single_user && !config.providers.is_empty() && config.public_url.is_none() {
+        return Err("VISARIUM_PUBLIC_URL is required when a sign-in provider is configured".into());
     }
     for dir in [&config.assets, &config.derivatives] {
         std::fs::create_dir_all(dir)?;
@@ -144,8 +138,14 @@ pub async fn open(config: Config) -> anyhow_lite::Result<AppState> {
     let http = oidc::Http::default();
     let mut providers = Vec::new();
     if !config.single_user {
-        for p in &config.providers {
-            providers.push(oidc::Provider::new(p.clone(), &http).await);
+        let stored = oidc::stored(&db).await?;
+        providers = oidc::build(&config.providers, &stored, &[], &http).await;
+        let ids: Vec<String> = providers.iter().map(|p| p.id.clone()).collect();
+        if let Err(why) = oidc::way_in(!config.password_disabled, &ids, None) {
+            return Err(format!(
+                "{why}: VISARIUM_AUTH_PASSWORD=off needs at least one VISARIUM_OIDC_* provider, or one set up in Instance Settings"
+            )
+            .into());
         }
         let db = db.clone();
         tokio::spawn(async move {
@@ -169,7 +169,7 @@ pub async fn open(config: Config) -> anyhow_lite::Result<AppState> {
         protocol = PROTOCOL_VERSION,
         single_user = config.single_user,
         password_sign_in = !config.single_user && !config.password_disabled,
-        providers = %config.providers.iter().map(|p| p.id.as_str()).collect::<Vec<_>>().join(","),
+        providers = %providers.iter().map(|p| p.id.as_str()).collect::<Vec<_>>().join(","),
         sharing = !config.single_user && !config.sharing_disabled,
         public_url = config.public_url.as_deref().unwrap_or("-"),
         "server ready"
@@ -181,7 +181,7 @@ pub async fn open(config: Config) -> anyhow_lite::Result<AppState> {
         db,
         config,
         throttle: Default::default(),
-        oidc: providers,
+        oidc: std::sync::RwLock::new(providers),
         http,
         flows: Default::default(),
         device_codes: Default::default(),
@@ -217,6 +217,7 @@ pub fn router(state: AppState) -> Router {
         .merge(auth::account_routes())
         .merge(oidc::identity_routes())
         .merge(invitations::admin_routes())
+        .merge(instance::routes())
         .merge(sharing::member_routes())
         .merge(device::member_routes())
         .merge(agent::member_routes())
