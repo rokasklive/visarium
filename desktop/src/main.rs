@@ -346,6 +346,13 @@ async fn open_signed_in(
         tracing::warn!(origin = %origin, error = %e, "drag out stays off for this server");
     }
 
+    // A fresh sign-in replaces the token this computer held: end the old one,
+    // or every sign-in leaves another session in the server's list.
+    if let Ok(old) = keychain(&entry).and_then(|k| k.get_password())
+        && old != token
+    {
+        connect::revoke(&desktop.http, &origin, &old).await;
+    }
     let mut warning = None;
     if let Err(e) = keychain(&entry).and_then(|k| k.set_password(&token)) {
         warning = Some(format!(
