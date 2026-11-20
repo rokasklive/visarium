@@ -46,6 +46,15 @@ desktop:
 desktop-build:
     pnpm desktop:build
 
+# Everything CI checks: formatting, lints, types, dependencies, then the tests
+check:
+    cargo fmt --all --check
+    cargo clippy --workspace --all-targets --locked -- -D warnings
+    pnpm check
+    pnpm typecheck
+    cargo deny check
+    just test
+
 # Rust and TypeScript tests, and proof the production bundle has no dev tools
 test:
     cargo test --workspace
