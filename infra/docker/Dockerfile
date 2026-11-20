@@ -13,7 +13,7 @@ COPY packages/canvas-renderer-konva/package.json packages/canvas-renderer-konva/
 COPY packages/api-client/package.json packages/api-client/
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
-COPY tsconfig.base.json biome.json ./
+COPY tsconfig.base.json biome.json CHANGELOG.md ./
 COPY packages/ packages/
 COPY web/ web/
 # prod (default) ships no developer tools at all; dev adds the inspector, for a
