@@ -180,7 +180,7 @@ pub async fn require_agent(mut req: Request, next: Next) -> Response {
         },
         Some(Principal::Local(user)) => Caller {
             user: user.clone(),
-            agent: "Agent".into(),
+            agent: crate::auth::agent_of(&user.display_name),
             session: None,
         },
         _ => {

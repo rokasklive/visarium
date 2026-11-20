@@ -618,6 +618,7 @@ async fn agent_principal(db: &SqlitePool, headers: &HeaderMap) -> Principal {
         // The request goes ahead; only the Agents list's "last used" lags.
         tracing::warn!(session = %id, error = %e, "could not record an agent token's last use");
     }
+    let label = label.unwrap_or_else(|| agent_of(&user.display_name));
     Principal::Agent {
         user,
         session: Session {
@@ -625,8 +626,25 @@ async fn agent_principal(db: &SqlitePool, headers: &HeaderMap) -> Principal {
             token_hash,
             kind: Kind::Agent,
         },
-        label: label.unwrap_or_else(|| "Agent".into()),
+        label,
     }
+}
+
+/// An unnamed agent goes by its person's first name: "Rokas' Agent", "Ana's Agent".
+pub fn agent_of(person: &str) -> String {
+    let first = person.split_whitespace().next().unwrap_or("");
+    match first {
+        "" => "Agent".into(),
+        f if f.ends_with(['s', 'S']) => format!("{f}' Agent"),
+        f => format!("{f}'s Agent"),
+    }
+}
+
+#[test]
+fn agent_names_its_person() {
+    assert_eq!(agent_of("Rokas Kučinskas"), "Rokas' Agent");
+    assert_eq!(agent_of("Ana"), "Ana's Agent");
+    assert_eq!(agent_of("  "), "Agent");
 }
 
 pub async fn require_user(mut req: Request, next: Next) -> Response {
