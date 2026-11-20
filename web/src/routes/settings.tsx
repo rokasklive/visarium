@@ -45,17 +45,59 @@ export const Route = createFileRoute('/settings')({ component: Settings });
 function Settings() {
   const session = useSession();
   const me = session.data?.user;
+  const shared = !session.data?.singleUser;
+
+  const sections: [id: string, title: string, shown: boolean][] = [
+    ['profile', 'Profile', !!me],
+    ['security', 'Security', !!me && shared],
+    ['agents', 'Agents', !!me],
+    ['canvas', 'Canvas', true],
+    ['accounts', 'Accounts', !!me?.admin && shared],
+    ['about', 'About', !!me],
+  ];
 
   return (
-    <div className="mx-auto w-full max-w-2xl p-6">
-      <h1 className="mb-6 text-base">Settings</h1>
-      {me ? <SelfSection me={me} /> : null}
-      {me && !session.data?.singleUser ? <SignInMethods /> : null}
-      {me && !session.data?.singleUser ? <SessionsSection /> : null}
-      {me ? <AgentsSection singleUser={session.data?.singleUser ?? false} /> : null}
-      {me?.admin && !session.data?.singleUser ? <AdminSection meId={me.id} /> : null}
-      <CanvasSection />
-      {me ? <About Heading={SectionHeading} Button={GhostButton} /> : null}
+    <div className="mx-auto flex w-full max-w-3xl gap-6 p-6">
+      {/* ponytail: in-page anchors, not sub-routes; a route per section when one outgrows the page. */}
+      <nav
+        aria-label="Settings sections"
+        className="sticky top-6 hidden w-32 shrink-0 self-start sm:block"
+      >
+        <h1 className="mb-3 text-base">Settings</h1>
+        <ul>
+          {sections
+            .filter(([, , shown]) => shown)
+            .map(([id, title]) => (
+              <li key={id}>
+                <a
+                  href={`#${id}`}
+                  className="block rounded-sm px-2 py-0.5 text-ink-dim hover:bg-surface-raised hover:text-ink"
+                >
+                  {title}
+                </a>
+              </li>
+            ))}
+        </ul>
+      </nav>
+      <div className="min-w-0 flex-1">
+        <h1 className="mb-6 text-base sm:hidden">Settings</h1>
+        {me ? <SelfSection me={me} singleUser={!shared} /> : null}
+        {me && shared ? (
+          <div id="security" className="scroll-mt-6">
+            <PasswordSection />
+            <SignInMethods />
+            <SessionsSection />
+          </div>
+        ) : null}
+        {me ? <AgentsSection singleUser={!shared} /> : null}
+        <CanvasSection />
+        {me?.admin && shared ? <AdminSection meId={me.id} /> : null}
+        {me ? (
+          <div id="about" className="scroll-mt-6">
+            <About Heading={SectionHeading} Button={GhostButton} />
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -64,7 +106,7 @@ function Settings() {
 function CanvasSection() {
   const [legend, setLegend] = useShortcutLegend();
   return (
-    <section className="mb-6 border-b border-line pb-6">
+    <section id="canvas" className="mb-6 scroll-mt-6 border-b border-line pb-6">
       <SectionHeading>Canvas</SectionHeading>
       <label className="flex items-center gap-2 text-ink" data-testid="shortcut-legend-setting">
         <input type="checkbox" checked={legend} onChange={(e) => setLegend(e.target.checked)} />
@@ -133,20 +175,10 @@ function GhostButton({
   );
 }
 
-function SelfSection({ me }: { me: Account }) {
+function SelfSection({ me, singleUser }: { me: Account; singleUser: boolean }) {
   const edit = useEditSelf();
-  const changePassword = useChangePassword();
-  const session = useSession();
-  const identities = useIdentities();
-  // An account that signs in only through a provider has no current password
-  // to ask for; setting its first one is the same form without that field.
-  const hasPassword = identities.data?.hasPassword ?? true;
-  const passwords = !session.data?.singleUser && (session.data?.passwordEnabled ?? true);
-
   const [displayName, setDisplayName] = useState(me.displayName ?? '');
   const [username, setUsername] = useState(me.username ?? '');
-  const [currentPassword, setCurrentPassword] = useState('');
-  const [newPassword, setNewPassword] = useState('');
 
   const identityChanged =
     displayName !== (me.displayName ?? '') || username !== (me.username ?? '');
@@ -154,8 +186,61 @@ function SelfSection({ me }: { me: Account }) {
   function saveIdentity(event: FormEvent) {
     event.preventDefault();
     if (!identityChanged || edit.isPending) return;
-    edit.mutate({ displayName: displayName.trim(), username: username.trim() });
+    edit.mutate({
+      displayName: displayName.trim(),
+      // The desktop's one account is found by its username at every launch;
+      // the server refuses a change, so it is never offered.
+      ...(singleUser ? {} : { username: username.trim() }),
+    });
   }
+
+  return (
+    <section id="profile" className="mb-6 scroll-mt-6 border-b border-line pb-6">
+      <SectionHeading>Profile</SectionHeading>
+      <form onSubmit={saveIdentity}>
+        <TextField
+          label="Display name"
+          value={displayName}
+          onChange={setDisplayName}
+          autoComplete="name"
+        />
+        {!singleUser && (
+          <TextField
+            label="Username"
+            value={username}
+            onChange={setUsername}
+            autoComplete="username"
+          />
+        )}
+        <GhostButton type="submit" disabled={!identityChanged || edit.isPending}>
+          Save
+        </GhostButton>
+        {edit.isError && (
+          <p className="mt-2 text-ink" role="alert">
+            {edit.error.message}
+          </p>
+        )}
+      </form>
+      {/* Said out loud, because its absence is a decision rather than a gap. */}
+      <p className="mt-3 text-[11px] text-ink-dim">
+        {singleUser
+          ? 'Your display name marks what you changed, beside what your agents changed. There is no picture; a name is the whole of it.'
+          : 'Your display name is how you appear to everyone else — beside your cursor on a shared board. There is no picture; a name is the whole of it.'}
+      </p>
+    </section>
+  );
+}
+
+function PasswordSection() {
+  const changePassword = useChangePassword();
+  const session = useSession();
+  const identities = useIdentities();
+  // An account that signs in only through a provider has no current password
+  // to ask for; setting its first one is the same form without that field.
+  const hasPassword = identities.data?.hasPassword ?? true;
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  if (!(session.data?.passwordEnabled ?? true)) return null;
 
   function savePassword(event: FormEvent) {
     event.preventDefault();
@@ -169,82 +254,45 @@ function SelfSection({ me }: { me: Account }) {
   }
 
   return (
-    <>
-      <section className="mb-6 border-b border-line pb-6">
-        <SectionHeading>You</SectionHeading>
-        <form onSubmit={saveIdentity}>
+    <section className="mb-6 border-b border-line pb-6">
+      <SectionHeading>Password</SectionHeading>
+      <form onSubmit={savePassword}>
+        {hasPassword && (
           <TextField
-            label="Display name"
-            value={displayName}
-            onChange={setDisplayName}
-            autoComplete="name"
+            label="Current password"
+            value={currentPassword}
+            onChange={setCurrentPassword}
+            type="password"
+            autoComplete="current-password"
           />
-          <TextField
-            label="Username"
-            value={username}
-            onChange={setUsername}
-            autoComplete="username"
-          />
-          <GhostButton type="submit" disabled={!identityChanged || edit.isPending}>
-            Save
-          </GhostButton>
-          {edit.isError && (
-            <p className="mt-2 text-ink" role="alert">
-              {edit.error.message}
-            </p>
-          )}
-        </form>
-        {/* Said out loud, because its absence is a decision rather than a gap. */}
-        <p className="mt-3 text-[11px] text-ink-dim">
-          Your display name is how you appear to everyone else — beside your cursor on a shared
-          board. There is no picture; a name is the whole of it.
-        </p>
-      </section>
-
-      {passwords && (
-        <section className="mb-6 border-b border-line pb-6">
-          <SectionHeading>Password</SectionHeading>
-          <form onSubmit={savePassword}>
-            {hasPassword && (
-              <TextField
-                label="Current password"
-                value={currentPassword}
-                onChange={setCurrentPassword}
-                type="password"
-                autoComplete="current-password"
-              />
-            )}
-            <TextField
-              label="New password"
-              value={newPassword}
-              onChange={setNewPassword}
-              type="password"
-              autoComplete="new-password"
-            />
-            <GhostButton
-              type="submit"
-              disabled={
-                (hasPassword && !currentPassword) || !newPassword || changePassword.isPending
-              }
-            >
-              {hasPassword ? 'Change password' : 'Set a password'}
-            </GhostButton>
-            {changePassword.isError && (
-              <p className="mt-2 text-ink" role="alert">
-                {changePassword.error.message}
-              </p>
-            )}
-            {changePassword.isSuccess && (
-              <p className="mt-2 text-ink-dim">Changed. Your other sessions were signed out.</p>
-            )}
-          </form>
-          <p className="mt-3 text-[11px] text-ink-dim">
-            At least 12 characters. No expiry and no composition rules — length is the only one that
-            helps.
+        )}
+        <TextField
+          label="New password"
+          value={newPassword}
+          onChange={setNewPassword}
+          type="password"
+          autoComplete="new-password"
+        />
+        <GhostButton
+          type="submit"
+          disabled={(hasPassword && !currentPassword) || !newPassword || changePassword.isPending}
+        >
+          {hasPassword ? 'Change password' : 'Set a password'}
+        </GhostButton>
+        {changePassword.isError && (
+          <p className="mt-2 text-ink" role="alert">
+            {changePassword.error.message}
           </p>
-        </section>
-      )}
-    </>
+        )}
+        {changePassword.isSuccess && (
+          <p className="mt-2 text-ink-dim">Changed. Your other sessions were signed out.</p>
+        )}
+      </form>
+      <p className="mt-3 text-[11px] text-ink-dim">
+        At least 12 characters. No expiry and no composition rules — length is the only one that
+        helps.
+      </p>
+    </section>
   );
 }
 
@@ -386,7 +434,11 @@ function AgentsSection({ singleUser }: { singleUser: boolean }) {
   }
 
   return (
-    <section className="mb-6 border-b border-line pb-6" data-testid="agents-section">
+    <section
+      id="agents"
+      className="mb-6 scroll-mt-6 border-b border-line pb-6"
+      data-testid="agents-section"
+    >
       <SectionHeading>Agents</SectionHeading>
       <p className="mb-3 text-ink-dim">
         An AI agent can read and change your boards through Visarium&apos;s MCP endpoint, as you,
@@ -650,7 +702,7 @@ function AdminSection({ meId }: { meId: string | undefined }) {
   }
 
   return (
-    <section>
+    <section id="accounts" className="mb-6 scroll-mt-6 border-b border-line pb-6">
       <SectionHeading>Accounts on this instance</SectionHeading>
 
       {/*

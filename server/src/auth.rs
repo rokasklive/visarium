@@ -1085,6 +1085,13 @@ async fn edit_self(
             .await?;
     }
     if let Some(username) = body.username.as_deref().filter(|u| *u != me.username) {
+        // ensure_local_user finds the desktop's one account by the name `local`;
+        // renamed, the next launch would make a fresh, empty one.
+        if app.local_user.is_some() {
+            return Err(ApiError::bad_request(
+                "the local account's username cannot change",
+            ));
+        }
         require_username(username)?;
         sqlx::query("UPDATE app_user SET username = ? WHERE id = ?")
             .bind(username)

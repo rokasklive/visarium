@@ -412,6 +412,21 @@ async fn single_user_needs_no_sign_in_and_only_answers_loopback() {
         )
         .await;
     assert_eq!(rebound.status, StatusCode::FORBIDDEN);
+
+    // The next launch finds this account by the name `local`.
+    let renamed = c
+        .json("PATCH", "/api/accounts/me", json!({ "username": "rokas" }))
+        .await;
+    assert_eq!(renamed.status, StatusCode::BAD_REQUEST);
+    let named = c
+        .json(
+            "PATCH",
+            "/api/accounts/me",
+            json!({ "displayName": "Rokas", "username": "local" }),
+        )
+        .await;
+    assert_eq!(named.status, StatusCode::OK, "display name still changes");
+    assert_eq!(named.json()["username"], "local");
     let _ = std::fs::remove_dir_all(dir);
 }
 
