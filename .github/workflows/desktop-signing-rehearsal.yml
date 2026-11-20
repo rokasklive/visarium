@@ -1,0 +1,176 @@
+name: Desktop signing rehearsal
+
+on:
+  workflow_dispatch:
+    inputs:
+      sign_updater:
+        description: Sign macOS updater archives with the separate alpha key
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-arm64
+            runner: macos-15
+            target: aarch64-apple-darwin
+          - platform: macos-x64
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - platform: windows-x64
+            runner: windows-2025
+            target: x86_64-pc-windows-msvc
+          - platform: linux-x64
+            runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+    env:
+      RUSTUP_TOOLCHAIN: stable
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            libxdo-dev libssl-dev librsvg2-dev libdbus-1-dev patchelf xdg-utils
+
+      - name: Install build tools and dependencies
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal --target "$TARGET"
+          pnpm install --frozen-lockfile
+
+      - name: Build the unsigned Windows installer
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          AWS_LC_SYS_PREBUILT_NASM: '1'
+        run: pnpm run desktop:build --ci --target "$TARGET" --bundles nsis --no-sign -- --locked
+
+      - name: Build the unsigned Linux packages
+        if: runner.os == 'Linux'
+        run: pnpm run desktop:build --ci --target "$TARGET" --bundles deb,appimage --no-sign -- --locked
+
+      - name: Build the macOS app before loading signing credentials
+        if: runner.os == 'macOS'
+        run: pnpm run desktop:build --ci --target "$TARGET" --no-bundle -- --locked
+
+      - name: Sign and notarize the rehearsal bundles
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          SIGN_UPDATER: ${{ inputs.sign_updater }}
+          TAURI_ALPHA_PUBLIC_KEY: ${{ vars.TAURI_ALPHA_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_ALPHA_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_ALPHA_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          : "${APPLE_CERTIFICATE:?Set the APPLE_CERTIFICATE secret}"
+          : "${APPLE_CERTIFICATE_PASSWORD:?Set the APPLE_CERTIFICATE_PASSWORD secret}"
+          : "${APPLE_ID:?Set the APPLE_ID secret}"
+          : "${APPLE_PASSWORD:?Set the APPLE_PASSWORD secret to an app-specific password}"
+          : "${APPLE_TEAM_ID:?Set the APPLE_TEAM_ID secret}"
+
+          config_args=()
+          if [[ "$SIGN_UPDATER" == true ]]; then
+            : "${TAURI_ALPHA_PUBLIC_KEY:?Set the TAURI_ALPHA_PUBLIC_KEY repository variable}"
+            : "${TAURI_SIGNING_PRIVATE_KEY:?Set the TAURI_ALPHA_PRIVATE_KEY secret}"
+            : "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:?Set the TAURI_ALPHA_PRIVATE_KEY_PASSWORD secret}"
+            # Build signed updater archives before the app itself has an updater.
+            config="$RUNNER_TEMP/tauri-signing-rehearsal.json"
+            jq -n --arg pubkey "$TAURI_ALPHA_PUBLIC_KEY" \
+              '{bundle: {createUpdaterArtifacts: true}, plugins: {updater: {pubkey: $pubkey}}}' > "$config"
+            config_args=(--config "$config")
+          fi
+          pnpm exec tauri bundle --ci --target "$TARGET" --bundles app,dmg "${config_args[@]}"
+
+      - name: Verify macOS signing and notarization
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          bundle="target/$TARGET/release/bundle"
+          app="$bundle/macos/Visarium.app"
+          shopt -s nullglob
+          installers=("$bundle"/dmg/*.dmg)
+          if [[ ${#installers[@]} -ne 1 ]]; then
+            echo 'Expected one macOS installer' >&2
+            exit 1
+          fi
+          hdiutil verify "${installers[0]}"
+          codesign --verify --deep --strict "$app"
+          codesign --display --verbose=4 "$app" 2>&1 | grep '^Authority=Developer ID Application:'
+          xcrun stapler validate "$app"
+
+          version=$(jq -er '.version' desktop/tauri.conf.json)
+          bundle_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")
+          test "$bundle_version" = "$version"
+
+      - name: Verify the signed updater archive
+        if: runner.os == 'macOS' && inputs.sign_updater
+        shell: bash
+        env:
+          TAURI_ALPHA_PUBLIC_KEY: ${{ vars.TAURI_ALPHA_PUBLIC_KEY }}
+        run: |
+          brew install minisign
+          archive="target/$TARGET/release/bundle/macos/Visarium.app.tar.gz"
+          version=$(jq -er '.version' desktop/tauri.conf.json)
+          printf '%s' "$TAURI_ALPHA_PUBLIC_KEY" | base64 --decode > "$RUNNER_TEMP/alpha.pub"
+          base64 --decode -i "$archive.sig" > "$RUNNER_TEMP/alpha.minisig"
+          minisign -Vm "$archive" -p "$RUNNER_TEMP/alpha.pub" -x "$RUNNER_TEMP/alpha.minisig"
+          tr '\t' '\n' < "$RUNNER_TEMP/alpha.minisig" | grep -Fx "version:$version"
+
+      - name: Verify Linux packages exist
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          shopt -s nullglob
+          packages=("target/$TARGET/release/bundle"/deb/*.deb)
+          appimages=("target/$TARGET/release/bundle"/appimage/*.AppImage)
+          [[ ${#packages[@]} -eq 1 && ${#appimages[@]} -eq 1 ]]
+          dpkg-deb --info "${packages[0]}"
+          test -s "${appimages[0]}"
+
+      - name: Upload disposable artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: visarium-${{ matrix.platform }}-rehearsal
+          path: |
+            target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+            target/${{ matrix.target }}/release/bundle/nsis/*-setup.exe
+            target/${{ matrix.target }}/release/bundle/deb/*.deb
+            target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Upload signed updater archive
+        if: runner.os == 'macOS' && inputs.sign_updater
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: visarium-${{ matrix.platform }}-updater-rehearsal
+          path: |
+            target/${{ matrix.target }}/release/bundle/macos/Visarium.app.tar.gz
+            target/${{ matrix.target }}/release/bundle/macos/Visarium.app.tar.gz.sig
+          if-no-files-found: error
+          retention-days: 3
