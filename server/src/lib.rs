@@ -271,9 +271,31 @@ pub fn router(state: AppState) -> Router {
         .fallback(spa)
         .layer(from_fn_with_state(state.clone(), auth::session_layer))
         .layer(from_fn(auth::csrf_layer))
+        .layer(from_fn(security_headers))
         .layer(CompressionLayer::new())
         .layer(from_fn(telemetry::http))
         .with_state(state)
+}
+
+/// On every response: no MIME sniffing, framed only by this origin, and an
+/// API answer that says nothing about caching is kept out of shared caches.
+async fn security_headers(req: axum::extract::Request, next: axum::middleware::Next) -> Response {
+    let api = req.uri().path().starts_with("/api/");
+    let mut response = next.run(req).await;
+    let h = response.headers_mut();
+    h.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        header::HeaderValue::from_static("nosniff"),
+    );
+    h.insert(
+        header::CONTENT_SECURITY_POLICY,
+        header::HeaderValue::from_static("frame-ancestors 'self'"),
+    );
+    if api {
+        h.entry(header::CACHE_CONTROL)
+            .or_insert(header::HeaderValue::from_static("private, no-cache"));
+    }
+    response
 }
 
 /// Runs until the listener closes or the process ends.

@@ -325,8 +325,9 @@ pub fn provider_link(url: &Url) -> Option<ProviderLink> {
             .find(|(k, _)| k == key)
             .map(|(_, v)| v.into_owned())
     };
-    let back = query("return")
-        .filter(|r| r.starts_with('/') && !r.starts_with("//") && !r.starts_with("/\\"));
+    // The server's own rule: no control characters, and it must resolve to
+    // this origin (a tab in `/\t/evil.example` would otherwise leave it).
+    let back = query("return").filter(|r| visarium::oidc::same_origin_path(r));
     Some(ProviderLink {
         origin: url.join("/").ok()?,
         provider: provider.to_string(),
@@ -588,6 +589,13 @@ mod tests {
                 .unwrap()
                 .back,
             "/"
+        );
+        assert_eq!(
+            link("https://v.example.net/auth/oidc/google/start?return=/%09/evil.example")
+                .unwrap()
+                .back,
+            "/",
+            "a tab would turn this into //evil.example"
         );
         assert_eq!(
             link("https://v.example.net/auth/oidc/google/start")

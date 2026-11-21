@@ -364,21 +364,43 @@ fn same_origin(headers: &HeaderMap) -> bool {
     matches!((origin_host, host), (Some(o), Some(h)) if o.eq_ignore_ascii_case(h))
 }
 
+/// How often an open member socket rechecks its session, so one that is
+/// revoked, expires or whose account is deactivated is closed within this
+/// long. Seconds; tests shorten it.
+pub static MEMBER_RECHECK_SECS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(60);
+
 pub async fn upgrade(
     ws: WebSocketUpgrade,
     State(app): State<AppState>,
     axum::Extension(user): axum::Extension<User>,
+    axum::Extension(principal): axum::Extension<crate::auth::Principal>,
     Path(board): Path<String>,
     headers: HeaderMap,
 ) -> Response {
     if !same_origin(&headers) {
         return ApiError::forbidden("cross-origin socket refused").into_response();
     }
+    // None for the desktop's local account, which has no session to end.
+    let session = principal.session_hash().map(str::to_string);
     ws.max_message_size(1024 * 1024).on_upgrade(move |socket| {
         let span =
             tracing::info_span!("ws", conn = %Uuid::now_v7(), board = %board, user = %user.id);
-        run(app, socket, board, user.display_name).instrument(span)
+        run(app, socket, board, user.display_name, session).instrument(span)
     })
+}
+
+/// The session behind a member socket is still live, and its account active.
+async fn session_live(app: &AppState, token_hash: &str) -> bool {
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT EXISTS (SELECT 1 FROM session s JOIN app_user u ON u.id = s.user_id \
+          WHERE s.token_hash = ? AND s.expires_at > {} AND u.deactivated_at IS NULL)",
+        crate::NOW
+    )))
+    .bind(token_hash)
+    .fetch_one(&app.db)
+    .await
+    .unwrap_or(false)
 }
 
 struct Close(u16, String);
@@ -387,7 +409,13 @@ fn invalid(reason: impl Into<String>) -> Close {
     Close(BAD_DATA, reason.into())
 }
 
-async fn run(app: AppState, socket: WebSocket, board: String, display_name: String) {
+async fn run(
+    app: AppState,
+    socket: WebSocket,
+    board: String,
+    display_name: String,
+    session: Option<String>,
+) {
     let (mut sink, mut stream) = socket.split();
     let board = match Uuid::parse_str(&board) {
         Ok(id) if boards::exists(&app.db, &id).await.unwrap_or(false) => id,
@@ -416,7 +444,25 @@ async fn run(app: AppState, socket: WebSocket, board: String, display_name: Stri
         tx: tx.clone(),
         too_slow,
     };
-    while let Some(Ok(message)) = stream.next().await {
+    let every = std::time::Duration::from_secs(
+        MEMBER_RECHECK_SECS.load(std::sync::atomic::Ordering::Relaxed),
+    );
+    let mut recheck = tokio::time::interval(every);
+    recheck.tick().await;
+    loop {
+        let message = tokio::select! {
+            message = stream.next() => message,
+            _ = recheck.tick(), if session.is_some() => {
+                if !session_live(&app, session.as_deref().unwrap_or_default()).await {
+                    tracing::info!(reason = "session ended", "closing a member socket");
+                    // The client may be gone already; it is closed either way.
+                    let _ = tx.send(close_message(POLICY_VIOLATION, "signed out")).await;
+                    break;
+                }
+                continue;
+            }
+        };
+        let Some(Ok(message)) = message else { break };
         let text = match message {
             Message::Text(text) => text,
             Message::Close(frame) => {

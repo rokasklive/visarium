@@ -11,7 +11,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:e2e": "playwright test --ignore-snapshots e2e/auth.spec.ts e2e/shell.spec.ts e2e/canvas.spec.ts e2e/canvas.capture.spec.ts e2e/canvas.persistence.spec.ts e2e/library.spec.ts e2e/interchange.spec.ts e2e/canvas.crop.spec.ts e2e/canvas.objects.spec.ts e2e/canvas.objects.edit.spec.ts e2e/canvas.links.spec.ts e2e/canvas.inspector.spec.ts e2e/canvas.scenario.spec.ts e2e/diagram-fixtures.spec.ts e2e/agents.settings.spec.ts e2e/instance.settings.spec.ts",
+    "test:e2e": "playwright test --ignore-snapshots e2e/auth.spec.ts e2e/shell.spec.ts e2e/canvas.spec.ts e2e/canvas.capture.spec.ts e2e/canvas.persistence.spec.ts e2e/library.spec.ts e2e/interchange.spec.ts e2e/canvas.crop.spec.ts e2e/canvas.objects.spec.ts e2e/canvas.objects.edit.spec.ts e2e/canvas.links.spec.ts e2e/canvas.inspector.spec.ts e2e/canvas.scenario.spec.ts e2e/diagram-fixtures.spec.ts e2e/diagram-sandbox.spec.ts e2e/agents.settings.spec.ts e2e/instance.settings.spec.ts",
     "bench": "playwright test canvas.bench --workers=1",
     "measure": "playwright test canvas.memory --workers=1"
   },

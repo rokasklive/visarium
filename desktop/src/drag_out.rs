@@ -10,9 +10,11 @@
 //!
 //! The two commands are granted at runtime, to the embedded library and to each
 //! server once this app has signed in to it, and to nothing else (`allow`).
-//! Staged files live in the OS temp directory, one folder per asset, and are
-//! cleared on launch rather than after a drag: a drop target may still be
-//! reading one after the drag has ended.
+//! Staged files live in this app's cache directory, one folder per asset, and
+//! are cleared on launch rather than after a drag: a drop target may still be
+//! reading one after the drag has ended. That directory is per-user on every
+//! OS (a shared `/tmp` is not), and is made owner-only besides: the files are
+//! originals from the library.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -23,8 +25,41 @@ use tauri::{AppHandle, Manager, Url, WebviewWindow};
 /// The longest edge of the picture that follows the pointer.
 const ICON_EDGE: u32 = 160;
 
-fn root() -> PathBuf {
-    std::env::temp_dir().join("visarium-drag-out")
+fn root(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_cache_dir()
+        .map(|d| d.join("drag-out"))
+        .map_err(|e| e.to_string())
+}
+
+/// Creates `dir`, or tightens it if it exists, readable by this user only.
+fn private_dir(dir: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)?;
+        // A directory that already existed keeps its old mode otherwise.
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+    }
+    #[cfg(not(unix))]
+    std::fs::create_dir_all(dir)
+}
+
+/// Writes a fresh file at `path`. Whatever was there that is not this app's
+/// own regular file (a link, say) is removed first, never written through.
+fn write_new(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    if std::fs::symlink_metadata(path).is_ok() {
+        std::fs::remove_file(path)?;
+    }
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?
+        .write_all(bytes)
 }
 
 /// Lets the SPA at `origin` stage files and drag them out of the main window.
@@ -46,9 +81,13 @@ pub fn allow(app: &AppHandle, origin: &Url) -> tauri::Result<()> {
 }
 
 /// What a previous run staged. Nothing is reading those files any more.
-pub fn clear() {
+pub fn clear(app: &AppHandle) {
     // Usually there is nothing to clear.
-    let _ = std::fs::remove_dir_all(root());
+    if let Ok(root) = root(app) {
+        let _ = std::fs::remove_dir_all(root);
+    }
+    // Where builds before 0.1.0 staged, in the shared temp directory.
+    let _ = std::fs::remove_dir_all(std::env::temp_dir().join("visarium-drag-out"));
 }
 
 /// A path segment a page may name: no separators, no leading dot.
@@ -82,31 +121,45 @@ fn staged(root: &Path, path: &Path) -> bool {
 /// `postMessage`, which turns an `ArrayBuffer` into an array of numbers; the
 /// plain-http local library never noticed.
 #[tauri::command]
-pub async fn drag_stage(asset: String, name: String, data: String) -> Result<PathBuf, String> {
-    let stage = || -> Result<PathBuf, String> {
-        let asset = segment(&asset).ok_or("no asset id")?;
-        let name = segment(&name).unwrap_or_else(|| "image".into());
-        let dir = root().join(asset);
-        let file = dir.join(name);
-        if file.is_file() {
-            return Ok(file);
-        }
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(&data)
-            .map_err(|e| format!("not base64: {e}"))?;
-        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        // Decoding a large original costs a few hundred milliseconds; it
-        // happens here, while the selection settles, never once the pointer is
-        // moving — and off the main thread, because this command is async.
-        let icon = image::load_from_memory(&bytes)
-            .map_err(|e| format!("not an image: {e}"))?
-            .thumbnail(ICON_EDGE, ICON_EDGE);
-        icon.save_with_format(dir.join("icon.png"), image::ImageFormat::Png)
-            .map_err(|e| e.to_string())?;
-        std::fs::write(&file, &bytes).map_err(|e| e.to_string())?;
-        Ok(file)
-    };
-    stage().inspect_err(|e| tracing::warn!(asset = %asset, error = %e, "drag stage failed"))
+pub async fn drag_stage(
+    app: AppHandle,
+    asset: String,
+    name: String,
+    data: String,
+) -> Result<PathBuf, String> {
+    let root = root(&app)?;
+    stage(&root, &asset, &name, &data)
+        .inspect_err(|e| tracing::warn!(asset = %asset, error = %e, "drag stage failed"))
+}
+
+/// The body of `drag_stage`, given its root, so tests can run it.
+fn stage(root: &Path, asset: &str, name: &str, data: &str) -> Result<PathBuf, String> {
+    let asset = segment(asset).ok_or("no asset id")?;
+    let name = segment(name).unwrap_or_else(|| "image".into());
+    let dir = root.join(asset);
+    let file = dir.join(name);
+    // Only a regular file this app wrote counts as already staged.
+    if std::fs::symlink_metadata(&file).is_ok_and(|m| m.file_type().is_file()) {
+        return Ok(file);
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .map_err(|e| format!("not base64: {e}"))?;
+    for d in [root, dir.as_path()] {
+        private_dir(d).map_err(|e| e.to_string())?;
+    }
+    // Decoding a large original costs a few hundred milliseconds; it happens
+    // here, while the selection settles, never once the pointer is moving —
+    // and off the main thread, because this command is async.
+    let icon = image::load_from_memory(&bytes)
+        .map_err(|e| format!("not an image: {e}"))?
+        .thumbnail(ICON_EDGE, ICON_EDGE);
+    let mut png = std::io::Cursor::new(Vec::new());
+    icon.write_to(&mut png, image::ImageFormat::Png)
+        .map_err(|e| e.to_string())?;
+    write_new(&dir.join("icon.png"), png.get_ref()).map_err(|e| e.to_string())?;
+    write_new(&file, &bytes).map_err(|e| e.to_string())?;
+    Ok(file)
 }
 
 /// Starts a native drag of files `drag_stage` wrote, with the pointer still
@@ -114,7 +167,7 @@ pub async fn drag_stage(asset: String, name: String, data: String) -> Result<Pat
 /// must not become a way to drag an arbitrary file off the disk.
 #[tauri::command]
 pub fn drag_out(window: WebviewWindow, paths: Vec<PathBuf>) -> Result<(), String> {
-    let root = root();
+    let root = root(window.app_handle())?;
     if paths.is_empty() || !paths.iter().all(|p| staged(&root, p)) {
         return Err("only staged files can be dragged".into());
     }
@@ -144,7 +197,48 @@ fn start(window: &WebviewWindow, paths: Vec<PathBuf>, icon: PathBuf) -> Result<(
 
 #[cfg(test)]
 mod tests {
-    use super::{segment, staged};
+    use super::{segment, stage, staged};
+    use base64::Engine as _;
+
+    fn tiny_png() -> String {
+        let img = image::RgbaImage::new(4, 4);
+        let mut png = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut png, image::ImageFormat::Png).unwrap();
+        base64::engine::general_purpose::STANDARD.encode(png.get_ref())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staging_is_owner_only_and_never_writes_through_a_link() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("visarium-stage-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let outside = root.with_extension("victim");
+        std::fs::write(&outside, b"keep me").unwrap();
+
+        let dir = root.join("asset");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::os::unix::fs::symlink(&outside, dir.join("a.png")).unwrap();
+
+        let staged_file = stage(&root, "asset", "a.png", &tiny_png()).unwrap();
+        assert_eq!(
+            std::fs::read(&outside).unwrap(),
+            b"keep me",
+            "not written through"
+        );
+        assert!(
+            std::fs::symlink_metadata(&staged_file)
+                .unwrap()
+                .file_type()
+                .is_file()
+        );
+        for d in [&root, &dir] {
+            let mode = std::fs::metadata(d).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o700, "{}", d.display());
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_file(&outside);
+    }
 
     #[test]
     fn segments_cannot_climb_out() {

@@ -1666,6 +1666,68 @@ async fn a_configuration_nobody_could_sign_in_with_is_refused() {
 
 // --- OpenID Connect (auth/sign-in) -------------------------------------------
 
+/// A linked identity is bound to the issuer that vouched for it: the same
+/// subject from another issuer under the same provider id reaches nobody.
+#[tokio::test]
+async fn an_identity_is_bound_to_its_issuer() {
+    let first = Issuer::start().await;
+    let second = Issuer::start().await;
+    let (mut cfg, dir) = config(false);
+    cfg.providers = vec![first.provider("test")];
+    let app = visarium::open(cfg.clone()).await.unwrap();
+    let mut c = Client::new(visarium::router(app.clone()));
+    c.get("/api/session").await;
+    let ana = Person::new("ana-sub", "ana@example.com");
+    let claimed = sso(
+        &mut c,
+        &first,
+        "/auth/oidc/test/start?intent=claim",
+        ana.clone(),
+    )
+    .await;
+    assert_eq!(claimed.status, StatusCode::FOUND);
+    assert_eq!(
+        count(
+            &app,
+            "SELECT count(*) FROM user_identity WHERE issuer IS NOT NULL"
+        )
+        .await,
+        1,
+        "a new link records its issuer"
+    );
+
+    // Linked before issuers were recorded: the next sign-in adopts one.
+    sqlx::query("UPDATE user_identity SET issuer = NULL")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let mut again = Client::new(visarium::router(app.clone()));
+    again.get("/api/session").await;
+    let back = sso(&mut again, &first, "/auth/oidc/test/start", ana.clone()).await;
+    assert_eq!(location(&back), "/");
+    assert_eq!(
+        count(
+            &app,
+            "SELECT count(*) FROM user_identity WHERE issuer IS NOT NULL"
+        )
+        .await,
+        1
+    );
+
+    // The same provider id, re-pointed at another issuer: same `sub`, no account.
+    cfg.providers = vec![second.provider("test")];
+    let moved = visarium::open(cfg).await.unwrap();
+    let mut stranger = Client::new(visarium::router(moved));
+    stranger.get("/api/session").await;
+    let refused = sso(&mut stranger, &second, "/auth/oidc/test/start", ana).await;
+    assert_eq!(location(&refused), "/sign-in?error=no-account");
+    assert_eq!(
+        stranger.get("/api/session").await.json()["user"],
+        Value::Null
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 #[tokio::test]
 async fn sign_in_with_a_provider() {
     let issuer = Issuer::start().await;
@@ -3478,6 +3540,119 @@ async fn the_manage_boards_grant_starts_off_and_persists() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// Every response refuses sniffing and foreign framing; anything behind a
+/// session stays out of shared caches, 304s included.
+#[tokio::test]
+async fn responses_carry_security_and_cache_headers() {
+    let (mut c, _app, dir) = signed_in().await;
+    for uri in ["/api/session", "/health", "/boards/abc"] {
+        let r = c.get(uri).await;
+        assert_eq!(r.headers["x-content-type-options"], "nosniff", "{uri}");
+        assert_eq!(
+            r.headers["content-security-policy"], "frame-ancestors 'self'",
+            "{uri}"
+        );
+    }
+    assert_eq!(
+        c.get("/api/session").await.headers["cache-control"],
+        "private, no-cache"
+    );
+
+    let id = c.upload("a.png", &png(300, 200, 7)).await.json()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    for uri in [
+        format!("/api/assets/{id}/content"),
+        format!("/api/assets/{id}/derivatives/64"),
+    ] {
+        let first = c.get(&uri).await;
+        assert_eq!(first.status, StatusCode::OK, "{uri}");
+        let cache = first.headers["cache-control"].to_str().unwrap().to_string();
+        assert!(cache.starts_with("private"), "{uri}: {cache}");
+        let etag = first.headers["etag"].to_str().unwrap().to_string();
+        let again = c
+            .send("GET", &uri, None, vec![], &[("if-none-match", &etag)])
+            .await;
+        assert_eq!(again.status, StatusCode::NOT_MODIFIED, "{uri}");
+        assert!(
+            again.headers["cache-control"]
+                .to_str()
+                .unwrap()
+                .starts_with("private"),
+            "{uri} 304"
+        );
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// An agent token is a bearer credential for `/mcp` only. Replayed as the
+/// session cookie, or as a bearer anywhere else, it signs nobody in.
+#[tokio::test]
+async fn an_agent_token_is_never_a_session() {
+    let (mut c, app, dir) = signed_in().await;
+    let made = c
+        .json("POST", "/api/agent-tokens", json!({ "label": "limited" }))
+        .await
+        .json();
+    let (id, token) = (
+        made["id"].as_str().unwrap().to_string(),
+        made["token"].as_str().unwrap().to_string(),
+    );
+
+    let mut agent = Client::new(visarium::router(app.clone()));
+    agent.cookies = vec![
+        ("VISARIUM_SESSION".into(), token.clone()),
+        ("XSRF-TOKEN".into(), "t".into()),
+    ];
+    assert_eq!(
+        agent.get("/api/accounts").await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    let raise = agent
+        .json(
+            "PATCH",
+            &format!("/api/agent-tokens/{id}"),
+            json!({ "manageBoards": true }),
+        )
+        .await;
+    assert_eq!(raise.status, StatusCode::UNAUTHORIZED);
+    let mint = agent
+        .json("POST", "/api/agent-tokens", json!({ "label": "more" }))
+        .await;
+    assert_eq!(mint.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        c.get("/api/agent-tokens").await.json(),
+        json!([{ "id": id, "label": "limited", "createdAt": made["createdAt"], "lastUsedAt": null, "manageBoards": false }]),
+        "the grant stays off and no token was minted"
+    );
+
+    let mut bearer = Client::new(visarium::router(app.clone()));
+    let auth = format!("Bearer {token}");
+    let boards = bearer
+        .send(
+            "GET",
+            "/api/boards",
+            None,
+            vec![],
+            &[("authorization", &auth)],
+        )
+        .await;
+    assert_eq!(boards.status, StatusCode::UNAUTHORIZED);
+
+    // A device session still signs in by cookie, as the desktop relies on.
+    let device = c
+        .json(
+            "POST",
+            "/api/session",
+            json!({ "username": "ada", "password": "correct horse battery", "device": { "label": "Mac" } }),
+        )
+        .await;
+    assert_eq!(device.status, StatusCode::OK);
+    assert_eq!(c.get("/api/accounts").await.status, StatusCode::OK);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 // --- canvas-polish: centerpiece, text scale, homes ---------------------------
 
 #[tokio::test]
@@ -3825,6 +4000,238 @@ async fn join(staff: &mut Client, body: Value, username: &str) -> (Client, Strin
     assert_eq!(joined.status, StatusCode::CREATED, "{}", joined.json());
     let id = joined.json()["id"].as_str().unwrap().to_string();
     (c, id)
+}
+
+/// A member socket rechecks its session: a revoked session or a deactivated
+/// account closes it within the recheck interval.
+#[tokio::test]
+async fn member_sockets_end_with_their_session() {
+    visarium::realtime::MEMBER_RECHECK_SECS.store(1, std::sync::atomic::Ordering::Relaxed);
+    let (mut admin, app, dir) = signed_in().await;
+    let b = admin
+        .json("POST", "/api/boards", json!({ "title": "Live" }))
+        .await
+        .json()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (member, member_id) = join(&mut admin, json!({}), "bo").await;
+    let mut second = Client::new(admin.router.clone());
+    second.get("/api/session").await;
+    let signed = second
+        .json(
+            "POST",
+            "/api/session",
+            json!({ "username": "ada", "password": "correct horse battery" }),
+        )
+        .await;
+    assert_eq!(signed.status, StatusCode::OK);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(visarium::serve(app, listener));
+    let socket = |cookies: String| {
+        let mut req = format!("ws://{addr}/ws/canvas/{b}")
+            .into_client_request()
+            .unwrap();
+        req.headers_mut().insert("cookie", cookies.parse().unwrap());
+        req.headers_mut()
+            .insert("origin", format!("http://{addr}").parse().unwrap());
+        tokio_tungstenite::connect_async(req)
+    };
+    async fn closed(
+        ws: &mut (impl StreamExt<Item = Result<tungstenite::Message, tungstenite::Error>> + Unpin),
+    ) -> Option<u16> {
+        loop {
+            match tokio::time::timeout(std::time::Duration::from_secs(5), ws.next())
+                .await
+                .expect("closed in time")
+            {
+                Some(Ok(tungstenite::Message::Close(f))) => return f.map(|f| u16::from(f.code)),
+                Some(Ok(_)) => continue,
+                _ => return None,
+            }
+        }
+    }
+    let hello =
+        json!({ "t": "hello", "protocolVersion": visarium::PROTOCOL_VERSION, "sinceRevision": 0 })
+            .to_string();
+
+    // Revoked from another browser.
+    let (mut ws, _) = socket(second.cookie_header()).await.unwrap();
+    ws.send(hello.clone().into()).await.unwrap();
+    let sessions = admin.get("/api/sessions").await.json();
+    let other = sessions
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["current"] == false)
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let revoked = admin
+        .send(
+            "DELETE",
+            &format!("/api/sessions/{other}"),
+            None,
+            vec![],
+            &[],
+        )
+        .await;
+    assert_eq!(revoked.status, StatusCode::NO_CONTENT);
+    assert_eq!(closed(&mut ws).await, Some(1008));
+
+    // Deactivated by an admin.
+    let (mut ws, _) = socket(member.cookie_header()).await.unwrap();
+    ws.send(hello.into()).await.unwrap();
+    let off = admin
+        .send(
+            "POST",
+            &format!("/api/accounts/{member_id}/deactivation"),
+            None,
+            vec![],
+            &[],
+        )
+        .await;
+    assert_eq!(off.status, StatusCode::OK);
+    assert_eq!(closed(&mut ws).await, Some(1008));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Links carry the authority their issuer has when they are redeemed, and a
+/// request that cannot succeed is refused before any password is hashed.
+#[tokio::test]
+async fn links_recheck_their_issuers_authority_when_redeemed() {
+    let (mut admin, app, dir) = signed_in().await;
+    let (mut mo, mo_id) = join(&mut admin, json!({ "role": "moderator" }), "mo").await;
+    let (_bob, bob_id) = join(&mut mo, json!({}), "bob").await;
+    let mut anon = Client::new(admin.router.clone());
+    anon.get("/api/session").await;
+    let redeem_reset =
+        |token: String| json!({ "token": token, "password": "a brand new password" });
+
+    // Refused before hashing: a claimed instance, an unknown token.
+    let again = anon
+        .json(
+            "POST",
+            "/api/setup",
+            json!({ "username": "eve", "displayName": "Eve", "password": "correct horse battery" }),
+        )
+        .await;
+    assert_eq!(again.status, StatusCode::CONFLICT);
+    let unknown = anon
+        .json(
+            "POST",
+            "/api/invitations/redeem",
+            json!({ "token": "nope", "username": "cy", "displayName": "Cy", "password": "a long enough password" }),
+        )
+        .await;
+    assert_eq!(unknown.status, StatusCode::GONE);
+
+    // An ordinary reset works once, and only once.
+    let reset = |id: &str| json!({ "purpose": "reset", "userId": id });
+    let token = invite(&mut mo, reset(&bob_id)).await;
+    let used = anon
+        .json(
+            "POST",
+            "/api/invitations/redeem",
+            redeem_reset(token.clone()),
+        )
+        .await;
+    assert_eq!(used.status, StatusCode::NO_CONTENT, "{}", used.json());
+    let twice = anon
+        .json("POST", "/api/invitations/redeem", redeem_reset(token))
+        .await;
+    assert_eq!(twice.status, StatusCode::GONE);
+
+    // Target promoted after the moderator made the link: refused. The admin's
+    // role change also removed it from the list.
+    let token = invite(&mut mo, reset(&bob_id)).await;
+    let promoted = admin
+        .json(
+            "PUT",
+            &format!("/api/accounts/{bob_id}/role"),
+            json!({ "role": "admin" }),
+        )
+        .await;
+    assert_eq!(promoted.status, StatusCode::OK);
+    let refused = anon
+        .json("POST", "/api/invitations/redeem", redeem_reset(token))
+        .await;
+    assert_eq!(refused.status, StatusCode::GONE);
+    assert_eq!(
+        count(
+            &app,
+            "SELECT count(*) FROM invitation WHERE purpose = 'reset' AND used_at IS NULL"
+        )
+        .await,
+        0
+    );
+    let verified = anon
+        .json(
+            "POST",
+            "/api/session",
+            json!({ "username": "bob", "password": "a brand new password" }),
+        )
+        .await;
+    assert_eq!(
+        verified.status,
+        StatusCode::OK,
+        "the earlier reset's password still stands"
+    );
+
+    // The promotion only voided the link; with the target back to member it
+    // still does not come back.
+    admin
+        .json(
+            "PUT",
+            &format!("/api/accounts/{bob_id}/role"),
+            json!({ "role": "member" }),
+        )
+        .await;
+
+    // A join link from an issuer since deactivated: refused.
+    let token = invite(&mut mo, json!({})).await;
+    let off = admin
+        .send(
+            "POST",
+            &format!("/api/accounts/{mo_id}/deactivation"),
+            None,
+            vec![],
+            &[],
+        )
+        .await;
+    assert_eq!(off.status, StatusCode::OK);
+    let join_body = |token: String| json!({ "token": token, "username": "cy", "displayName": "Cy", "password": "a long enough password" });
+    let refused = anon
+        .json("POST", "/api/invitations/redeem", join_body(token))
+        .await;
+    assert_eq!(refused.status, StatusCode::GONE);
+
+    // A join link for an admin, from an admin since demoted: refused.
+    let (mut second_admin, second_id) = join(&mut admin, json!({ "role": "admin" }), "al").await;
+    let token = invite(&mut second_admin, json!({ "role": "admin" })).await;
+    let demoted = admin
+        .json(
+            "PUT",
+            &format!("/api/accounts/{second_id}/role"),
+            json!({ "role": "member" }),
+        )
+        .await;
+    assert_eq!(demoted.status, StatusCode::OK);
+    let refused = anon
+        .json("POST", "/api/invitations/redeem", join_body(token))
+        .await;
+    assert_eq!(refused.status, StatusCode::GONE);
+
+    // An ordinary join still works.
+    let token = invite(&mut admin, json!({})).await;
+    let ok = anon
+        .json("POST", "/api/invitations/redeem", join_body(token))
+        .await;
+    assert_eq!(ok.status, StatusCode::CREATED, "{}", ok.json());
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[tokio::test]

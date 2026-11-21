@@ -438,18 +438,38 @@ pub fn browser_label(headers: &HeaderMap) -> String {
 /// a second more per failure up to five seconds. Keyed per username for
 /// passwords and per link for share passphrases, rather than per address,
 /// because behind a proxy every address is the proxy's.
+///
+/// Keys are whatever a caller types, so the table is capped: when full, it
+/// drops entries idle for a minute, then the oldest.
 #[derive(Default)]
-pub struct LoginThrottle(Mutex<HashMap<String, u32>>);
+pub struct LoginThrottle(Mutex<HashMap<String, (u32, std::time::Instant)>>);
 
 impl LoginThrottle {
     const FREE_ATTEMPTS: u32 = 5;
+    pub const MAX_KEYS: usize = 10_000;
+    const IDLE: Duration = Duration::from_secs(60);
+
     pub fn delay(&self, key: &str) -> Duration {
-        let count = self.0.lock().unwrap().get(key).copied().unwrap_or(0);
+        let count = self.0.lock().unwrap().get(key).map_or(0, |e| e.0);
         let over = count.saturating_sub(Self::FREE_ATTEMPTS) as u64;
         Duration::from_millis((over * 500).min(5_000))
     }
+    /// ponytail: at the cap, an O(n) pass; fine at 10 000 keys.
     pub fn failed(&self, key: &str) {
-        *self.0.lock().unwrap().entry(key.into()).or_default() += 1;
+        let mut map = self.0.lock().unwrap();
+        if !map.contains_key(key) && map.len() >= Self::MAX_KEYS {
+            map.retain(|_, (_, at)| at.elapsed() < Self::IDLE);
+            if map.len() >= Self::MAX_KEYS
+                && let Some(oldest) = map.iter().min_by_key(|(_, e)| e.1).map(|(k, _)| k.clone())
+            {
+                map.remove(&oldest);
+            }
+        }
+        let entry = map
+            .entry(key.into())
+            .or_insert((0, std::time::Instant::now()));
+        entry.0 += 1;
+        entry.1 = std::time::Instant::now();
     }
     pub fn succeeded(&self, key: &str) {
         self.0.lock().unwrap().remove(key);
@@ -540,9 +560,11 @@ pub async fn session_layer(
     let secure = is_secure(req.headers());
     let mut renew: Option<HeaderValue> = None;
     let mut principal = Principal::Anonymous;
+    // Only browser and device sessions sign in by cookie: an agent token is a
+    // bearer credential for `/mcp` alone, whatever cookie it arrives in.
     if let Some(token) = SESSION.read(&jar)
         && let Ok(Some((row, touched))) = lookup(&app.db, &token).await
-        && row.kind != "share"
+        && matches!(Kind::parse(&row.kind), Kind::Browser | Kind::Device)
         && let Some(user_id) = &row.user_id
         && let Ok(Some(user)) = find_user(&app.db, user_id).await
         && user.deactivated_at.is_none()
@@ -753,6 +775,20 @@ pub fn require_valid_password(password: &str) -> ApiResult<()> {
     Ok(())
 }
 
+/// How many password hashes or checks run at once, instance-wide. Each one
+/// holds about 19 MiB, so an anonymous burst of sign-ins, setups or
+/// redemptions waits its turn instead of growing memory.
+pub fn password_permits() -> &'static tokio::sync::Semaphore {
+    static PERMITS: OnceLock<tokio::sync::Semaphore> = OnceLock::new();
+    PERMITS.get_or_init(|| tokio::sync::Semaphore::new(password_concurrency()))
+}
+
+fn password_concurrency() -> usize {
+    std::thread::available_parallelism()
+        .map_or(2, |n| n.get())
+        .clamp(1, 4)
+}
+
 fn argon2() -> argon2::Argon2<'static> {
     // The crate's default is argon2id v19, m = 19 MiB, t = 2, p = 1: the
     // OWASP minimum.
@@ -763,6 +799,10 @@ fn argon2() -> argon2::Argon2<'static> {
 /// the algorithm change again later without a reset.
 pub async fn hash_password(password: String) -> ApiResult<String> {
     use argon2::password_hash::PasswordHasher;
+    let _permit = password_permits()
+        .acquire()
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?;
     tokio::task::spawn_blocking(move || {
         argon2()
             .hash_password(password.as_bytes())
@@ -787,6 +827,10 @@ pub enum Verified {
 pub async fn verify_password(password: String, stored: Option<String>) -> Verified {
     use argon2::password_hash::{PasswordVerifier, phc::PasswordHash};
     static DUMMY: OnceLock<String> = OnceLock::new();
+    // Never closed, so acquiring cannot fail.
+    let Ok(_permit) = password_permits().acquire().await else {
+        return Verified::No;
+    };
     tokio::task::spawn_blocking(move || {
         let stored = stored.unwrap_or_default();
         if let Some(phc) = stored.strip_prefix("{argon2id}") {
@@ -1037,6 +1081,11 @@ pub async fn claim(
     require_username(&body.username)?;
     require_display_name(&body.display_name)?;
     require_valid_password(&body.password)?;
+    // Refused before hashing: anyone can post here, and a claimed instance is
+    // the usual case. The transaction below still decides a race.
+    if any_account(&app.db).await? {
+        return Err(ApiError::conflict("this instance already has an account"));
+    }
     let hash = hash_password(body.password).await?;
     let _guard = app.setup_lock.lock().await;
     let mut tx = app.db.begin().await?;
@@ -1282,6 +1331,13 @@ async fn set_role(
         .bind(&id)
         .execute(&app.db)
         .await?;
+    // A reset link was issued against the old rank; it does not carry over.
+    sqlx::query(
+        "DELETE FROM invitation WHERE purpose = 'reset' AND user_id = ? AND used_at IS NULL",
+    )
+    .bind(&id)
+    .execute(&app.db)
+    .await?;
     tracing::info!(user = %id, role = body.role.as_str(), from = target.role.as_str(), by = %me.id, "role changed");
     Ok(axum::Json(
         find_user(&app.db, &id).await?.ok_or_else(|| gone(&id))?,
@@ -1439,6 +1495,46 @@ mod tests {
         );
         assert_eq!(browser_label(&h), "Edge on Windows");
         assert_eq!(browser_label(&HeaderMap::new()), "A browser");
+    }
+
+    #[test]
+    fn the_throttle_is_capped_and_keeps_the_newest() {
+        let t = LoginThrottle::default();
+        for _ in 0..7 {
+            t.failed("victim");
+        }
+        for n in 0..LoginThrottle::MAX_KEYS + 5 {
+            t.failed(&n.to_string());
+        }
+        assert_eq!(t.0.lock().unwrap().len(), LoginThrottle::MAX_KEYS);
+        assert!(
+            t.delay(&(LoginThrottle::MAX_KEYS + 4).to_string())
+                .is_zero()
+        );
+        assert!(
+            t.0.lock()
+                .unwrap()
+                .contains_key(&(LoginThrottle::MAX_KEYS + 4).to_string())
+        );
+        assert!(
+            !t.0.lock().unwrap().contains_key("victim"),
+            "the oldest went first"
+        );
+    }
+
+    /// With every permit held, a password check waits instead of running.
+    #[tokio::test]
+    async fn password_checks_wait_for_a_permit() {
+        let permits = password_permits();
+        let held = permits
+            .acquire_many(password_concurrency() as u32)
+            .await
+            .unwrap();
+        let check = tokio::spawn(verify_password("x".into(), None));
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(!check.is_finished(), "ran without a permit");
+        drop(held);
+        assert_eq!(check.await.unwrap(), Verified::No);
     }
 
     #[tokio::test]

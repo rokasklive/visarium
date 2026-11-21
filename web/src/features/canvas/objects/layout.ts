@@ -231,7 +231,7 @@ function ownTextNodes(el: HTMLElement): Text[] {
   return out.filter((t) => t.data.trim() !== '');
 }
 
-function checklistHtml(
+export function checklistHtml(
   title: string,
   tasks: readonly { id: string; text: string; state: string }[],
 ): string {
@@ -239,7 +239,7 @@ function checklistHtml(
   const rows = tasks
     .map(
       (t) =>
-        `<li class="${t.state}" data-task="${escapeHtml(t.id)}"><span class="vo-st ${t.state}"></span><span class="vo-text">${escapeHtml(t.text)}</span></li>`,
+        `<li class="${escapeHtml(t.state)}" data-task="${escapeHtml(t.id)}"><span class="vo-st ${escapeHtml(t.state)}"></span><span class="vo-text">${escapeHtml(t.text)}</span></li>`,
     )
     .join('');
   return `${head}<ul class="vo-tasks">${rows}</ul>`;

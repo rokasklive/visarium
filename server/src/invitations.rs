@@ -235,6 +235,42 @@ fn usable(row: Option<Row>, purpose: &str) -> ApiResult<Row> {
     }
 }
 
+/// A link carries no more authority than its issuer has now: the issuer is
+/// still active and could still issue it — to the join link's role, or over
+/// the reset account's current role. Checked at redemption, not only when the
+/// link was made, so a promotion or a demotion in between is honoured.
+async fn require_authority<'e>(
+    db: impl sqlx::SqliteExecutor<'e>,
+    invitation: &str,
+) -> ApiResult<()> {
+    let row: Option<(Option<Role>, Option<bool>, Option<Role>)> = sqlx::query_as(
+        "SELECT u.role, u.deactivated_at IS NULL, CASE WHEN i.purpose = 'reset' THEN t.role ELSE i.role END \
+           FROM invitation i LEFT JOIN app_user u ON u.id = i.created_by LEFT JOIN app_user t ON t.id = i.user_id \
+          WHERE i.id = ?",
+    )
+    .bind(invitation)
+    .fetch_optional(db)
+    .await?;
+    match row {
+        Some((Some(issuer), Some(true), Some(target))) if auth::may_act_on(issuer, target) => {
+            Ok(())
+        }
+        _ => {
+            tracing::warn!(
+                invitation,
+                reason = "issuer no longer has the authority",
+                "invitation refused"
+            );
+            Err(ApiError::new(
+                StatusCode::GONE,
+                "this link is no longer valid; ask for a new one",
+            )
+            .titled("Link not usable")
+            .with("code", json!("invite-invalid")))
+        }
+    }
+}
+
 /// The error-redirect code for a refused join, for `oidc.rs`.
 pub fn reason(e: &ApiError) -> &'static str {
     match e.extra.get("code").and_then(|c| c.as_str()) {
@@ -259,6 +295,7 @@ async fn inspect(
     let row = find(&app.db, &auth::hash_token(&body.token)).await?;
     let purpose = row.as_ref().map(|r| r.purpose.clone()).unwrap_or_default();
     let row = usable(row, &purpose)?;
+    require_authority(&app.db, &row.id).await?;
     let username: Option<String> = match &row.user_id {
         Some(id) => auth::find_user(&app.db, id).await?.map(|u| u.username),
         None => None,
@@ -280,6 +317,7 @@ pub async fn join_in(
     password_hash: Option<&str>,
 ) -> ApiResult<User> {
     let row = usable(find(&mut **tx, token_hash).await?, "join")?;
+    require_authority(&mut **tx, &row.id).await?;
     let user =
         auth::insert_user(&mut **tx, username, display_name, password_hash, row.role).await?;
     let used = sqlx::query(sqlx::AssertSqlSafe(format!(
@@ -317,31 +355,42 @@ async fn redeem(
     auth::require_password_sign_in(&app)?;
     auth::require_valid_password(&body.password)?;
     let hash_of_token = auth::hash_token(&body.token);
-    let purpose = find(&app.db, &hash_of_token)
-        .await?
-        .map(|r| r.purpose)
+    // Everything that could refuse this comes before the password is hashed:
+    // hashing is the expensive part, and anyone can post here.
+    let found = find(&app.db, &hash_of_token).await?;
+    let purpose = found
+        .as_ref()
+        .map(|r| r.purpose.clone())
         .unwrap_or_default();
     if purpose == "reset" {
+        let row = usable(found, "reset")?;
+        require_authority(&app.db, &row.id).await?;
         let password = auth::hash_password(body.password).await?;
         let mut tx = app.db.begin().await?;
         let row = usable(find(&mut *tx, &hash_of_token).await?, "reset")?;
+        require_authority(&mut *tx, &row.id).await?;
         let user_id = row.user_id.clone().unwrap_or_default();
         sqlx::query("UPDATE app_user SET password_hash = ? WHERE id = ?")
             .bind(password)
             .bind(&user_id)
             .execute(&mut *tx)
             .await?;
-        sqlx::query(sqlx::AssertSqlSafe(format!(
-            "UPDATE invitation SET used_at = {NOW} WHERE id = ?"
+        let used = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE invitation SET used_at = {NOW} WHERE id = ? AND used_at IS NULL"
         )))
         .bind(&row.id)
         .execute(&mut *tx)
         .await?;
+        if used.rows_affected() != 1 {
+            return Err(usable(Some(Row { used: true, ..row }), "reset").unwrap_err());
+        }
         tx.commit().await?;
         auth::end_sessions_of(&app.db, &user_id, None).await?;
         tracing::info!(invitation = %row.id, user = %user_id, "password reset; sessions ended");
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
+    let row = usable(found, "join")?;
+    require_authority(&app.db, &row.id).await?;
     let username = body.username.unwrap_or_default();
     let display_name = body.display_name.unwrap_or_default();
     auth::require_username(&username)?;
@@ -380,7 +429,8 @@ async fn redeem_with_provider(
     Json(body): Json<TokenBody>,
 ) -> ApiResult<Response> {
     let token_hash = auth::hash_token(&body.token);
-    usable(find(&app.db, &token_hash).await?, "join")?;
+    let row = usable(find(&app.db, &token_hash).await?, "join")?;
+    require_authority(&app.db, &row.id).await?;
     match oidc::begin(
         &app,
         &headers,

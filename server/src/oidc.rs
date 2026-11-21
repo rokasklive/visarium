@@ -393,10 +393,23 @@ struct Flow {
 #[derive(Default)]
 pub struct Flows(Mutex<HashMap<String, Flow>>);
 
+/// Sign-ins in progress at most. Anyone can start one, so the table is capped.
+const MAX_FLOWS: usize = 10_000;
+
 impl Flows {
+    /// ponytail: at the cap, an O(n) scan for the oldest; fine at 10 000, an
+    /// ordered map if the cap ever grows by orders of magnitude.
     fn insert(&self, id: String, flow: Flow) {
         let mut flows = self.0.lock().unwrap();
         flows.retain(|_, f| f.started.elapsed() < FLOW_TTL);
+        if flows.len() >= MAX_FLOWS
+            && let Some(oldest) = flows
+                .iter()
+                .min_by_key(|(_, f)| f.started)
+                .map(|(k, _)| k.clone())
+        {
+            flows.remove(&oldest);
+        }
         flows.insert(id, flow);
     }
     /// Removes and returns the flow: each is usable once.
@@ -409,20 +422,23 @@ impl Flows {
     }
 }
 
-/// Only a path on this origin: `/boards/x`, never `//evil.example` or
-/// `https://evil.example`.
+/// Only a path on this origin: `/boards/x`, never `//evil.example`,
+/// `https://evil.example`, or `/\t/evil.example` (browsers drop tabs and
+/// newlines while parsing, so that one would leave). Judged the way a browser
+/// will read it: resolved against an origin and compared. Which origin does
+/// not matter, only that the path cannot leave it.
 pub fn safe_return(path: Option<&str>) -> String {
     match path {
-        Some(p)
-            if p.starts_with('/')
-                && !p.starts_with("//")
-                && !p.starts_with("/\\")
-                && !p.contains(['\r', '\n']) =>
-        {
-            p.into()
-        }
+        Some(p) if same_origin_path(p) => p.into(),
         _ => "/".into(),
     }
+}
+
+pub fn same_origin_path(p: &str) -> bool {
+    let base = reqwest::Url::parse("https://visarium.invalid/").expect("a URL");
+    p.starts_with('/')
+        && !p.chars().any(char::is_control)
+        && base.join(p).is_ok_and(|u| u.origin() == base.origin())
 }
 
 fn redirect(to: &str) -> Response {
@@ -568,6 +584,8 @@ pub struct CallbackQuery {
 pub struct Identity {
     pub provider: String,
     pub subject: String,
+    /// The `iss` that verified this ID token.
+    pub issuer: String,
     /// Only when the provider says it is verified.
     pub email: Option<String>,
     pub name: Option<String>,
@@ -654,6 +672,7 @@ async fn verify(
     Ok(Identity {
         provider: provider.into(),
         subject: claims.subject().as_str().into(),
+        issuer: claims.issuer().as_str().into(),
         email,
         name: claims
             .name()
@@ -663,12 +682,40 @@ async fn verify(
     })
 }
 
-async fn linked_user(db: &sqlx::SqlitePool, identity: &Identity) -> sqlx::Result<Option<String>> {
-    sqlx::query_scalar("SELECT user_id FROM user_identity WHERE provider = ? AND subject = ?")
-        .bind(&identity.provider)
-        .bind(&identity.subject)
-        .fetch_optional(db)
-        .await
+/// Who an identity is linked to, by `(provider, sub)` and the issuer that
+/// vouched for it. A link from before issuers were recorded adopts this one.
+enum Linked {
+    None,
+    To(String),
+    /// The provider id now names a different issuer: not this account.
+    OtherIssuer,
+}
+
+async fn linked_user(db: &sqlx::SqlitePool, identity: &Identity) -> sqlx::Result<Linked> {
+    let row: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT user_id, issuer FROM user_identity WHERE provider = ? AND subject = ?",
+    )
+    .bind(&identity.provider)
+    .bind(&identity.subject)
+    .fetch_optional(db)
+    .await?;
+    Ok(match row {
+        None => Linked::None,
+        Some((user, Some(issuer))) if issuer == identity.issuer => Linked::To(user),
+        Some((_, Some(_))) => {
+            tracing::warn!(provider = %identity.provider, "an identity from a different issuer than the one it was linked through");
+            Linked::OtherIssuer
+        }
+        Some((user, None)) => {
+            sqlx::query("UPDATE user_identity SET issuer = ? WHERE provider = ? AND subject = ? AND issuer IS NULL")
+                .bind(&identity.issuer)
+                .bind(&identity.provider)
+                .bind(&identity.subject)
+                .execute(db)
+                .await?;
+            Linked::To(user)
+        }
+    })
 }
 
 pub async fn link<'e>(
@@ -676,11 +723,12 @@ pub async fn link<'e>(
     user_id: &str,
     identity: &Identity,
 ) -> sqlx::Result<()> {
-    sqlx::query("INSERT INTO user_identity (provider, subject, user_id, email) VALUES (?, ?, ?, ?)")
+    sqlx::query("INSERT INTO user_identity (provider, subject, user_id, email, issuer) VALUES (?, ?, ?, ?, ?)")
         .bind(&identity.provider)
         .bind(&identity.subject)
         .bind(user_id)
         .bind(&identity.email)
+        .bind(&identity.issuer)
         .execute(db)
         .await
         .map(|_| ())
@@ -753,9 +801,22 @@ async fn resolve(
     principal: &Principal,
 ) -> Result<Resolved, &'static str> {
     let db = &app.db;
-    let linked = linked_user(db, identity)
+    let linked = match linked_user(db, identity)
         .await
-        .map_err(|_| "server-error")?;
+        .map_err(|_| "server-error")?
+    {
+        Linked::None => None,
+        Linked::To(user) => Some(user),
+        // `(provider, sub)` is taken by another issuer's identity: nobody's
+        // account, and nothing new can be linked under it.
+        Linked::OtherIssuer => {
+            return Err(match intent {
+                Intent::SignIn => "no-account",
+                Intent::Link { .. } => "linked-elsewhere",
+                _ => "already-registered",
+            });
+        }
+    };
     match (intent, linked) {
         (Intent::Link { user_id }, Some(owner)) => {
             if &owner == user_id {
@@ -1041,6 +1102,29 @@ mod tests {
     }
 
     #[test]
+    fn pending_flows_are_capped_and_keep_the_newest() {
+        let flows = Flows::default();
+        let flow = || Flow {
+            provider: "p".into(),
+            state: String::new(),
+            nonce: String::new(),
+            verifier: String::new(),
+            intent: Intent::SignIn,
+            return_to: "/".into(),
+            started: Instant::now(),
+        };
+        for n in 0..MAX_FLOWS + 5 {
+            flows.insert(n.to_string(), flow());
+        }
+        assert_eq!(flows.0.lock().unwrap().len(), MAX_FLOWS);
+        assert!(
+            flows.take(&(MAX_FLOWS + 4).to_string()).is_some(),
+            "the newest is kept"
+        );
+        assert!(flows.take("0").is_none(), "the oldest went first");
+    }
+
+    #[test]
     fn return_paths_stay_on_this_origin() {
         assert_eq!(safe_return(Some("/boards/abc?x=1")), "/boards/abc?x=1");
         for bad in [
@@ -1049,6 +1133,10 @@ mod tests {
             "/\\evil.example",
             "boards",
             "/a\r\nSet-Cookie: x",
+            "/\t/evil.example",
+            "/\n/evil.example",
+            "/\u{0}x",
+            "/\\/evil.example",
         ] {
             assert_eq!(safe_return(Some(bad)), "/", "{bad}");
         }

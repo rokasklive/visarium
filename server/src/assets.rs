@@ -35,7 +35,9 @@ use crate::{AppState, NOW, new_id};
 pub const WIDTHS: [u32; 5] = [2048, 1024, 512, 256, 64];
 const WEBP_QUALITY: f32 = 80.0;
 const MAX_UPLOAD_BYTES: usize = 200 * 1024 * 1024;
-const IMMUTABLE: &str = "public, max-age=31536000, immutable";
+/// Long-lived, but never in a shared cache: these sit behind a session, and a
+/// proxy that cached one would hand it to anybody asking the same URL.
+const IMMUTABLE: &str = "private, max-age=31536000, immutable";
 const NAMED_BOARDS: i64 = 10;
 
 pub fn routes() -> Router<AppState> {

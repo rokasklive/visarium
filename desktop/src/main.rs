@@ -467,7 +467,7 @@ fn main() {
                 preferred,
                 "local library listening"
             );
-            drag_out::clear();
+            drag_out::clear(app.handle());
             drag_out::allow(app.handle(), &library)?;
             about::allow_client_errors(app.handle(), &library)?;
             local_port::allow(app.handle(), &library)?;

@@ -48,9 +48,19 @@ pub fn refused(ip: IpAddr) -> bool {
                 || (s[0] & 0xfe00) == 0xfc00
                 || (s[0] & 0xffc0) == 0xfe80
                 || v.to_ipv4_mapped().is_some_and(|m| refused(IpAddr::V4(m)))
+                // NAT64 (64:ff9b::/96) carries an IPv4 in its last 32 bits,
+                // 6to4 (2002::/16) in bits 16-47.
+                || (s[..6] == [0x64, 0xff9b, 0, 0, 0, 0] && refused(embedded(s[6], s[7])))
+                || (s[0] == 0x2002 && refused(embedded(s[1], s[2])))
                 || (s[..6] == [0, 0, 0, 0, 0, 0] && refused(IpAddr::V4(v.to_ipv4().unwrap())))
         }
     }
+}
+
+fn embedded(hi: u16, lo: u16) -> IpAddr {
+    IpAddr::V4(std::net::Ipv4Addr::from(
+        (u32::from(hi) << 16) | u32::from(lo),
+    ))
 }
 
 fn not_an_image(e: crate::error::ApiError) -> Fail {
@@ -122,7 +132,10 @@ pub async fn from_url(app: &AppState, raw: &str, uploader: &str) -> Result<Asset
                 "{host} is a private address, and images are imported only from public ones. Nothing was fetched or created."
             ));
         }
+        // No environment proxy: it would connect on our behalf, past the
+        // address pinned below.
         let client = reqwest::Client::builder()
+            .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(TIMEOUT)
             .resolve(&host, first)
@@ -201,6 +214,10 @@ mod tests {
             "::ffff:127.0.0.1",
             "::ffff:10.0.0.5",
             "::ffff:169.254.169.254",
+            "64:ff9b::a00:5",
+            "64:ff9b::7f00:1",
+            "2002:a00:5::",
+            "2002:7f00:1::",
         ] {
             assert!(refused(ip.parse().unwrap()), "{ip} must be refused");
         }
@@ -214,6 +231,8 @@ mod tests {
             "100.128.0.1",
             "2606:4700::1111",
             "::ffff:93.184.216.34",
+            "64:ff9b::5db8:d822",
+            "2002:5db8:d822::",
         ] {
             assert!(!refused(ip.parse().unwrap()), "{ip} is public");
         }

@@ -22,7 +22,7 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::async_runtime::JoinHandle;
 use tauri::ipc::CapabilityBuilder;
-use tauri::{AppHandle, Manager, State, Url};
+use tauri::{AppHandle, Manager, State, Url, WebviewWindow};
 
 use crate::connect::Problem;
 use crate::drag_out;
@@ -126,18 +126,39 @@ pub struct PortInfo {
     default: u16,
 }
 
+/// Whether a page at `caller` is the library as it runs now. Tauri grants
+/// accumulate (a grant to an old port is never withdrawn), so the commands
+/// check this themselves: a program that takes over a port the library left
+/// gets nothing from them.
+fn is_current(library: &Url, caller: &Url) -> bool {
+    caller.origin() == library.origin()
+}
+
+fn require_current(port: &LocalPort, window: &WebviewWindow) -> Result<(), Problem> {
+    match window.url() {
+        Ok(url) if is_current(&port.library(), &url) => Ok(()),
+        _ => Err(Problem::new(
+            "local",
+            "only the local library at its current address can do that",
+        )),
+    }
+}
+
 #[tauri::command]
-pub fn local_port(port: State<'_, LocalPort>) -> PortInfo {
-    port.info()
+pub fn local_port(window: WebviewWindow, port: State<'_, LocalPort>) -> Result<PortInfo, Problem> {
+    require_current(&port, &window)?;
+    Ok(port.info())
 }
 
 /// Moves the library to `value` now, and from then on.
 #[tauri::command]
 pub async fn set_local_port(
     app: AppHandle,
+    window: WebviewWindow,
     port: State<'_, LocalPort>,
     value: u16,
 ) -> Result<PortInfo, Problem> {
+    require_current(&port, &window)?;
     if value < 1024 {
         return Err(Problem::new(
             "local",
@@ -189,8 +210,9 @@ pub async fn set_local_port(
     Ok(port.info())
 }
 
-/// Lets the embedded library at `origin` read and move its port. The grant's
-/// one id means a move replaces it rather than adding another.
+/// Lets the embedded library at `origin` read and move its port. Tauri adds
+/// each grant to the ones before it and never withdraws one, so after a move
+/// the old origin still holds this grant; `require_current` is what refuses it.
 pub fn allow(app: &AppHandle, origin: &Url) -> tauri::Result<()> {
     crate::about::allow(app, origin)?;
     app.add_capability(
@@ -270,6 +292,16 @@ mod tests {
             "the old address no longer answers"
         );
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn only_the_current_library_origin_may_use_the_port_commands() {
+        let library = origin(48000);
+        let at = |u: &str| is_current(&library, &u.parse().unwrap());
+        assert!(at("http://127.0.0.1:48000/settings"));
+        assert!(!at("http://127.0.0.1:47821/settings"), "a port it left");
+        assert!(!at("https://visarium.example.net/settings"), "a server");
+        assert!(!at("http://localhost:48000/settings"), "another host name");
     }
 
     #[test]
