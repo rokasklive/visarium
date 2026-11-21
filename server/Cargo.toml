@@ -41,6 +41,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1", features = ["v4", "v5", "v7", "serde"] }
 webp = "0.3"
 
+# The disk's free space, for the storage gauge and the upload guard.
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["fs"] }
+
 [dev-dependencies]
 chrono = "0.4"
 http-body-util = "0.1"

@@ -6723,6 +6723,7 @@ dependencies = [
  "reqwest",
  "rsa 0.10.0",
  "rust-embed",
+ "rustix",
  "serde",
  "serde_json",
  "sha2 0.11.1",

@@ -10,6 +10,7 @@ import {
   type SessionView,
   type ShareLink,
   type SignInProviders,
+  type StorageUsage,
   type VisionSetting,
   type VisionSettingInput,
 } from '@visarium/api-client';
@@ -196,6 +197,36 @@ export function useSaveProvider() {
     });
     if (!data) throw new Error(problemDetail(error, 'that provider could not be saved'));
     return data;
+  });
+}
+
+// --- image storage (moderators see it, admins set its limit) ----------------
+
+const storageKey = ['instance-storage'] as const;
+
+export function useStorage(enabled = true) {
+  return useQuery({
+    queryKey: storageKey,
+    enabled,
+    // Uploads fill it while the page is open; a minute is close enough.
+    refetchInterval: 60_000,
+    queryFn: async (): Promise<StorageUsage> => {
+      const { data, response } = await api.GET('/api/instance/storage');
+      if (!data) throw new Error(`could not load storage: ${response.status}`);
+      return data;
+    },
+  });
+}
+
+export function useSaveStorageLimit() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (limitBytes: number | null): Promise<StorageUsage> => {
+      const { data, error } = await api.PUT('/api/instance/storage', { body: { limitBytes } });
+      if (!data) throw new Error(problemDetail(error, 'the storage limit could not be saved'));
+      return data;
+    },
+    onSuccess: (data) => queryClient.setQueryData(storageKey, data),
   });
 }
 

@@ -21,6 +21,7 @@ pub mod oauth;
 pub mod oidc;
 pub mod realtime;
 pub mod sharing;
+pub mod storage;
 pub mod telemetry;
 pub mod vision;
 
@@ -88,9 +89,12 @@ pub struct App {
     pub rooms: realtime::Rooms,
     /// Writes per agent per minute (ADR-0031).
     pub agent_writes: agent::Limiter,
-    /// Bounds how many images decode at once: a 12-megapixel decode is ~50 MB
-    /// of pixels, and a dropped folder should not be forty of them in parallel.
+    /// The decode budget in MiB (`assets::DECODE_BUDGET_MIB`): each decode
+    /// holds what its pixels need, at least a quarter, so a dropped folder is
+    /// never forty decodes at once and a huge image is never one of four.
     pub image_permits: tokio::sync::Semaphore,
+    /// Assets whose image failed to draw, so a view does not decode them again.
+    pub undrawable: std::sync::Mutex<std::collections::HashSet<String>>,
     /// Serialises claiming a fresh instance, so two first requests cannot both
     /// become its admin.
     pub setup_lock: tokio::sync::Mutex<()>,
@@ -189,9 +193,6 @@ pub async fn open(config: Config) -> anyhow_lite::Result<AppState> {
         public_url = config.public_url.as_deref().unwrap_or("-"),
         "server ready"
     );
-    let cpus = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(2);
     let app = Arc::new(App {
         db,
         config,
@@ -205,7 +206,8 @@ pub async fn open(config: Config) -> anyhow_lite::Result<AppState> {
         vision: Default::default(),
         rooms: Default::default(),
         agent_writes: Default::default(),
-        image_permits: tokio::sync::Semaphore::new(cpus.clamp(1, 4)),
+        image_permits: tokio::sync::Semaphore::new(assets::DECODE_BUDGET_MIB as usize),
+        undrawable: Default::default(),
         setup_lock: Default::default(),
         local_user,
         allow_private_imports: Default::default(),
@@ -296,6 +298,7 @@ pub fn router(state: AppState) -> Router {
         .merge(oidc::identity_routes())
         .merge(invitations::admin_routes())
         .merge(instance::routes())
+        .merge(storage::routes())
         .merge(vision::routes())
         .merge(sharing::member_routes())
         .merge(device::member_routes())

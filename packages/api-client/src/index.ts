@@ -25,6 +25,7 @@ export type {
   ShareLink,
   SignInProvider,
   SignInProviders,
+  StorageUsage,
   VisionSetting,
   VisionSettingInput,
 } from './generated/schema';

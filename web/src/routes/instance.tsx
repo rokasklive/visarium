@@ -17,13 +17,16 @@ import {
   useRevokeAnyShare,
   useRevokeInvitation,
   useSaveProvider,
+  useSaveStorageLimit,
   useSaveVision,
   useSetRole,
+  useStorage,
   useTestVision,
   useVision,
 } from '~/api/accounts';
 import { useBoards } from '~/api/boards';
 import { type Account, providerStart, useSession } from '~/api/session';
+import { bytesText, storageState } from '~/api/storage';
 import { ConfirmButton } from '~/components/confirm-button';
 import { CopyField, GhostButton, SectionHeading, TextField } from '~/components/settings-ui';
 
@@ -68,6 +71,7 @@ function InstanceSettings() {
     ['accounts', 'Accounts', true],
     ['invitations', 'Invitations', true],
     ['shares', 'Share links', session.data?.sharingEnabled ?? false],
+    ['storage', 'Storage', true],
     ['sign-in', 'Sign-in', admin],
     ['vision', 'Vision model', admin],
   ];
@@ -99,6 +103,7 @@ function InstanceSettings() {
         <AccountsSection me={me} />
         <InvitationsSection me={me} />
         {session.data?.sharingEnabled ? <SharesSection /> : null}
+        <StorageSection admin={admin} />
         {admin ? <SignInSection /> : null}
         {admin ? <VisionSection /> : null}
       </div>
@@ -369,6 +374,107 @@ function SharesSection() {
         ))}
       </ul>
       <Problem error={revoke.error} />
+    </section>
+  );
+}
+
+// --- image storage (moderators and admins; admins set the limit) ------------------
+
+/**
+ * How full image storage is, so whoever looks after the instance sees it
+ * coming rather than hearing about it from a refused upload. No colour: the
+ * bar darkens to ink and the words say how urgent it is (DESIGN_SYSTEM.md).
+ */
+function StorageSection({ admin }: { admin: boolean }) {
+  const storage = useStorage();
+  const save = useSaveStorageLimit();
+  const [limitGb, setLimitGb] = useState<string | null>(null);
+  const u = storage.data;
+  const state = u ? storageState(u) : null;
+  const shownGb = limitGb ?? (u?.limitBytes ? String(u.limitBytes / 1e9) : '');
+  const parsed = Number(shownGb.replace(',', '.'));
+  const valid = shownGb.trim() !== '' && Number.isFinite(parsed) && parsed >= 0.1;
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    if (valid) save.mutate(Math.round(parsed * 1e9), { onSuccess: () => setLimitGb(null) });
+  }
+
+  return (
+    <section
+      id="storage"
+      className="mb-6 scroll-mt-6 border-b border-line pb-6"
+      data-testid="storage-section"
+    >
+      <SectionHeading>Storage</SectionHeading>
+      {storage.isError && <p className="text-ink">storage could not be loaded</p>}
+      {u && state && (
+        <>
+          <meter
+            aria-label="Image storage used"
+            min={0}
+            max={state.of}
+            value={Math.min(u.usedBytes, state.of)}
+            data-level={state.level}
+            title={state.summary}
+            className="storage-meter mb-2"
+          />
+          <p className="tabular-nums text-ink" data-testid="storage-summary">
+            {state.summary}
+          </p>
+          {state.warning && (
+            <p className="mt-1 text-ink" role="status" data-testid="storage-warning">
+              {state.warning}
+            </p>
+          )}
+          <p className="mt-1 text-[11px] text-ink-dim tabular-nums">
+            {u.images.toLocaleString()} image{u.images === 1 ? '' : 's'}
+            {u.trashBytes > 0 ? ` · ${bytesText(u.trashBytes)} of it in the trash` : ''}
+            {u.diskFreeBytes != null ? ` · ${bytesText(u.diskFreeBytes)} free on the disk` : ''}
+          </p>
+          <p className="mt-3 mb-3 text-[11px] text-ink-dim">
+            Counts original images, the trash included until it is purged. Thumbnails are a cache on
+            top, usually a fraction of this. At the limit new images are refused with a message
+            saying so, and nothing already stored is touched.
+            {u.diskFreeBytes != null
+              ? ` Whatever the limit, ${bytesText(u.diskReserveBytes)} of the disk is kept free for the database.`
+              : ''}
+          </p>
+          {admin ? (
+            <form onSubmit={submit} className="flex items-end gap-2" data-testid="storage-form">
+              <label className="block">
+                <span className="mb-1 block text-[11px] uppercase tracking-wide text-ink-dim">
+                  Limit (GB)
+                </span>
+                <input
+                  type="number"
+                  min={0.1}
+                  step="any"
+                  inputMode="decimal"
+                  value={shownGb}
+                  placeholder="no limit"
+                  onChange={(e) => setLimitGb(e.target.value)}
+                  className="w-28 rounded-sm border border-line bg-surface-raised px-2 py-1 text-ink tabular-nums placeholder:text-ink-disabled"
+                />
+              </label>
+              <GhostButton type="submit" disabled={!valid || save.isPending}>
+                Save
+              </GhostButton>
+              {u.limitBytes != null && (
+                <GhostButton
+                  disabled={save.isPending}
+                  onClick={() => save.mutate(null, { onSuccess: () => setLimitGb(null) })}
+                >
+                  Remove limit
+                </GhostButton>
+              )}
+            </form>
+          ) : (
+            <p className="text-[11px] text-ink-dim">An admin sets the limit.</p>
+          )}
+          <Problem error={save.error} />
+        </>
+      )}
     </section>
   );
 }

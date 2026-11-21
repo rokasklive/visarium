@@ -245,4 +245,47 @@
     border-radius: 4px;
     background: var(--color-ink-dim);
   }
+
+  /*
+   * The storage gauge in Instance Settings: a native <meter>, drawn as a 1px
+   * hairline track and a flat fill. No colour carries the urgency (The
+   * Destructive-Act Rule's reasoning): the fill goes from ink-dim to ink, and
+   * the words beside it say "nearly full" or "full".
+   */
+  .storage-meter {
+    appearance: none;
+    display: block;
+    width: 100%;
+    max-width: 420px;
+    height: 8px;
+    border: 1px solid var(--color-line);
+    border-radius: 2px;
+    background: var(--color-surface-sunken);
+  }
+
+  .storage-meter::-webkit-meter-bar {
+    border: 0;
+    border-radius: 0;
+    background: var(--color-surface-sunken);
+  }
+
+  .storage-meter::-webkit-meter-optimum-value,
+  .storage-meter::-webkit-meter-suboptimum-value,
+  .storage-meter::-webkit-meter-even-less-good-value {
+    background: var(--color-ink-dim);
+  }
+
+  .storage-meter::-moz-meter-bar {
+    background: var(--color-ink-dim);
+  }
+
+  .storage-meter:not([data-level="ok"])::-webkit-meter-optimum-value,
+  .storage-meter:not([data-level="ok"])::-webkit-meter-suboptimum-value,
+  .storage-meter:not([data-level="ok"])::-webkit-meter-even-less-good-value {
+    background: var(--color-ink);
+  }
+
+  .storage-meter:not([data-level="ok"])::-moz-meter-bar {
+    background: var(--color-ink);
+  }
 }

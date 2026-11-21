@@ -35,6 +35,21 @@ use crate::{AppState, NOW, new_id};
 pub const WIDTHS: [u32; 5] = [2048, 1024, 512, 256, 64];
 const WEBP_QUALITY: f32 = 80.0;
 const MAX_UPLOAD_BYTES: usize = 200 * 1024 * 1024;
+/// Most pixels an image may have: a 200-megapixel phone sensor (16384×12288)
+/// and stitched panoramas fit; a "decompression bomb" — a small file that
+/// claims to be enormous — does not. Pillow errors at ~179 MP, imgproxy at
+/// 50 MP, Cloudflare Images at 100 MP; local-first can afford more.
+pub const MAX_PIXELS: u64 = 200_000_000;
+/// Most bytes one decode may allocate for its pixels. A 200 MP 8-bit RGBA
+/// image is 800 MB; the same at 16 bits per channel is refused.
+const MAX_DECODE_BYTES: u64 = 1024 * 1024 * 1024;
+/// WebP's limit on either side. A tier that would be taller is drawn smaller.
+const WEBP_MAX_SIDE: u32 = 16_383;
+/// How much decoded-pixel memory all decodes together may hold, in MiB. Each
+/// decode takes what its pixels need (twice: orienting copies), but at least
+/// a share, so no more run at once than there are CPUs (at most four).
+/// ponytail: a constant; make it VISARIUM_DECODE_MEMORY when a small NAS needs less.
+pub const DECODE_BUDGET_MIB: u32 = 2048;
 /// Long-lived, but never in a shared cache: these sit behind a session, and a
 /// proxy that cached one would hand it to anybody asking the same URL.
 const IMMUTABLE: &str = "private, max-age=31536000, immutable";
@@ -117,6 +132,48 @@ fn unreadable(detail: impl Into<String>) -> ApiError {
     ApiError::new(StatusCode::UNSUPPORTED_MEDIA_TYPE, detail).titled("Not a readable image")
 }
 
+fn too_large(detail: impl Into<String>) -> ApiError {
+    ApiError::new(StatusCode::PAYLOAD_TOO_LARGE, detail).titled("Image too large")
+}
+
+/// The decoder's own limits. They check dimensions and the decoder's working
+/// buffers; the pixel buffer itself is checked against `MAX_DECODE_BYTES` by
+/// us, because `into_decoder` + `from_decoder` does not reserve it.
+fn reader(path: &Path) -> Result<ImageReader<std::io::BufReader<std::fs::File>>, String> {
+    let mut reader = ImageReader::open(path)
+        .map_err(|e| e.to_string())?
+        .with_guessed_format()
+        .map_err(|e| e.to_string())?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(65_535);
+    limits.max_image_height = Some(65_535);
+    limits.max_alloc = Some(MAX_DECODE_BYTES);
+    reader.limits(limits);
+    Ok(reader)
+}
+
+/// "46,000 × 46,000 (2.1 gigapixels)".
+fn size_text(w: u32, h: u32) -> String {
+    let group = |n: u32| {
+        let s = n.to_string();
+        let mut out = String::new();
+        for (i, c) in s.chars().enumerate() {
+            if i > 0 && (s.len() - i).is_multiple_of(3) {
+                out.push(',');
+            }
+            out.push(c);
+        }
+        out
+    };
+    let mp = w as f64 * h as f64 / 1e6;
+    let amount = if mp >= 1000.0 {
+        format!("{:.1} gigapixels", mp / 1000.0)
+    } else {
+        format!("{mp:.0} megapixels")
+    };
+    format!("{} × {} ({amount})", group(w), group(h))
+}
+
 fn mime_and_extension(format: ImageFormat) -> Option<(&'static str, &'static str)> {
     Some(match format {
         ImageFormat::Jpeg => ("image/jpeg", "jpg"),
@@ -136,18 +193,38 @@ struct Probe {
     extension: &'static str,
 }
 
-/// Reads the header only. Width and height are as displayed: an EXIF
+/// Reads the header only, and refuses what is too large to decode before a
+/// byte of it is stored. Width and height are as displayed: an EXIF
 /// quarter-turn swaps them, because that is the shape the canvas will draw.
-fn probe(path: &Path) -> Result<Probe, String> {
-    let reader = ImageReader::open(path)
-        .map_err(|e| e.to_string())?
-        .with_guessed_format()
-        .map_err(|e| e.to_string())?;
-    let format = reader.format().ok_or("not a recognised image format")?;
+fn probe(path: &Path) -> Result<Probe, ApiError> {
+    let bad = |e: String| unreadable(format!("not a readable image: {e}"));
+    let reader = reader(path).map_err(bad)?;
+    let format = reader
+        .format()
+        .ok_or_else(|| bad("not a recognised image format".into()))?;
     let (mime, extension) =
-        mime_and_extension(format).ok_or_else(|| format!("{format:?} is not supported"))?;
-    let mut decoder = reader.into_decoder().map_err(|e| e.to_string())?;
+        mime_and_extension(format).ok_or_else(|| bad(format!("{format:?} is not supported")))?;
+    let mut decoder = reader.into_decoder().map_err(|e| match e {
+        image::ImageError::Limits(_) => too_large(
+            "This image is larger than 65,535 pixels on a side, which Visarium cannot draw. Scale it down and add it again.",
+        ),
+        e => bad(e.to_string()),
+    })?;
     let (w, h) = decoder.dimensions();
+    let max_mp = MAX_PIXELS / 1_000_000;
+    if w as u64 * h as u64 > MAX_PIXELS {
+        return Err(too_large(format!(
+            "This image is {}; Visarium takes up to {max_mp} megapixels. Scale it down and add it again.",
+            size_text(w, h)
+        )));
+    }
+    if decoder.total_bytes() > MAX_DECODE_BYTES {
+        return Err(too_large(format!(
+            "This image is {} at {} bytes a pixel, more than Visarium decodes at once. Save it with 8 bits per channel, or smaller, and add it again.",
+            size_text(w, h),
+            decoder.color_type().bytes_per_pixel()
+        )));
+    }
     let quarter_turn = matches!(
         decoder
             .orientation()
@@ -159,7 +236,7 @@ fn probe(path: &Path) -> Result<Probe, String> {
     );
     let (width, height) = if quarter_turn { (h, w) } else { (w, h) };
     if width == 0 || height == 0 {
-        return Err("the image has no pixels".into());
+        return Err(bad("the image has no pixels".into()));
     }
     Ok(Probe {
         width,
@@ -170,11 +247,13 @@ fn probe(path: &Path) -> Result<Probe, String> {
 }
 
 fn decode_oriented(path: &Path) -> Result<DynamicImage, String> {
-    let reader = ImageReader::open(path)
-        .map_err(|e| e.to_string())?
-        .with_guessed_format()
-        .map_err(|e| e.to_string())?;
-    let mut decoder = reader.into_decoder().map_err(|e| e.to_string())?;
+    let mut decoder = reader(path)?.into_decoder().map_err(|e| e.to_string())?;
+    // Checked again here, not only at upload: an original stored before these
+    // limits existed must not be decoded either.
+    let (w, h) = decoder.dimensions();
+    if w as u64 * h as u64 > MAX_PIXELS || decoder.total_bytes() > MAX_DECODE_BYTES {
+        return Err(format!("{} is too large to decode", size_text(w, h)));
+    }
     let orientation = decoder
         .orientation()
         .unwrap_or(image::metadata::Orientation::NoTransforms);
@@ -186,12 +265,20 @@ fn decode_oriented(path: &Path) -> Result<DynamicImage, String> {
 /// Never upscales: a 300 px original asked for at 512 is encoded at 300. The
 /// height comes from the ORIGINAL's aspect, not `img`'s, so resizing tier from
 /// tier does not compound rounding.
+/// Never taller than WebP can encode either: a full-page screenshot's tier is
+/// drawn narrower than its nominal width, as a small original's is.
 fn shrink(img: &DynamicImage, width: u32, original: (u32, u32)) -> DynamicImage {
-    if width >= img.width() {
+    let (ow, oh) = (original.0 as f64, original.1 as f64);
+    let mut w = (width as f64).min(img.width() as f64);
+    if oh * w / ow > WEBP_MAX_SIDE as f64 {
+        w = (WEBP_MAX_SIDE as f64 * ow / oh).floor();
+    }
+    let w = (w as u32).max(1);
+    if w >= img.width() && img.height() <= WEBP_MAX_SIDE {
         return img.clone();
     }
-    let height = ((original.1 as f64 * width as f64 / original.0 as f64).round() as u32).max(1);
-    img.resize_exact(width, height, image::imageops::FilterType::Triangle)
+    let height = ((oh * w as f64 / ow).round() as u32).clamp(1, WEBP_MAX_SIDE);
+    img.resize_exact(w, height, image::imageops::FilterType::Triangle)
 }
 
 fn encode_webp(img: &DynamicImage) -> Result<Vec<u8>, String> {
@@ -201,7 +288,11 @@ fn encode_webp(img: &DynamicImage) -> Result<Vec<u8>, String> {
         DynamicImage::ImageRgb8(img.to_rgb8())
     };
     let encoder = webp::Encoder::from_image(&pixels).map_err(|e| e.to_string())?;
-    Ok(encoder.encode(WEBP_QUALITY).to_vec())
+    // Not `encode`, which panics on what WebP refuses.
+    Ok(encoder
+        .encode_simple(false, WEBP_QUALITY)
+        .map_err(|e| format!("{e:?}"))?
+        .to_vec())
 }
 
 /// Writes through a temp file and a rename, so a reader never sees half a file
@@ -230,39 +321,90 @@ fn original_path(root: &Path, storage_key: &str) -> ApiResult<PathBuf> {
     Ok(root.join(storage_key))
 }
 
+/// Why a ladder could not be drawn: the image itself (remembered, never
+/// tried again), or the moment (a full disk, a lost task).
+enum RenderError {
+    Undrawable(String),
+    Other(String),
+}
+
 /// Decodes the original once and walks down the requested widths, each one
-/// resized from the last — far cheaper than five full decodes.
-async fn materialise(app: &AppState, asset: &Asset, widths: Vec<u32>) -> ApiResult<()> {
-    let original = original_path(&app.config.assets, &asset.storage_key)?;
+/// resized from the last — far cheaper than five full decodes. Holds as much
+/// of the decode budget as the pixels need, so one huge image decodes alone.
+async fn render(
+    app: &AppState,
+    original: PathBuf,
+    id: &str,
+    size: (u32, u32),
+    widths: Vec<u32>,
+) -> Result<(), RenderError> {
     let root = app.config.derivatives.clone();
-    let id = asset.id.clone();
     let todo: Vec<u32> = widths
         .into_iter()
-        .filter(|w| !derivative_path(&root, &id, *w).exists())
+        .filter(|w| !derivative_path(&root, id, *w).exists())
         .collect();
     if todo.is_empty() {
         return Ok(());
     }
     let _permit = app
         .image_permits
-        .acquire()
+        .acquire_many(decode_weight(size))
         .await
-        .map_err(|e| ApiError::internal(e.to_string()))?;
-    tokio::task::spawn_blocking(move || -> Result<(), String> {
-        let mut current = decode_oriented(&original)?;
+        .map_err(|e| RenderError::Other(e.to_string()))?;
+    let id = id.to_string();
+    tokio::task::spawn_blocking(move || -> Result<(), RenderError> {
+        let mut current = decode_oriented(&original).map_err(RenderError::Undrawable)?;
         let dims = (current.width(), current.height());
         let mut sorted = todo;
         sorted.sort_unstable_by(|a, b| b.cmp(a));
         for width in sorted {
             current = shrink(&current, width, dims);
-            write_atomically(&derivative_path(&root, &id, width), &encode_webp(&current)?)
-                .map_err(|e| e.to_string())?;
+            let webp = encode_webp(&current).map_err(RenderError::Undrawable)?;
+            write_atomically(&derivative_path(&root, &id, width), &webp)
+                .map_err(|e| RenderError::Other(e.to_string()))?;
         }
         Ok(())
     })
     .await
-    .map_err(|e| ApiError::internal(e.to_string()))?
-    .map_err(|e| ApiError::internal(format!("could not generate a derivative: {e}")))
+    // A panic in a decoder is the image's doing.
+    .map_err(|e| RenderError::Undrawable(e.to_string()))?
+}
+
+/// MiB of the decode budget an image of `size` holds while it decodes.
+fn decode_weight(size: (u32, u32)) -> u32 {
+    static SLOTS: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    let slots = *SLOTS.get_or_init(|| {
+        std::thread::available_parallelism().map_or(2, |n| n.get().clamp(1, 4) as u32)
+    });
+    let need = (size.0 as u64 * size.1 as u64 * 4 * 2) >> 20;
+    (need.min(u32::MAX as u64) as u32).clamp(DECODE_BUDGET_MIB / slots, DECODE_BUDGET_MIB)
+}
+
+fn undrawable(id: &str) -> ApiError {
+    unreadable(format!("image {id} cannot be drawn")).titled("Image cannot be drawn")
+}
+
+/// The asked-for rungs of a stored asset's ladder. An image that failed to
+/// draw once is not decoded again on every view: that turned one bad file
+/// into a crash loop driven by whoever opened its board.
+/// ponytail: remembered in memory; a restart tries each once more.
+async fn materialise(app: &AppState, asset: &Asset, widths: Vec<u32>) -> ApiResult<()> {
+    if app.undrawable.lock().unwrap().contains(&asset.id) {
+        return Err(undrawable(&asset.id));
+    }
+    let original = original_path(&app.config.assets, &asset.storage_key)?;
+    let size = (asset.width as u32, asset.height as u32);
+    match render(app, original, &asset.id, size, widths).await {
+        Ok(()) => Ok(()),
+        Err(RenderError::Undrawable(e)) => {
+            tracing::warn!(asset = %asset.id, error = %e, "image cannot be drawn; not trying again");
+            app.undrawable.lock().unwrap().insert(asset.id.clone());
+            Err(undrawable(&asset.id))
+        }
+        Err(RenderError::Other(e)) => Err(ApiError::internal(format!(
+            "could not generate a derivative: {e}"
+        ))),
+    }
 }
 
 // --- upload -----------------------------------------------------------------
@@ -284,10 +426,18 @@ pub struct Spool {
     file: tokio::fs::File,
     hasher: Sha256,
     size: usize,
+    /// What the storage limit and the disk still allow.
+    room: crate::storage::Room,
 }
 
 impl Spool {
     pub async fn new(app: &AppState) -> ApiResult<Self> {
+        // ponytail: checked once per upload, so two racing uploads may both
+        // fit a room only one of them fits; the overshoot is one upload.
+        let room = crate::storage::room(app).await?;
+        if room.bytes == 0 {
+            return Err(crate::storage::full(&room.full));
+        }
         let temp = TempFile(
             app.config
                 .assets
@@ -299,6 +449,7 @@ impl Spool {
             file,
             hasher: Sha256::new(),
             size: 0,
+            room,
         })
     }
 
@@ -309,6 +460,9 @@ impl Spool {
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "an image may be at most 200 MB",
             ));
+        }
+        if self.size as u64 > self.room.bytes {
+            return Err(crate::storage::full(&self.room.full));
         }
         self.hasher.update(chunk);
         self.file.write_all(chunk).await?;
@@ -376,8 +530,43 @@ async fn ingest(
     let path = spooled.to_path_buf();
     let info = tokio::task::spawn_blocking(move || probe(&path))
         .await
-        .map_err(|e| ApiError::internal(e.to_string()))?
-        .map_err(|e| unreadable(format!("not a readable image: {e}")))?;
+        .map_err(|e| ApiError::internal(e.to_string()))??;
+
+    // The ladder is drawn before anything is stored, so an image that cannot
+    // be drawn is refused here rather than kept and failing on every view.
+    // Same bytes as a stored asset → its id, and its ladder is likely there.
+    let existing: Option<String> =
+        sqlx::query_scalar("SELECT id FROM asset WHERE content_hash = ?")
+            .bind(hash)
+            .fetch_optional(&app.db)
+            .await?;
+    let id = existing.unwrap_or_else(new_id);
+    let ladder: Vec<u32> = WIDTHS.into_iter().filter(|w| *w < info.width).collect();
+    let started = std::time::Instant::now();
+    let tiers = ladder.len();
+    match render(
+        app,
+        spooled.to_path_buf(),
+        &id,
+        (info.width, info.height),
+        ladder,
+    )
+    .await
+    {
+        Ok(()) => tracing::debug!(
+            asset = %id,
+            tiers,
+            duration_ms = started.elapsed().as_millis() as u64,
+            "derivatives generated"
+        ),
+        Err(RenderError::Undrawable(e)) => {
+            return Err(unreadable(format!("the image could not be drawn: {e}")));
+        }
+        // The moment's fault, not the image's: keep it, draw on first view.
+        Err(RenderError::Other(e)) => {
+            tracing::warn!(asset = %id, error = %e, "could not pre-generate derivatives")
+        }
+    }
 
     let key = format!("{}/{}/{hash}.{}", &hash[0..2], &hash[2..4], info.extension);
     let target = app.config.assets.join(&key);
@@ -393,7 +582,9 @@ async fn ingest(
          ON CONFLICT (content_hash) DO UPDATE SET deleted_at = NULL WHERE deleted_at IS NOT NULL
          RETURNING {COLUMNS}"
     )))
-    .bind(new_id())
+    // ponytail: a racing upload of the same bytes may win the insert; the
+    // ladder drawn under this id is then an orphan in a regenerable cache.
+    .bind(&id)
     .bind(hash)
     .bind(&key)
     .bind(filename)
@@ -416,23 +607,6 @@ async fn ingest(
         }
     };
 
-    let ladder: Vec<u32> = WIDTHS
-        .into_iter()
-        .filter(|w| (*w as i64) < asset.width)
-        .collect();
-    let started = std::time::Instant::now();
-    let tiers = ladder.len();
-    match materialise(app, &asset, ladder).await {
-        Ok(_) => tracing::debug!(
-            asset = %asset.id,
-            tiers,
-            duration_ms = started.elapsed().as_millis() as u64,
-            "derivatives generated"
-        ),
-        Err(e) => {
-            tracing::warn!(asset = %asset.id, error = %e.detail, "could not pre-generate derivatives")
-        }
-    }
     Ok(asset)
 }
 

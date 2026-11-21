@@ -4575,3 +4575,163 @@ async fn a_provider_alone_is_a_way_in() {
     assert_eq!(session["providers"][0]["id"], "test");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// Files under `assets/` that are stored originals (not spool temps).
+fn stored_originals(dir: &std::path::Path) -> usize {
+    fn walk(p: &std::path::Path, n: &mut usize) {
+        for e in std::fs::read_dir(p).into_iter().flatten().flatten() {
+            let path = e.path();
+            if path.is_dir() {
+                walk(&path, n);
+            } else if !path.file_name().unwrap().to_string_lossy().starts_with('.') {
+                *n += 1;
+            }
+        }
+    }
+    let mut n = 0;
+    walk(&dir.join("assets"), &mut n);
+    n
+}
+
+/// A BMP header claiming `width`×`height` and carrying no pixels: what a
+/// decompression bomb looks like to anything that trusts the header.
+fn bmp_header(width: i32, height: i32) -> Vec<u8> {
+    let mut b = Vec::new();
+    b.extend_from_slice(b"BM");
+    b.extend_from_slice(&54u32.to_le_bytes()); // file size, as claimed
+    b.extend_from_slice(&0u32.to_le_bytes());
+    b.extend_from_slice(&54u32.to_le_bytes()); // pixels start here
+    b.extend_from_slice(&40u32.to_le_bytes()); // BITMAPINFOHEADER
+    b.extend_from_slice(&width.to_le_bytes());
+    b.extend_from_slice(&height.to_le_bytes());
+    b.extend_from_slice(&1u16.to_le_bytes());
+    b.extend_from_slice(&24u16.to_le_bytes());
+    b.extend_from_slice(&[0; 24]);
+    b
+}
+
+#[tokio::test]
+async fn an_image_too_large_to_decode_is_refused_before_it_is_stored() {
+    let (mut c, app, dir) = signed_in().await;
+    // 400 megapixels in 54 bytes.
+    let r = c.upload("bomb.bmp", &bmp_header(20_000, 20_000)).await;
+    assert_eq!(r.status, StatusCode::PAYLOAD_TOO_LARGE, "{}", r.json());
+    let detail = r.json()["detail"].as_str().unwrap().to_string();
+    assert!(
+        detail.contains("20,000 × 20,000 (400 megapixels)") && detail.contains("200 megapixels"),
+        "{detail}"
+    );
+    assert_eq!(count(&app, "SELECT count(*) FROM asset").await, 0);
+    assert_eq!(stored_originals(&dir), 0);
+}
+
+#[tokio::test]
+async fn an_image_that_cannot_be_drawn_is_refused_not_kept() {
+    let (mut c, app, dir) = signed_in().await;
+    // A real header, then the pixels stop half-way.
+    let whole = png(600, 600, 7);
+    let r = c.upload("cut.png", &whole[..whole.len() / 2]).await;
+    assert_eq!(r.status, StatusCode::UNSUPPORTED_MEDIA_TYPE, "{}", r.json());
+    assert!(
+        r.json()["detail"]
+            .as_str()
+            .unwrap()
+            .contains("could not be drawn")
+    );
+    assert_eq!(count(&app, "SELECT count(*) FROM asset").await, 0);
+    assert_eq!(stored_originals(&dir), 0);
+}
+
+#[tokio::test]
+async fn a_full_page_screenshot_gets_tiers_webp_can_encode() {
+    let (mut c, _app, _dir) = signed_in().await;
+    // At 512 wide this would be 17,067 tall, past WebP's 16,383.
+    let tall = image::GrayImage::from_fn(600, 20_000, |_, y| image::Luma([(y % 251) as u8]));
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    tall.write_to(&mut bytes, image::ImageFormat::Png).unwrap();
+    let r = c.upload("page.png", bytes.get_ref()).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.json());
+    let id = r.json()["id"].as_str().unwrap().to_string();
+    for width in [512, 256, 64] {
+        let tier = c
+            .get(&format!("/api/assets/{id}/derivatives/{width}"))
+            .await;
+        assert_eq!(tier.status, StatusCode::OK, "{width}: {}", tier.json());
+        let img = image::load_from_memory(&tier.body).unwrap();
+        assert!(
+            img.height() <= 16_383 && img.width() <= width,
+            "{width}: {}x{}",
+            img.width(),
+            img.height()
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_storage_limit_is_shown_set_and_enforced() {
+    let (mut c, app, _dir) = signed_in().await;
+    let shown = c.get("/api/instance/storage").await;
+    assert_eq!(shown.status, StatusCode::OK, "{}", shown.json());
+    assert_eq!(shown.json()["usedBytes"], 0);
+    assert_eq!(shown.json()["limitBytes"], Value::Null);
+    #[cfg(unix)]
+    assert!(shown.json()["diskFreeBytes"].as_u64().unwrap() > 0);
+
+    let tiny = c
+        .json(
+            "PUT",
+            "/api/instance/storage",
+            json!({ "limitBytes": 5_000_000 }),
+        )
+        .await;
+    assert_eq!(tiny.status, StatusCode::BAD_REQUEST);
+    let set = c
+        .json(
+            "PUT",
+            "/api/instance/storage",
+            json!({ "limitBytes": 100_000_000 }),
+        )
+        .await;
+    assert_eq!(set.status, StatusCode::OK, "{}", set.json());
+    assert_eq!(set.json()["limitBytes"], 100_000_000);
+
+    // Pretend the library already holds 150 MB, 50 MB of it in the trash.
+    for (n, deleted) in [(1, false), (2, true)] {
+        sqlx::query(
+            "INSERT INTO asset (id, content_hash, storage_key, mime_type, byte_size, width, height, deleted_at)
+             VALUES (?, ?, 'aa/bb/x.png', 'image/png', ?, 10, 10, CASE WHEN ? THEN '2026-01-01T00:00:00.000Z' END)",
+        )
+        .bind(uuid::Uuid::now_v7().to_string())
+        .bind(format!("{n:064}"))
+        .bind(if deleted { 50_000_000i64 } else { 100_000_000 })
+        .bind(deleted)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
+    let refused = c.upload("one.png", &png(20, 20, 1)).await;
+    assert_eq!(refused.status, StatusCode::INSUFFICIENT_STORAGE);
+    let detail = refused.json()["detail"].as_str().unwrap().to_string();
+    assert!(
+        detail.contains("150 MB of 100 MB used, 50 MB of it in the trash"),
+        "{detail}"
+    );
+    let shown = c.get("/api/instance/storage").await.json();
+    assert_eq!(
+        (shown["usedBytes"].as_u64(), shown["trashBytes"].as_u64()),
+        (Some(150_000_000), Some(50_000_000))
+    );
+
+    let lifted = c
+        .json(
+            "PUT",
+            "/api/instance/storage",
+            json!({ "limitBytes": null }),
+        )
+        .await;
+    assert_eq!(lifted.status, StatusCode::OK);
+    assert_eq!(
+        c.upload("one.png", &png(20, 20, 1)).await.status,
+        StatusCode::CREATED
+    );
+}

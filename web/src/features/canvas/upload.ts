@@ -10,6 +10,7 @@
  */
 
 import { api } from '@visarium/api-client';
+import { problemDetail } from '~/api/session';
 
 /** ASSET_STORAGE.md: three or four at a time. More is not faster over one disk. */
 const CONCURRENCY = 4;
@@ -45,6 +46,13 @@ export const IDLE: UploadStatus = { queued: 0, active: 0 };
 export type Uploader = (file: File) => Promise<UploadedAsset>;
 
 /**
+ * The server said no for a reason another try will not change: the image is
+ * too large, is not an image, or the instance's storage is full. Its message
+ * is the one to show, and it is shown at once rather than after the retries.
+ */
+export class UploadRefused extends Error {}
+
+/**
  * POST the file and read back what the server made of it.
  *
  * The schema marks every field optional, though the server always sends them.
@@ -62,7 +70,15 @@ export const uploadAsset: Uploader = async (file) => {
     },
   });
 
-  if (!result.data) throw new Error(`upload failed: ${result.response.status}`);
+  if (!result.data) {
+    const status = result.response.status;
+    const reason = problemDetail(result.error, `upload failed: ${status}`);
+    // A 4xx (but a timeout or a throttle) or a 507 is about the file or the
+    // instance; only a 5xx or the network is worth trying again.
+    const refused =
+      (status >= 400 && status < 500 && status !== 408 && status !== 429) || status === 507;
+    throw refused ? new UploadRefused(reason) : new Error(reason);
+  }
 
   // Asserted once here rather than at each use.
   const { id, width, height, mimeType } = result.data;
@@ -155,6 +171,7 @@ export class UploadQueue {
       try {
         return await this.#upload(file);
       } catch (cause) {
+        if (cause instanceof UploadRefused) throw cause;
         last = cause;
         if (attempt < ATTEMPTS) {
           await new Promise((resume) => setTimeout(resume, this.#retryDelayMs * attempt));

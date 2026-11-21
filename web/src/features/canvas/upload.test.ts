@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { type UploadedAsset, UploadQueue } from './upload';
+import { type UploadedAsset, UploadQueue, UploadRefused } from './upload';
 
 const asset: UploadedAsset = { assetId: 'a1', width: 4000, height: 3000 };
 
@@ -90,6 +90,27 @@ describe('the upload queue', () => {
       id: 'item-1',
       name: 'holiday.png',
       reason: '507 out of space',
+    });
+  });
+
+  it('does not retry what the server refused, and says its reason', async () => {
+    let attempts = 0;
+    const onFailure = vi.fn();
+    const queue = new UploadQueue({
+      retryDelayMs: 0,
+      upload: async () => {
+        attempts += 1;
+        throw new UploadRefused('Image storage on this instance is full');
+      },
+      onFailure,
+    });
+
+    queue.add('item-1', file('holiday.png'), () => {});
+
+    await vi.waitFor(() => expect(onFailure).toHaveBeenCalled());
+    expect(attempts).toBe(1);
+    expect(onFailure.mock.calls[0]?.[0]).toMatchObject({
+      reason: 'Image storage on this instance is full',
     });
   });
 

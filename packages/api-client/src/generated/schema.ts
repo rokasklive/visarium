@@ -1893,6 +1893,20 @@ export interface OAuthRequest {
 }
 
 /** The instance's vision model (image-descriptions). Never carries the API key. */
+/** What images take and what they may: originals only, the trash's included. */
+export interface StorageUsage {
+    usedBytes: number;
+    trashBytes: number;
+    images: number;
+    /** Null: no limit. */
+    limitBytes: number | null;
+    /** Null where the server cannot tell (not on Unix). */
+    diskFreeBytes: number | null;
+    diskTotalBytes: number | null;
+    /** Kept free on the disk whatever the limit says. */
+    diskReserveBytes: number;
+}
+
 export interface VisionSetting {
     configured: boolean;
     baseUrl?: string | null;
@@ -2142,6 +2156,13 @@ export interface paths {
             Body<{ request: string; approve: boolean; manageBoards?: boolean }>,
             { 200: Json<{ redirect: string }> }
         >;
+    };
+    "/api/instance/storage": {
+        parameters: NoParams;
+        /** Moderators and admins */
+        get: Read<NoParams, { 200: Json<StorageUsage> }>;
+        /** Admins only. Null removes the limit; at least 100 MB otherwise */
+        put: Op<NoParams, Body<{ limitBytes: number | null }>, { 200: Json<StorageUsage> }>;
     };
     "/api/instance/vision": {
         parameters: NoParams;

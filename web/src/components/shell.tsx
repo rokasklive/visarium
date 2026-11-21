@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useMatchRoute, useNavigate } from '@tanstack/react-router';
 import { codenameFor, fetchServerInfo } from '@visarium/api-client';
 import { type ReactNode, useState } from 'react';
+import { isStaff, useStorage } from '~/api/accounts';
 import { useBoards, useRenameBoard } from '~/api/boards';
 import {
   useCollections,
@@ -11,6 +12,7 @@ import {
 } from '~/api/collections';
 import { useHealth } from '~/api/health';
 import { useSession, useSignOut } from '~/api/session';
+import { storageState } from '~/api/storage';
 import { useUiStore } from '~/app/ui-store';
 import { GENERATED_BOARDS } from '~/features/canvas/board-fixture';
 import { LibraryPanel } from '~/features/library/library-panel';
@@ -335,6 +337,11 @@ function StatusBar() {
   const outstanding = uploads.queued + uploads.active;
   const server = useQuery({ queryKey: ['server-info'], queryFn: () => fetchServerInfo() });
   const codename = codenameFor(server.data?.version);
+  const session = useSession();
+  // Only those who can act on it are told, and only when it matters.
+  const staff = !session.data?.singleUser && isStaff(session.data?.user?.role);
+  const storage = useStorage(staff);
+  const storageLevel = storage.data ? storageState(storage.data).level : 'ok';
 
   // Said only when it is not up: a permanent "backend: UP" is a developer readout.
   const backend = health.isPending
@@ -393,13 +400,19 @@ function StatusBar() {
       {failures.length > 0 && (
         // The one thing in the strip that is a control: a reference that did not
         // land must be acknowledged, not faded away.
+        // It says why, because "too large" and "storage full" each ask for a
+        // different next step; every reason is in the title.
         <button
           type="button"
           onClick={dismissUploadFailures}
-          className="rounded px-2 py-0.5 text-ink hover:bg-surface-raised"
+          title={failures.map((f) => `${f.name}: ${f.reason}`).join('\n')}
+          className="min-w-0 truncate rounded px-2 py-0.5 text-ink hover:bg-surface-raised"
           data-testid="upload-failures"
         >
-          {failures.length} upload{failures.length === 1 ? '' : 's'} failed — dismiss
+          {failures.length === 1
+            ? `${failures[0]?.name} not added: ${failures[0]?.reason}`
+            : `${failures.length} uploads failed: ${failures[0]?.reason}`}{' '}
+          — dismiss
         </button>
       )}
       {interchange && (
@@ -418,6 +431,16 @@ function StatusBar() {
         >
           {interchange} — dismiss
         </button>
+      )}
+      {storageLevel !== 'ok' && (
+        <Link
+          to="/instance"
+          hash="storage"
+          className="rounded px-2 py-0.5 text-ink hover:bg-surface-raised"
+          data-testid="storage-status"
+        >
+          {storageLevel === 'full' ? 'image storage full' : 'image storage nearly full'}
+        </Link>
       )}
       {backend && (
         <span className="ml-auto text-ink" data-testid="backend-status">
