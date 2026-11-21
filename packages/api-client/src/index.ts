@@ -15,6 +15,7 @@ export type {
   Invitation,
   InvitationInfo,
   NewAgentToken,
+  OAuthRequest,
   operations,
   paths,
   Role,

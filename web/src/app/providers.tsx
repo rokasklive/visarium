@@ -3,7 +3,13 @@ import { RouterProvider } from '@tanstack/react-router';
 import { onSessionEnded } from '@visarium/api-client';
 import { useEffect } from 'react';
 import { sessionKey, useSession } from '~/api/session';
-import { DeviceScreen, InviteScreen, SetupScreen, SignInScreen } from '~/components/auth-screens';
+import {
+  ConsentScreen,
+  DeviceScreen,
+  InviteScreen,
+  SetupScreen,
+  SignInScreen,
+} from '~/components/auth-screens';
 import { SharedBoardPage } from '~/features/sharing/shared-board';
 import { router } from './router';
 
@@ -84,6 +90,7 @@ function Gate() {
   if (session.data?.setupRequired) return <SetupScreen />;
   if (!session.data?.user) return <SignInScreen />;
   if (globalThis.location.pathname === '/device') return <DeviceScreen />;
+  if (globalThis.location.pathname === '/oauth/consent') return <ConsentScreen />;
   // A provider sign-in that succeeded lands wherever it was asked to; one that
   // lands on the sign-in page while signed in has nothing left to show there.
   if (globalThis.location.pathname === '/sign-in') globalThis.history.replaceState(null, '', '/');

@@ -87,6 +87,61 @@ test('a person makes an agent token, copies it once, sees it listed and revokes 
   expect(revoked).toBe('tok-1');
 });
 
+test('apps connected by sign-in are listed, and the address alone is offered', async ({ page }) => {
+  await signedIn(page);
+  for (const path of ['/api/sessions', '/api/accounts', '/api/invitations']) {
+    await page.route(
+      (url) => url.pathname === path,
+      (route) => route.fulfill({ json: [] }),
+    );
+  }
+  await page.route('**/api/accounts/me/identities', (route) =>
+    route.fulfill({ json: { hasPassword: true, identities: [] } }),
+  );
+  await page.route('**/.well-known/oauth-protected-resource/mcp', (route) =>
+    route.fulfill({ json: { resource: 'http://localhost/mcp' } }),
+  );
+  await page.route('**/api/agent-tokens', (route) =>
+    route.fulfill({
+      json: [
+        {
+          id: 'c-1',
+          label: 'ChatGPT',
+          createdAt: '2026-11-19T10:00:00Z',
+          lastUsedAt: '2026-11-19T11:00:00Z',
+          manageBoards: false,
+          connectedBySignIn: true,
+        },
+      ],
+    }),
+  );
+  await page.goto('/settings');
+  await expect(page.getByTestId('agent-url')).toHaveValue(/^http:\/\/localhost:\d+\/mcp$/);
+  const row = page.getByTestId('agent-token');
+  await expect(row).toContainText('ChatGPT');
+  await expect(row.getByTestId('agent-token-signed-in')).toHaveText('connected by sign-in');
+  await expect(row.getByRole('button', { name: 'Revoke ChatGPT' })).toBeVisible();
+});
+
+test('without OAuth, connecting by address is not offered', async ({ page }) => {
+  await signedIn(page);
+  for (const path of ['/api/sessions', '/api/accounts', '/api/invitations', '/api/agent-tokens']) {
+    await page.route(
+      (url) => url.pathname === path,
+      (route) => route.fulfill({ json: [] }),
+    );
+  }
+  await page.route('**/api/accounts/me/identities', (route) =>
+    route.fulfill({ json: { hasPassword: true, identities: [] } }),
+  );
+  await page.route('**/.well-known/oauth-protected-resource/mcp', (route) =>
+    route.fulfill({ status: 404, json: {} }),
+  );
+  await page.goto('/settings');
+  await expect(page.getByTestId('agent-snippet-claude')).toBeVisible();
+  await expect(page.getByTestId('agent-url')).toHaveCount(0);
+});
+
 test('in the desktop app, the local port moves at once', async ({ page }) => {
   await signedIn(page);
   await page.route('**/api/session', (route) =>

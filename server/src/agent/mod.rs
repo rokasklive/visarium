@@ -167,7 +167,7 @@ async fn only_post() -> Response {
 
 /// Admits an agent with a valid token, or the local account in single-user
 /// mode (where the session layer already refused non-loopback hosts).
-pub async fn require_agent(mut req: Request, next: Next) -> Response {
+pub async fn require_agent(State(app): State<AppState>, mut req: Request, next: Next) -> Response {
     let caller = match req.extensions().get::<Principal>() {
         Some(Principal::Agent {
             user,
@@ -185,14 +185,30 @@ pub async fn require_agent(mut req: Request, next: Next) -> Response {
         },
         _ => {
             let tried = req.headers().contains_key(header::AUTHORIZATION);
-            let detail = if tried {
-                "this agent token is not valid: it was revoked, or never existed. Create a new one under Account → Agents."
-            } else {
-                "this endpoint needs an agent token. Create one under Account → Agents and send it as `Authorization: Bearer <token>`."
+            let challenge = crate::oauth::challenge(&app, tried);
+            let detail = match (tried, challenge.is_some()) {
+                (true, true) => {
+                    "this token is not valid: it expired or was revoked. Refresh it or sign in again, or create an agent token under Account → Agents."
+                }
+                (true, false) => {
+                    "this agent token is not valid: it was revoked, or never existed. Create a new one under Account → Agents."
+                }
+                (false, true) => {
+                    "this endpoint needs sign-in. Add this server's URL in a client that supports sign-in, or create an agent token under Account → Agents and send it as `Authorization: Bearer <token>`."
+                }
+                (false, false) => {
+                    "this endpoint needs an agent token. Create one under Account → Agents and send it as `Authorization: Bearer <token>`."
+                }
             };
-            return ApiError::unauthorized(detail)
+            let mut response = ApiError::unauthorized(detail)
                 .titled("Agent token required")
                 .into_response();
+            if let Some(value) = challenge {
+                response
+                    .headers_mut()
+                    .insert(header::WWW_AUTHENTICATE, value);
+            }
+            return response;
         }
     };
     req.extensions_mut().insert(caller);
@@ -235,9 +251,9 @@ async fn list_tokens(
     State(app): State<AppState>,
     axum::Extension(me): axum::Extension<User>,
 ) -> ApiResult<axum::Json<Value>> {
-    let rows: Vec<(String, Option<String>, String, String, bool)> =
+    let rows: Vec<(String, Option<String>, String, String, bool, bool)> =
         sqlx::query_as(sqlx::AssertSqlSafe(format!(
-            "SELECT id, label, created_at, last_seen_at, manage_boards FROM session
+            "SELECT id, label, created_at, last_seen_at, manage_boards, oauth_client_id IS NOT NULL FROM session
           WHERE user_id = ? AND kind = 'agent' AND expires_at > {NOW} ORDER BY created_at DESC"
         )))
         .bind(&me.id)
@@ -245,10 +261,10 @@ async fn list_tokens(
         .await?;
     Ok(axum::Json(Value::Array(
         rows.into_iter()
-            .map(|(id, label, created, seen, manage_boards)| {
+            .map(|(id, label, created, seen, manage_boards, signed_in)| {
                 // A token never used has the last-seen its creation wrote.
                 let used = (seen != created).then_some(seen);
-                json!({ "id": id, "label": label, "createdAt": created, "lastUsedAt": used, "manageBoards": manage_boards })
+                json!({ "id": id, "label": label, "createdAt": created, "lastUsedAt": used, "manageBoards": manage_boards, "connectedBySignIn": signed_in })
             })
             .collect(),
     )))

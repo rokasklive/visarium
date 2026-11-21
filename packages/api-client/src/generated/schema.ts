@@ -1878,6 +1878,18 @@ export interface AgentToken {
     lastUsedAt?: string | null;
     /** The *Manage boards* grant: lets the agent create, rename, duplicate and delete boards. */
     manageBoards: boolean;
+    /** Made by an app signing in over OAuth rather than by minting a token (mcp-oauth). */
+    connectedBySignIn: boolean;
+}
+
+/** An OAuth sign-in waiting for the person's answer, as the consent page shows it. */
+export interface OAuthRequest {
+    /** Self-declared by the app: never proof of who it is. */
+    clientName: string;
+    /** Where the answer goes, e.g. `claude.ai` or `cursor://anysphere.cursor-mcp`. */
+    redirectHost: string;
+    /** For an app known by its metadata document, the host serving it. */
+    clientHost?: string | null;
 }
 
 /** The desktop's single-user grant for tokenless local agents. */
@@ -2086,6 +2098,20 @@ export interface paths {
             NoParams,
             Body<{ code: string; verifier: string }>,
             { 201: Json<{ token: string; user: components["schemas"]["AppUser"] }> }
+        >;
+    };
+    "/api/oauth/requests/{id}": {
+        parameters: NoParams;
+        /** The sign-in request the consent page answers. 404 once it expired (10 minutes) */
+        get: Read<PathParams<{ id: string }>, { 200: Json<OAuthRequest> }>;
+    };
+    "/api/oauth/consent": {
+        parameters: NoParams;
+        /** Approve or decline; the browser goes to `redirect` either way */
+        post: Op<
+            NoParams,
+            Body<{ request: string; approve: boolean; manageBoards?: boolean }>,
+            { 200: Json<{ redirect: string }> }
         >;
     };
     "/api/accounts/{id}/role": {

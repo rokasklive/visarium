@@ -636,8 +636,14 @@ async fn agent_principal(db: &SqlitePool, headers: &HeaderMap) -> Principal {
     let Some(token) = token else {
         return Principal::Anonymous;
     };
+    // A minted agent token is the session's own secret. An OAuth access token
+    // is a short-lived pointer at the agent session its client signed in as.
     let row: Option<(String, String, String, Option<String>)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT id, token_hash, user_id, label FROM session WHERE token_hash = ? AND kind = 'agent' AND expires_at > {NOW}"
+        "SELECT id, token_hash, user_id, label FROM session WHERE token_hash = ?1 AND kind = 'agent' AND expires_at > {NOW}
+         UNION ALL
+         SELECT s.id, s.token_hash, s.user_id, s.label FROM oauth_token t JOIN session s ON s.id = t.session_id
+          WHERE t.token_hash = ?1 AND t.kind = 'access' AND t.expires_at > {NOW} AND s.kind = 'agent' AND s.expires_at > {NOW}
+         LIMIT 1"
     )))
     .bind(hash_token(token))
     .fetch_optional(db)
@@ -735,7 +741,13 @@ pub async fn csrf_layer(jar: CookieJar, req: Request, next: Next) -> Response {
     );
     // `/mcp` reads no cookie, so there is no ambient credential to forge a
     // request with; it checks Origin and content type itself (agent::mcp).
-    if !safe && req.uri().path() != MCP_PATH {
+    // Neither do the OAuth token and registration endpoints: their callers
+    // are apps, authenticated by PKCE verifier or not at all.
+    let cookieless = matches!(
+        req.uri().path(),
+        MCP_PATH | "/oauth/token" | "/oauth/register"
+    );
+    if !safe && !cookieless {
         let header = req.headers().get(CSRF_HEADER).and_then(|v| v.to_str().ok());
         let ok = matches!((&cookie, header), (Some(c), Some(h)) if !c.is_empty() && c == h);
         if !ok {

@@ -46,6 +46,9 @@ export default defineConfig(({ mode }) => ({
       '/ws': { target: BACKEND, ws: true, changeOrigin: false },
       // The agent endpoint (ADR-0031), so an agent can use the dev origin too.
       '/mcp': { target: BACKEND, changeOrigin: false },
+      // OAuth for /mcp (mcp-oauth). Not /oauth/consent: that page is the SPA's.
+      '/.well-known': { target: BACKEND, changeOrigin: false },
+      '^/oauth/(authorize|token|register)': { target: BACKEND, changeOrigin: false },
     },
   },
   optimizeDeps: {

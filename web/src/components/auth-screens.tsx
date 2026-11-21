@@ -21,7 +21,7 @@
  */
 
 import { useQueryClient } from '@tanstack/react-query';
-import { api, type InvitationInfo } from '@visarium/api-client';
+import { api, type InvitationInfo, type OAuthRequest } from '@visarium/api-client';
 import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
 import {
   type Provider,
@@ -529,6 +529,94 @@ export function DeviceScreen() {
       >
         Cancel
       </button>
+      <Problem error={problem} />
+    </AuthScreen>
+  );
+}
+
+/**
+ * `/oauth/consent?request=…`: an MCP app (Claude, ChatGPT, Cursor…) asking
+ * to work on your boards as you (mcp-oauth). Reached signed in, like
+ * `/device`. The app's name is its own claim, so the page also says where the
+ * answer goes; approving makes an agent you can revoke under Settings → Agents.
+ */
+export function ConsentScreen() {
+  const session = useSession();
+  const [id] = useState(() => new URLSearchParams(globalThis.location.search).get('request') ?? '');
+  const [request, setRequest] = useState<OAuthRequest | null>(null);
+  const [problem, setProblem] = useState<Error | null>(null);
+  const [manageBoards, setManageBoards] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const me = session.data?.user;
+
+  useEffect(() => {
+    void api
+      .GET('/api/oauth/requests/{id}', { params: { path: { id } } })
+      .then(({ data, error }) =>
+        data
+          ? setRequest(data)
+          : setProblem(new Error(problemDetail(error, 'this sign-in request could not be found'))),
+      );
+  }, [id]);
+
+  async function answer(approve: boolean) {
+    setBusy(true);
+    const { data, error } = await api.POST('/api/oauth/consent', {
+      body: { request: id, approve, manageBoards },
+    });
+    if (!data) {
+      setBusy(false);
+      return setProblem(new Error(problemDetail(error, 'the app could not be answered')));
+    }
+    globalThis.location.assign(data.redirect);
+  }
+
+  if (!request) {
+    return (
+      <AuthScreen title="Connect an app">
+        {problem ? <Problem error={problem} /> : <p className="text-ink-dim">Loading…</p>}
+      </AuthScreen>
+    );
+  }
+  return (
+    <AuthScreen title="Connect an app">
+      <p className="text-ink" data-testid="consent-client">
+        <span className="text-ink">{request.clientName}</span> wants to read and change your boards
+        as {me?.displayName}.
+      </p>
+      <p className="mt-2 text-[11px] text-ink-dim" data-testid="consent-redirect">
+        It returns to {request.redirectHost}
+        {request.clientHost ? `, and describes itself from ${request.clientHost}` : ''}. The name is
+        the app&apos;s own: allow it only if you just started connecting it.
+      </p>
+      <label className="mt-4 flex items-center gap-2 text-ink" data-testid="consent-manage-boards">
+        <input
+          type="checkbox"
+          checked={manageBoards}
+          onChange={(e) => setManageBoards(e.target.checked)}
+        />
+        Let it manage boards
+        <span className="text-ink-dim">(deleting still asks you)</span>
+      </label>
+      <button
+        type="button"
+        onClick={() => void answer(true)}
+        disabled={busy}
+        className="mt-4 w-full rounded-sm border border-line-strong px-2 py-1 text-ink hover:bg-surface-raised disabled:text-ink-disabled"
+      >
+        Allow
+      </button>
+      <button
+        type="button"
+        onClick={() => void answer(false)}
+        disabled={busy}
+        className="mt-2 w-full rounded-sm px-2 py-1 text-ink-dim hover:bg-surface-raised"
+      >
+        Cancel
+      </button>
+      <p className="mt-4 text-[11px] text-ink-dim">
+        You can revoke it any time under Settings → Agents.
+      </p>
       <Problem error={problem} />
     </AuthScreen>
   );

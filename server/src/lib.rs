@@ -17,6 +17,7 @@ pub mod device;
 pub mod error;
 pub mod instance;
 pub mod invitations;
+pub mod oauth;
 pub mod oidc;
 pub mod realtime;
 pub mod sharing;
@@ -73,6 +74,9 @@ pub struct App {
     pub http: oidc::Http,
     pub flows: oidc::Flows,
     pub device_codes: device::Codes,
+    /// OAuth sign-ins waiting for consent, and codes waiting to be redeemed.
+    pub oauth: oauth::Pending,
+    pub oauth_registrations: oauth::Registrations,
     pub rooms: realtime::Rooms,
     /// Writes per agent per minute (ADR-0031).
     pub agent_writes: agent::Limiter,
@@ -160,6 +164,9 @@ pub async fn open(config: Config) -> anyhow_lite::Result<AppState> {
                     ),
                     Err(e) => tracing::warn!(error = %e, "session sweep failed"),
                 }
+                if let Err(e) = oauth::sweep(&db).await {
+                    tracing::warn!(error = %e, "oauth sweep failed");
+                }
             }
         });
     }
@@ -185,6 +192,8 @@ pub async fn open(config: Config) -> anyhow_lite::Result<AppState> {
         http,
         flows: Default::default(),
         device_codes: Default::default(),
+        oauth: Default::default(),
+        oauth_registrations: Default::default(),
         rooms: Default::default(),
         agent_writes: Default::default(),
         image_permits: tokio::sync::Semaphore::new(cpus.clamp(1, 4)),
@@ -221,6 +230,7 @@ pub fn router(state: AppState) -> Router {
         .merge(sharing::member_routes())
         .merge(device::member_routes())
         .merge(agent::member_routes())
+        .merge(oauth::member_routes())
         .merge(boards::routes())
         .merge(collections::routes())
         .merge(assets::routes())
@@ -251,7 +261,7 @@ pub fn router(state: AppState) -> Router {
     // Agents: bearer token or the local account, never a cookie (ADR-0031).
     // Room for an image passed as data: 8 MB is about 11 MB of base64.
     let agents = agent::routes()
-        .route_layer(from_fn(agent::require_agent))
+        .route_layer(from_fn_with_state(state.clone(), agent::require_agent))
         .layer(DefaultBodyLimit::max(16 * 1024 * 1024));
 
     Router::new()
@@ -266,6 +276,7 @@ pub fn router(state: AppState) -> Router {
             get(realtime::upgrade_viewer).route_layer(require_viewer),
         )
         .merge(oidc::routes())
+        .merge(oauth::routes())
         .route("/health", get(health))
         .route("/health/{probe}", get(health))
         .fallback(spa)
@@ -325,7 +336,7 @@ struct Web;
 /// answering HTML to something expecting JSON.
 async fn spa(uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
-    if ["health", "ws", "auth", "mcp"]
+    if ["health", "ws", "auth", "mcp", ".well-known"]
         .iter()
         .any(|p| path == *p || path.starts_with(&format!("{p}/")))
     {

@@ -3,6 +3,7 @@
 ## 0.1.0
 
 - Organize image references, notes, diagrams, and checklists on an infinite canvas.
+- Connect Claude, ChatGPT, Cursor and other MCP apps to a self-hosted server by its address alone. You sign in and approve the app in your browser, and it appears under Settings → Agents, where you can revoke it. Agent tokens still work. This needs VISARIUM_PUBLIC_URL to be set.
 - Work in a desktop library or connect to a self-hosted Visarium server.
 - Find the version, build, diagnostic collection, and update controls in Settings → About.
 - Security fixes from an audit. Agent tokens only work as bearer tokens on /mcp, and the server no longer accepts them as a sign-in cookie. Open boards stop updating within a minute of their session being signed out.

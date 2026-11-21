@@ -366,6 +366,23 @@ export function mcpUrl(): string {
   return `${window.location.origin}/mcp`;
 }
 
+/**
+ * Whether apps can connect by URL alone and sign in (mcp-oauth): asked the way
+ * those apps ask, from the resource metadata, which exists only when the
+ * server knows its public address.
+ */
+export function useOAuthOffered(enabled: boolean) {
+  return useQuery({
+    queryKey: ['oauth-offered'],
+    enabled,
+    staleTime: Number.POSITIVE_INFINITY,
+    queryFn: async () => {
+      const r = await fetch('/.well-known/oauth-protected-resource/mcp', { credentials: 'omit' });
+      return r.ok && (r.headers.get('content-type') ?? '').includes('json');
+    },
+  });
+}
+
 // --- invitations (staff) -------------------------------------------------
 
 const invitationsKey = ['invitations'] as const;

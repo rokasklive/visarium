@@ -3623,7 +3623,7 @@ async fn an_agent_token_is_never_a_session() {
     assert_eq!(mint.status, StatusCode::UNAUTHORIZED);
     assert_eq!(
         c.get("/api/agent-tokens").await.json(),
-        json!([{ "id": id, "label": "limited", "createdAt": made["createdAt"], "lastUsedAt": null, "manageBoards": false }]),
+        json!([{ "id": id, "label": "limited", "createdAt": made["createdAt"], "lastUsedAt": null, "manageBoards": false, "connectedBySignIn": false }]),
         "the grant stays off and no token was minted"
     );
 

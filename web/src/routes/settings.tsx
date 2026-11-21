@@ -9,6 +9,7 @@ import {
   useEditSelf,
   useEndSession,
   useIdentities,
+  useOAuthOffered,
   useRevokeAgentToken,
   useSessions,
   useSetAgentGrant,
@@ -358,6 +359,7 @@ function AgentsSection({ singleUser }: { singleUser: boolean }) {
   const revoke = useRevokeAgentToken();
   const grant = useSetAgentGrant();
   const local = useAgentSettings(singleUser);
+  const oauth = useOAuthOffered(!singleUser).data === true;
   const setLocal = useSetAgentSettings();
   const [label, setLabel] = useState('');
   const made = create.data;
@@ -408,6 +410,15 @@ function AgentsSection({ singleUser }: { singleUser: boolean }) {
           <span className="text-ink-dim">(create, rename, duplicate; deleting still asks you)</span>
         </label>
       )}
+      {oauth && (
+        <div className="mb-3" data-testid="agent-connect-by-url">
+          <p className="mb-2 text-ink-dim">
+            Apps that sign in themselves (Claude, ChatGPT, Cursor, Claude Code) need only this
+            address: add it, approve the app in the page that opens, and it appears below.
+          </p>
+          <CopyField label="Server address" value={url} testId="agent-url" />
+        </div>
+      )}
       {!singleUser && (
         <>
           <form onSubmit={submit} className="mb-3 flex items-end gap-2">
@@ -444,6 +455,11 @@ function AgentsSection({ singleUser }: { singleUser: boolean }) {
               >
                 <span className="min-w-0 flex-1 truncate text-ink">
                   {t.label || 'An agent'}
+                  {t.connectedBySignIn && (
+                    <span className="ml-2 text-ink-dim" data-testid="agent-token-signed-in">
+                      connected by sign-in
+                    </span>
+                  )}
                   <span className="ml-2 text-ink-dim">
                     {t.lastUsedAt
                       ? `last used ${new Date(t.lastUsedAt).toLocaleString()}`
