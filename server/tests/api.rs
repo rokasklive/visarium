@@ -4518,3 +4518,60 @@ async fn providers_are_set_up_in_the_app() {
     );
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// Password sign-in is opt-in on the server: with no provider either, the
+/// binary refuses to start and says what to set and why.
+#[test]
+fn the_server_will_not_start_with_no_way_to_sign_in() {
+    let dir = std::env::temp_dir().join(format!("visarium-noway-{}", uuid::Uuid::new_v4()));
+    let run = |extra: &[(&str, &str)]| {
+        let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_visarium"));
+        cmd.env_clear()
+            .env("VISARIUM_DATABASE", dir.join("visarium.db"))
+            .env("VISARIUM_ASSETS_PATH", dir.join("assets"))
+            .env("VISARIUM_DERIVATIVES_PATH", dir.join("derivatives"))
+            .env("VISARIUM_BIND", "127.0.0.1")
+            .env("VISARIUM_PORT", "0")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        for (k, v) in extra {
+            cmd.env(k, v);
+        }
+        cmd.spawn().unwrap()
+    };
+
+    let refused = run(&[]).wait_with_output().unwrap();
+    assert_eq!(refused.status.code(), Some(1));
+    let said = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        said.contains("Visarium did not start: nobody could sign in."),
+        "{said}"
+    );
+    assert!(
+        said.contains("VISARIUM_AUTH_PASSWORD=on") && said.contains("Instance Settings > Sign-in")
+    );
+    assert!(
+        !said.contains("\\n"),
+        "plain lines, not a quoted string: {said}"
+    );
+
+    // Asking for password sign-in, it starts.
+    let mut started = run(&[("VISARIUM_AUTH_PASSWORD", "on")]);
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    assert!(started.try_wait().unwrap().is_none(), "still running");
+    started.kill().unwrap();
+    let _ = started.wait();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A provider alone is a way in: password sign-in off, still starts.
+#[tokio::test]
+async fn a_provider_alone_is_a_way_in() {
+    let issuer = Issuer::start().await;
+    let (app, dir) = with_provider(&issuer, |c| c.password_disabled = true).await;
+    let mut c = Client::new(visarium::router(app));
+    let session = c.get("/api/session").await.json();
+    assert_eq!(session["passwordEnabled"], false);
+    assert_eq!(session["providers"][0]["id"], "test");
+    let _ = std::fs::remove_dir_all(dir);
+}

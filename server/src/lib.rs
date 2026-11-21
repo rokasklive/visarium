@@ -153,11 +153,11 @@ pub async fn open(config: Config) -> anyhow_lite::Result<AppState> {
         let stored = oidc::stored(&db).await?;
         providers = oidc::build(&config.providers, &stored, &[], &http).await;
         let ids: Vec<String> = providers.iter().map(|p| p.id.clone()).collect();
-        if let Err(why) = oidc::way_in(!config.password_disabled, &ids, None) {
-            return Err(format!(
-                "{why}: VISARIUM_AUTH_PASSWORD=off needs at least one VISARIUM_OIDC_* provider, or one set up in Instance Settings"
-            )
-            .into());
+        if oidc::way_in(!config.password_disabled, &ids, None).is_err() {
+            return Err(NO_WAY_IN.into());
+        }
+        if config.password_disabled {
+            warn_unreachable_accounts(&db, &ids).await?;
         }
         let db = db.clone();
         tokio::spawn(async move {
@@ -224,6 +224,64 @@ pub async fn open(config: Config) -> anyhow_lite::Result<AppState> {
         }
     });
     Ok(app)
+}
+
+/// Why a server with no way to sign in refuses to start, and what to do.
+pub const NO_WAY_IN: &str = "Visarium did not start: nobody could sign in.
+
+Password sign-in is off unless VISARIUM_AUTH_PASSWORD=on is set, and no sign-in
+provider is configured: none in the environment (VISARIUM_OIDC_*) and none added
+in Instance Settings. With neither, no one could sign in, and a new instance
+could not even be claimed by its first admin.
+
+We recommend signing in through an OpenID Connect provider (Google, Authentik,
+Microsoft Entra, Okta, Keycloak, ...). To get there, either:
+
+  - Set a provider in the environment and restart:
+      VISARIUM_PUBLIC_URL=https://visarium.example.net
+      VISARIUM_OIDC_GOOGLE_CLIENT_ID=...
+      VISARIUM_OIDC_GOOGLE_CLIENT_SECRET=...
+    (any other provider also needs VISARIUM_OIDC_{ID}_ISSUER), or
+
+  - Turn password sign-in on for a moment: set VISARIUM_AUTH_PASSWORD=on and
+    restart; sign in (or claim the instance) as an admin; add a provider under
+    Instance Settings > Sign-in and link it to your account under Settings;
+    then remove VISARIUM_AUTH_PASSWORD and restart.
+
+If you mean to keep password sign-in, leave VISARIUM_AUTH_PASSWORD=on.";
+
+/// With password sign-in off, accounts linked to none of the configured
+/// providers cannot sign in. Not a reason to refuse to start (a provider may
+/// be linked later), but worth saying loudly, admins first.
+async fn warn_unreachable_accounts(db: &SqlitePool, providers: &[String]) -> sqlx::Result<()> {
+    let placeholders = vec!["?"; providers.len()].join(", ");
+    let sql = format!(
+        "SELECT username, role = 'admin' FROM app_user u
+          WHERE u.deactivated_at IS NULL
+            AND NOT EXISTS (SELECT 1 FROM user_identity i WHERE i.user_id = u.id AND i.provider IN ({placeholders}))
+          ORDER BY role = 'admin' DESC, username"
+    );
+    let mut q = sqlx::query_as::<_, (String, bool)>(sqlx::AssertSqlSafe(sql));
+    for p in providers {
+        q = q.bind(p);
+    }
+    let stranded = q.fetch_all(db).await?;
+    if stranded.is_empty() {
+        return Ok(());
+    }
+    let admins: Vec<&str> = stranded
+        .iter()
+        .filter(|(_, admin)| *admin)
+        .map(|(u, _)| u.as_str())
+        .collect();
+    let all: Vec<&str> = stranded.iter().map(|(u, _)| u.as_str()).collect();
+    tracing::warn!(
+        accounts = all.len(),
+        usernames = %all.join(","),
+        admins = %admins.join(","),
+        "password sign-in is off (VISARIUM_AUTH_PASSWORD), and these accounts are linked to no configured provider, so they cannot sign in. Set VISARIUM_AUTH_PASSWORD=on until each has linked a provider under Settings."
+    );
+    Ok(())
 }
 
 pub fn router(state: AppState) -> Router {

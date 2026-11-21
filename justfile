@@ -15,6 +15,9 @@ single_user := env("SINGLE_USER", "true")
 export VISARIUM_PORT := api_port
 export VISARIUM_BIND := "127.0.0.1"
 export VISARIUM_SINGLE_USER := single_user
+# The server keeps password sign-in off unless asked; development asks, so
+# SINGLE_USER=false works with no provider set up.
+export VISARIUM_AUTH_PASSWORD := env("AUTH_PASSWORD", "on")
 export VITE_BACKEND_URL := "http://localhost:" + api_port
 
 default:

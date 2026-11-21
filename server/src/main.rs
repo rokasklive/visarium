@@ -8,7 +8,7 @@
 //!   VISARIUM_SINGLE_USER       false                 no accounts; loopback only
 //!   VISARIUM_PUBLIC_URL        (none)                https://visarium.example.net;
 //!                                                    required with any OIDC provider
-//!   VISARIUM_AUTH_PASSWORD     on                    off: sign-in providers only
+//!   VISARIUM_AUTH_PASSWORD     off                   on: username and password sign-in too
 //!   VISARIUM_SHARING           on                    off: no read-only share links
 //!   VISARIUM_OAUTH_CLIENT_DOCUMENTS on               off: MCP apps register instead of
 //!                                                    being fetched (no outbound internet)
@@ -64,7 +64,10 @@ async fn main() -> visarium::anyhow_lite::Result<()> {
         derivatives: PathBuf::from(env("VISARIUM_DERIVATIVES_PATH", "data/derivatives")),
         version: env("VISARIUM_VERSION", env!("CARGO_PKG_VERSION")),
         single_user,
-        password_disabled: !flag("VISARIUM_AUTH_PASSWORD", "on"),
+        // Off unless asked for: an OpenID Connect provider is the way in we
+        // recommend, and a password form on a public server is one more
+        // thing to guess at.
+        password_disabled: !flag("VISARIUM_AUTH_PASSWORD", "off"),
         sharing_disabled: !flag("VISARIUM_SHARING", "on"),
         client_documents_disabled: !flag("VISARIUM_OAUTH_CLIENT_DOCUMENTS", "on"),
         vision: visarium::vision::from_env(std::env::vars()),
@@ -74,7 +77,16 @@ async fn main() -> visarium::anyhow_lite::Result<()> {
             .filter(|u| !u.is_empty()),
         providers: visarium::oidc::providers_from_env(std::env::vars())?,
     };
-    let state = visarium::open(config).await?;
+    // A refusal to start is written for the person reading the container log,
+    // so it goes out as plain lines, not as a debug-quoted string.
+    let state = match visarium::open(config).await {
+        Ok(state) => state,
+        Err(e) => {
+            tracing::error!(error = %e, "the server did not start");
+            eprintln!("\n{e}\n");
+            std::process::exit(1);
+        }
+    };
     let listener = tokio::net::TcpListener::bind(SocketAddr::new(bind, port)).await?;
     tracing::info!(address = %listener.local_addr()?, "listening");
 

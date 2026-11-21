@@ -3,6 +3,7 @@
 ## 0.1.0
 
 - Organize image references, notes, diagrams, and checklists on an infinite canvas.
+- **Self-hosted servers: password sign-in is now off unless VISARIUM_AUTH_PASSWORD=on is set.** Signing in through an OpenID Connect provider is the recommended way. A server with neither refuses to start and explains how to fix it. If people sign in with passwords today, set VISARIUM_AUTH_PASSWORD=on before upgrading, or have them link a provider under Settings first.
 - Let a vision model describe every image, so agents whose model cannot see pictures still know what they show, and search finds images by their content. Admins set it up under Instance Settings → Vision model, with any OpenAI-compatible endpoint, or with VISARIUM_VISION_* on the server.
 - Connect Claude, ChatGPT, Cursor and other MCP apps to a self-hosted server by its address alone. You sign in and approve the app in your browser, and it appears under Settings → Agents, where you can revoke it. Agent tokens still work. This needs VISARIUM_PUBLIC_URL to be set.
 - Work in a desktop library or connect to a self-hosted Visarium server.
