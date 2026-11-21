@@ -141,6 +141,13 @@ impl Client {
 }
 
 async fn instance(public_url: Option<&str>) -> (visarium::AppState, PathBuf) {
+    instance_with(public_url, false).await
+}
+
+async fn instance_with(
+    public_url: Option<&str>,
+    no_documents: bool,
+) -> (visarium::AppState, PathBuf) {
     let dir = std::env::temp_dir().join(format!("visarium-oauth-{}", uuid::Uuid::new_v4()));
     let config = visarium::Config {
         database: dir.join("visarium.db"),
@@ -148,6 +155,7 @@ async fn instance(public_url: Option<&str>) -> (visarium::AppState, PathBuf) {
         derivatives: dir.join("derivatives"),
         version: "test".into(),
         public_url: public_url.map(String::from),
+        client_documents_disabled: no_documents,
         ..Default::default()
     };
     (visarium::open(config).await.unwrap(), dir)
@@ -733,4 +741,33 @@ async fn clients_can_identify_by_a_metadata_document() {
     let r = browser.get(&authorize_url(&liar, cb, &[])).await;
     assert_eq!(r.status, StatusCode::BAD_REQUEST);
     assert!(r.location().is_empty());
+}
+
+#[tokio::test]
+async fn without_documents_apps_are_told_to_register() {
+    let (app, dir) = instance_with(Some(ISSUER), true).await;
+    let _ = dir;
+    let mut c = Client {
+        router: visarium::router(app),
+        cookies: vec![],
+    };
+    let m = c
+        .get("/.well-known/oauth-authorization-server")
+        .await
+        .json();
+    assert_eq!(m["client_id_metadata_document_supported"], false);
+    assert!(m["registration_endpoint"].is_string());
+    let r = c
+        .get(&authorize_url(
+            "https://claude.example/oauth/client.json",
+            "https://claude.example/cb",
+            &[],
+        ))
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    assert!(r.location().is_empty());
+    assert!(String::from_utf8_lossy(&r.body).contains("registered clients only"));
+    // Registering still works.
+    let id = register(&mut c, "https://claude.example/cb").await;
+    assert!(!id.starts_with("https://"));
 }

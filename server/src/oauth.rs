@@ -186,7 +186,7 @@ async fn server_metadata(State(app): State<AppState>) -> Response {
             "grant_types_supported": ["authorization_code", "refresh_token"],
             "code_challenge_methods_supported": ["S256"],
             "token_endpoint_auth_methods_supported": ["none"],
-            "client_id_metadata_document_supported": true,
+            "client_id_metadata_document_supported": !app.config.client_documents_disabled,
             "authorization_response_iss_parameter_supported": true,
         }))
         .into_response(),
@@ -260,6 +260,9 @@ pub struct Client {
 }
 
 fn is_document_id(app: &AppState, id: &str) -> bool {
+    if app.config.client_documents_disabled {
+        return false;
+    }
     id.starts_with("https://")
         || (app.allow_private_imports.load(Ordering::Relaxed) && id.starts_with("http://"))
 }
@@ -287,6 +290,9 @@ async fn find_client(app: &AppState, id: &str) -> Result<Client, String> {
             })
         }
         _ if document => fetch_document(app, id).await,
+        _ if app.config.client_documents_disabled && id.starts_with("https://") => Err(
+            "this server takes registered clients only; remove the connector and add it again so it registers".into(),
+        ),
         _ => Err("this client is not registered here; register it again".into()),
     }
 }

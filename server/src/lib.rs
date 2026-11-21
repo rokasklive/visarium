@@ -64,6 +64,9 @@ pub struct Config {
     /// people back: behind a proxy, `Host` is not trustworthy enough.
     pub public_url: Option<String>,
     pub providers: Vec<oidc::ProviderConfig>,
+    /// OAuth clients may not identify by a Client ID Metadata Document: for a
+    /// server that cannot reach the internet to fetch one. They register.
+    pub client_documents_disabled: bool,
 }
 
 pub struct App {
