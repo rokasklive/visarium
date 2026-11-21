@@ -114,7 +114,21 @@ export function anchorBox(
 ): AnchorBox {
   const height = view ? drawnHeight(item, view.layout) : t.height;
   const whole: LocalRect = { x: 0, y: 0, width: t.width, height };
-  if (!element) return { box: boundsOf(t, whole), broken: false };
+  if (!element) {
+    // A short note in a wide box: attach to its text, not to empty space.
+    const ink = view?.layout.ink;
+    if (!ink) return { box: boundsOf(t, whole), broken: false };
+    const k = t.width / view.layout.width;
+    return {
+      box: boundsOf(t, {
+        x: ink.x * k,
+        y: ink.y * k,
+        width: ink.width * k,
+        height: ink.height * k,
+      }),
+      broken: false,
+    };
+  }
   const r = view?.layout.elements.get(element);
   if (!view || !r) {
     // Unknown until laid out; once laid out and absent, broken (spec). Either

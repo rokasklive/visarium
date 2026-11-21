@@ -40,6 +40,11 @@ export interface Layout {
   svg(scale: number): string;
   readonly hits: readonly (Hit & { readonly rect: LocalRect })[];
   readonly elements: ReadonlyMap<string, LocalRect>;
+  /**
+   * The box around what is actually drawn — text and task marks, not the empty
+   * width beside a short line. Where a line to the whole item attaches.
+   */
+  readonly ink?: LocalRect | undefined;
   /** A note's passages in reading order, named or not (canvas/text-anchors). */
   readonly blocks?: readonly Block[];
   /** The drawn text, passages separated by `\n` (canvas/quick-search). */
@@ -317,6 +322,7 @@ async function layoutHtml(
       hits,
       elements,
       blocks,
+      ink: inkOf(root, origin),
       text,
       measure: (query) => {
         const again = document.createElement('div');
@@ -338,6 +344,28 @@ async function layoutHtml(
   } finally {
     frame.remove();
   }
+}
+
+/** The union of every text line box and task mark under `root`, item-local. */
+function inkOf(root: HTMLElement, origin: DOMRect): LocalRect | undefined {
+  const rects: DOMRect[] = [];
+  const range = document.createRange();
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    if (!(n as Text).data.trim()) continue;
+    range.selectNodeContents(n);
+    rects.push(...range.getClientRects());
+  }
+  for (const el of root.querySelectorAll('[data-box], .vo-st, img, hr')) {
+    rects.push(el.getBoundingClientRect());
+  }
+  const drawn = rects.filter((r) => r.width > 0 && r.height > 0);
+  if (drawn.length === 0) return undefined;
+  const left = Math.min(...drawn.map((r) => r.left));
+  const top = Math.min(...drawn.map((r) => r.top));
+  const right = Math.max(...drawn.map((r) => r.right));
+  const bottom = Math.max(...drawn.map((r) => r.bottom));
+  return { x: left - origin.left, y: top - origin.top, width: right - left, height: bottom - top };
 }
 
 let renderSeq = 0;
