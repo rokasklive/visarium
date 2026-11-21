@@ -5,7 +5,7 @@ import { useUiStore } from '~/app/ui-store';
 /**
  * The canvas' own chrome: what does NOT depend on what is selected.
  *
- * The tool, undo and redo, and framing — and that list is the rule. Front,
+ * The tool, a new checklist, undo and redo, and framing — and that list is the rule. Front,
  * back, group and ungroup left in M08 for the selection toolbar, which is
  * anchored to the thing they act on; two ways to press Front is the seam that
  * milestone closed, and nothing that operates on a selection comes back here.
@@ -16,11 +16,14 @@ export function CanvasToolbar({
   history,
   onHistory,
   onFrame,
+  onChecklist,
 }: {
   history: CanvasHistory;
   onHistory: () => void;
   /** Moves the camera and nothing else, so it is not a `commit` and takes no undo slot. */
   onFrame: () => void;
+  /** Makes an empty checklist mid-view, its title open: the one object type a person could not otherwise discover how to make. */
+  onChecklist: () => void;
 }) {
   const selectionSize = useUiStore((s) => s.selectedItemIds.size);
   const tool = useUiStore((s) => s.tool);
@@ -33,6 +36,10 @@ export function CanvasToolbar({
       </Button>
       <Button onClick={() => setTool('pan')} pressed={tool === 'pan'}>
         Pan
+      </Button>
+      <Divider />
+      <Button onClick={onChecklist} title="New checklist">
+        Checklist
       </Button>
       <Divider />
       <Button

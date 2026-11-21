@@ -208,6 +208,15 @@ export function useObjectEditing(d: EditingDeps) {
 
   // --- checklists ------------------------------------------------------------
 
+  /** An empty checklist at a world point, its title open for typing; Enter moves on to the first task. */
+  const newChecklist = (at: Vec2) => {
+    if (!d.editable) return;
+    const itemId = newItemId();
+    d.commit(createObject(itemId, { kind: 'checklist', title: '', tasks: [] }, at, topZ(d.doc)));
+    d.select([itemId]);
+    setEditing({ kind: 'title', itemId });
+  };
+
   const tasksOf = (itemId: ItemId): readonly Task[] => {
     const c = d.doc.item(itemId)?.content;
     return c?.kind === 'checklist' ? c.tasks : [];
@@ -490,6 +499,7 @@ export function useObjectEditing(d: EditingDeps) {
     click,
     doubleClick,
     startNewNote,
+    newChecklist,
     place,
     hover,
     overlays: (

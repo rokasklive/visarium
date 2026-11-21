@@ -229,6 +229,10 @@ const GRID_DOT_RADIUS = 1;
 
 /** Prefix for the full-strength outline node beside a selected or held item. */
 const SELECTION_MARK = 'sel-';
+/** Node id prefixes for a group's frame and label, which a drag moves by hand. */
+const GROUP_FRAME = 'gframe-';
+const GROUP_KNOCKOUT = 'gknock-';
+const GROUP_LABEL = 'glabel-';
 
 /** The ghost of the whole original behind an item being cropped (ADR-0029). */
 const CROP_GHOST = 'crop-ghost';
@@ -2098,6 +2102,38 @@ export function CanvasSurface({
   };
 
   /**
+   * The frame and label of every group the drag carries whole, with where each
+   * node started. They are drawn from the document, which hears about the move
+   * only at release, so like the siblings they follow by hand.
+   */
+  const groupDrag = useRef<{ node: Konva.Node; x: number; y: number }[]>([]);
+  const startGroupDrag = (moving: ReadonlySet<ItemId>) => {
+    groupDrag.current = [];
+    const stage = stageRef.current;
+    if (!stage) return;
+    const groups = new Set<GroupId>();
+    for (const id of moving) {
+      const g = doc.item(id)?.groupId;
+      if (g) groups.add(g);
+    }
+    for (const g of groups) {
+      if (!doc.group(g)?.memberIds.every((m) => moving.has(m))) continue;
+      for (const prefix of [GROUP_FRAME, GROUP_KNOCKOUT, GROUP_LABEL]) {
+        const node = stage.findOne(`#${prefix}${g}`);
+        if (node) groupDrag.current.push({ node, x: node.x(), y: node.y() });
+      }
+    }
+  };
+  const moveGroupDrag = (dx: number, dy: number) => {
+    for (const g of groupDrag.current) g.node.position({ x: g.x + dx, y: g.y + dy });
+  };
+  /** Back where they were, before the commit redraws them from the moved document. */
+  const endGroupDrag = () => {
+    moveGroupDrag(0, 0);
+    groupDrag.current = [];
+  };
+
+  /**
    * Give up items the server refused, mid-gesture.
    *
    * Two people grabbed the same image within the same moment and this client
@@ -2106,6 +2142,8 @@ export function CanvasSurface({
    * out of the gesture so the rest of a multi-item drag carries on.
    */
   const snapBack = (itemIds: readonly ItemId[]) => {
+    // A member left the gesture, so its group is no longer carried whole.
+    endGroupDrag();
     for (const id of itemIds) {
       dragOrigins.current.delete(id);
       claimed.current = claimed.current.filter((held) => held !== id);
@@ -2192,6 +2230,7 @@ export function CanvasSurface({
       if (node) dragOrigins.current.set(id, { x: node.x(), y: node.y() });
     }
     const touched = dragOrigins.current.size > 0 ? [...dragOrigins.current.keys()] : [item.id];
+    startGroupDrag(new Set(touched));
     claim(touched);
   };
 
@@ -2225,11 +2264,13 @@ export function CanvasSurface({
     if (!origin) {
       at(item.id, e.target.x(), e.target.y());
       markAt(item.id, e.target.x(), e.target.y());
+      moveGroupDrag(e.target.x() - item.transform.x, e.target.y() - item.transform.y);
       previewNow(moved);
       return;
     }
     const dx = e.target.x() - origin.x;
     const dy = e.target.y() - origin.y;
+    moveGroupDrag(dx, dy);
     at(item.id, e.target.x(), e.target.y());
     // The selection outline is its own node so it keeps full strength over a
     // faded item, which means it has to be moved by hand exactly as its item is.
@@ -2265,6 +2306,7 @@ export function CanvasSurface({
       return;
     }
     setGesturing(false);
+    endGroupDrag();
     const bodies: CanvasOperationBody[] = [];
     for (const id of dragOrigins.current.keys()) {
       const node = stageRef.current?.findOne(`#${id}`);
@@ -2521,6 +2563,7 @@ export function CanvasSurface({
             {drawnFrames.map((frame) => (
               <KonvaLine
                 key={frame.groupId}
+                id={`${GROUP_FRAME}${frame.groupId}`}
                 points={frame.points}
                 closed
                 stroke={theme.frame}
@@ -2689,6 +2732,7 @@ export function CanvasSurface({
               <Fragment key={group.groupId}>
                 <KonvaRect
                   name="group-label-knockout"
+                  id={`${GROUP_KNOCKOUT}${group.groupId}`}
                   {...group.knockout}
                   fill={theme.ground}
                   listening={false}
@@ -2696,6 +2740,7 @@ export function CanvasSurface({
                 />
                 <KonvaText
                   name="group-label"
+                  id={`${GROUP_LABEL}${group.groupId}`}
                   x={group.x}
                   y={group.y}
                   text={group.label}
@@ -2734,7 +2779,18 @@ export function CanvasSurface({
           selfActorId={realtimeRef.current?.actorId}
           theme={theme}
         />
-        {!readOnly && <CanvasToolbar history={history} onHistory={redraw} onFrame={frameView} />}
+        {!readOnly && (
+          <CanvasToolbar
+            history={history}
+            onHistory={redraw}
+            onFrame={frameView}
+            onChecklist={() =>
+              objectEditing.newChecklist(
+                screenToWorld(camera, size, { x: size.width / 2, y: size.height / 3 }),
+              )
+            }
+          />
+        )}
         <SearchBar onClose={closeSearchOnResult} />
         <ShortcutLegend readOnly={readOnly} width={width} />
         {!readOnly && (
