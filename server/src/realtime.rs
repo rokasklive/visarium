@@ -452,6 +452,11 @@ async fn run(
     loop {
         let message = tokio::select! {
             message = stream.next() => message,
+            _ = app.closing.cancelled() => {
+                tracing::info!(reason = "instance closing", "closing a member socket");
+                let _ = tx.send(close_message(POLICY_VIOLATION, "this demo has ended")).await;
+                break;
+            }
             _ = recheck.tick(), if session.is_some() => {
                 if !session_live(&app, session.as_deref().unwrap_or_default()).await {
                     tracing::info!(reason = "session ended", "closing a member socket");

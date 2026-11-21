@@ -540,7 +540,8 @@ pub async fn session_layer(
         // Single-user mode has no password between a request and the library,
         // so a page that resolves some hostname to 127.0.0.1 (DNS rebinding)
         // must not be able to reach it. Loopback names only.
-        if !is_loopback_host(req.headers()) {
+        // A demo sandbox is the exception: its gateway checked who is asking.
+        if app.config.demo.is_none() && !is_loopback_host(req.headers()) {
             return ApiError::forbidden("this instance only answers on localhost").into_response();
         }
         let principal = match find_user(&app.db, local).await.ok().flatten() {
@@ -922,14 +923,19 @@ pub async fn current(
         .map(|p| json!({ "id": p.id, "name": p.name }))
         .collect();
     // `singleUser`: there is no sign-in to return to, so the SPA hides Sign out.
-    Ok(axum::Json(json!({
+    let mut body = json!({
         "setupRequired": setup_required,
         "user": user,
         "singleUser": !multi,
         "passwordEnabled": multi && !app.config.password_disabled,
         "providers": providers,
         "sharingEnabled": multi && !app.config.sharing_disabled,
-    })))
+    });
+    // Present only on a demo sandbox: when it ends, and what it holds.
+    if let Some(demo) = &app.config.demo {
+        body["demo"] = demo.view();
+    }
+    Ok(axum::Json(body))
 }
 
 #[derive(Deserialize)]

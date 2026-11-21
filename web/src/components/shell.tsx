@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link, useMatchRoute, useNavigate } from '@tanstack/react-router';
 import { codenameFor, fetchServerInfo } from '@visarium/api-client';
-import { type ReactNode, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { isStaff, useStorage } from '~/api/accounts';
 import { useBoards, useRenameBoard } from '~/api/boards';
 import {
@@ -325,6 +325,34 @@ function Sidebar() {
   );
 }
 
+/**
+ * A demo sandbox says, all the time and quietly, that it is one and when it
+ * goes. At the end the page reloads onto the gateway's "your demo has ended".
+ */
+function DemoCountdown({ endsAt }: { endsAt: string }) {
+  const [now, setNow] = useState(() => Date.now());
+  const left = Date.parse(endsAt) - now;
+  useEffect(() => {
+    if (left <= 0) {
+      window.location.reload();
+      return;
+    }
+    const timer = setTimeout(() => setNow(Date.now()), Math.min(30_000, left));
+    return () => clearTimeout(timer);
+  }, [left]);
+  const minutes = Math.max(0, Math.ceil(left / 60_000));
+  const text = minutes >= 60 ? `${Math.floor(minutes / 60)} h ${minutes % 60} m` : `${minutes} m`;
+  return (
+    <span
+      className="tabular-nums text-ink"
+      title="Nobody else can see this demo. It and everything in it is deleted when the time runs out."
+      data-testid="demo-countdown"
+    >
+      demo · deleted in {text}
+    </span>
+  );
+}
+
 function StatusBar() {
   const health = useHealth();
   const uploads = useUiStore((s) => s.uploads);
@@ -432,6 +460,7 @@ function StatusBar() {
           {interchange} — dismiss
         </button>
       )}
+      {session.data?.demo && <DemoCountdown endsAt={session.data.demo.endsAt} />}
       {storageLevel !== 'ok' && (
         <Link
           to="/instance"

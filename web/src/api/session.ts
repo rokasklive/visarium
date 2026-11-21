@@ -24,7 +24,11 @@ export interface SessionState {
   /** "Continue with Google", and any other OpenID Connect provider. */
   readonly providers: readonly Provider[];
   readonly sharingEnabled: boolean;
+  /** A demo sandbox (VISARIUM_DEMO): when it is deleted, and what it holds. */
+  readonly demo?: DemoPolicy | undefined;
 }
+
+export type DemoPolicy = components['schemas']['DemoPolicy'];
 
 export type Provider = components['schemas']['Provider'];
 
@@ -47,6 +51,7 @@ export function useSession() {
         passwordEnabled: data.passwordEnabled ?? true,
         providers: data.providers ?? [],
         sharingEnabled: data.sharingEnabled ?? false,
+        demo: data.demo,
       };
     },
   });

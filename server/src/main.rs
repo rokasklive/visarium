@@ -18,6 +18,18 @@
 //!   VISARIUM_LOG_LEVEL         info                  error, warn, info, debug, trace
 //!   VISARIUM_LOG_FORMAT        text                  json: one JSON object per line
 //!
+//! Demo mode serves a public sandbox per visitor instead (src/demo.rs); the
+//! settings above about accounts, providers and data paths do not apply:
+//!
+//!   VISARIUM_DEMO              off                   on: be a demo gateway
+//!   VISARIUM_DEMO_ROOT         data/demo             sandboxes; emptied at start
+//!   VISARIUM_DEMO_SEED         (none)                a data dir to copy into each
+//!                                                    sandbox (db/, assets/, derivatives/)
+//!   VISARIUM_DEMO_HOURS        2                     how long a sandbox lives
+//!   VISARIUM_DEMO_MAX          100                   sandboxes at once
+//!   VISARIUM_DEMO_STORAGE_MB   50                    images a visitor may add
+//!   VISARIUM_DEMO_IP_HEADER    (none)                e.g. Cf-Connecting-IP behind a proxy
+//!
 //! A provider is `VISARIUM_OIDC_{ID}_CLIENT_ID`, `_CLIENT_SECRET`, `_ISSUER`
 //! and optionally `_NAME`. `GOOGLE` needs no issuer or name. Register
 //! `{VISARIUM_PUBLIC_URL}/auth/oidc/{id}/callback` as its redirect URI.
@@ -49,6 +61,9 @@ async fn main() -> visarium::anyhow_lite::Result<()> {
             "true" | "1" | "yes" | "on"
         )
     };
+    if flag("VISARIUM_DEMO", "off") {
+        return demo(bind, port, &env).await;
+    }
     let single_user = flag("VISARIUM_SINGLE_USER", "false");
     if single_user && !bind.is_loopback() {
         // Single-user mode has no sign-in at all; on a reachable address that
@@ -76,6 +91,8 @@ async fn main() -> visarium::anyhow_lite::Result<()> {
             .map(|u| u.trim().trim_end_matches('/').to_string())
             .filter(|u| !u.is_empty()),
         providers: visarium::oidc::providers_from_env(std::env::vars())?,
+        demo: None,
+        decode_permits: None,
     };
     // A refusal to start is written for the person reading the container log,
     // so it goes out as plain lines, not as a debug-quoted string.
@@ -99,5 +116,51 @@ async fn main() -> visarium::anyhow_lite::Result<()> {
         })
         .await?;
     tracing::info!("shut down");
+    Ok(())
+}
+
+/// The demo gateway in place of an instance (VISARIUM_DEMO=on).
+async fn demo(
+    bind: IpAddr,
+    port: u16,
+    env: &dyn Fn(&str, &str) -> String,
+) -> visarium::anyhow_lite::Result<()> {
+    let number = |name: &str, default: &str| -> visarium::anyhow_lite::Result<u64> {
+        env(name, default)
+            .parse()
+            .map_err(|_| format!("{name} must be a whole number").into())
+    };
+    let mut settings = visarium::demo::Settings {
+        root: PathBuf::from(env("VISARIUM_DEMO_ROOT", "data/demo")),
+        seed: std::env::var("VISARIUM_DEMO_SEED")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from),
+        lifetime: std::time::Duration::from_secs(number("VISARIUM_DEMO_HOURS", "2")? * 3600),
+        max_sandboxes: number("VISARIUM_DEMO_MAX", "100")? as usize,
+        version: env("VISARIUM_VERSION", env!("CARGO_PKG_VERSION")),
+        ip_header: std::env::var("VISARIUM_DEMO_IP_HEADER")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .map(|h| h.parse())
+            .transpose()
+            .map_err(|_| "VISARIUM_DEMO_IP_HEADER is not a header name")?,
+        ..Default::default()
+    };
+    settings.policy.storage_bytes = number("VISARIUM_DEMO_STORAGE_MB", "50")? * 1_000_000;
+    let gateway = visarium::demo::open(settings).await?;
+    let listener = tokio::net::TcpListener::bind(SocketAddr::new(bind, port)).await?;
+    tracing::info!(address = %listener.local_addr()?, "listening as a demo");
+    axum::serve(
+        listener,
+        visarium::demo::router(gateway).into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async {
+        let ctrl_c = tokio::signal::ctrl_c();
+        let mut term =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).unwrap();
+        tokio::select! { _ = ctrl_c => {}, _ = term.recv() => {} }
+    })
+    .await?;
     Ok(())
 }

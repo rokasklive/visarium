@@ -97,9 +97,16 @@ pub async fn room(app: &AppState) -> ApiResult<Room> {
     } else {
         String::new()
     };
+    let demo = app.config.demo.as_ref();
     let by_limit = |left: u64| Room {
         bytes: left,
-        full: if left == 0 {
+        full: if let Some(d) = demo {
+            format!(
+                "This demo holds up to {} of your own images, and {} of that is left. Delete some to add more.",
+                bytes_text(d.storage_bytes),
+                bytes_text(left)
+            )
+        } else if left == 0 {
             format!(
                 "Image storage on this instance is full: {} of {} used{trash}. An admin can raise the limit in Instance Settings.",
                 bytes_text(u.used),

@@ -1357,6 +1357,11 @@ pub async fn apply(
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| not_found(board))?;
+    let creates = ops
+        .iter()
+        .filter(|op| matches!(op, Op::ItemCreate { .. }))
+        .count() as i64;
+    crate::demo::items_fit(app, &mut tx, creates).await?;
     for (i, op) in ops.iter().enumerate() {
         apply_one(&mut tx, &id, op).await?;
         sqlx::query(sqlx::AssertSqlSafe(format!(
@@ -1628,6 +1633,7 @@ pub async fn create_board(
     title: &str,
     agent: Option<&str>,
 ) -> ApiResult<Board> {
+    crate::demo::boards_fit(app).await?;
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO canvas (id, title, owner_id, created_by_agent) VALUES (?, ?, ?, ?) RETURNING {COLUMNS}"
     )))
@@ -1698,7 +1704,16 @@ pub async fn duplicate_board(
         None => format!("{} copy", source.title),
     };
     let copy = new_id();
+    crate::demo::boards_fit(app).await?;
     let mut tx = app.db.begin().await?;
+    if app.config.demo.is_some() {
+        let copied: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM canvas_item WHERE canvas_id = ?")
+                .bind(&source.id)
+                .fetch_one(&mut *tx)
+                .await?;
+        crate::demo::items_fit(app, &mut tx, copied).await?;
+    }
     // Refs are copied as they are, counters included: `d2` in the copy is the
     // copy of `d2`.
     sqlx::query("INSERT INTO canvas (id, title, owner_id, next_refs, created_by_agent) SELECT ?, ?, ?, next_refs, ? FROM canvas WHERE id = ?")

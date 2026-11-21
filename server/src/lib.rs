@@ -13,6 +13,7 @@ pub mod auth;
 pub mod boards;
 pub mod collections;
 pub mod collision;
+pub mod demo;
 pub mod device;
 pub mod error;
 pub mod instance;
@@ -71,6 +72,12 @@ pub struct Config {
     pub client_documents_disabled: bool,
     /// The vision model from VISARIUM_VISION_*; when set, the app cannot change it.
     pub vision: Option<vision::Setting>,
+    /// A demo sandbox's policy, when this instance is one (demo.rs). Only
+    /// with `single_user`; the gateway in front of it is its sign-in.
+    pub demo: Option<demo::Policy>,
+    /// A decode budget shared with other instances in this process (every
+    /// demo sandbox draws from one); a budget of its own when None.
+    pub decode_permits: Option<Arc<tokio::sync::Semaphore>>,
 }
 
 pub struct App {
@@ -92,7 +99,7 @@ pub struct App {
     /// The decode budget in MiB (`assets::DECODE_BUDGET_MIB`): each decode
     /// holds what its pixels need, at least a quarter, so a dropped folder is
     /// never forty decodes at once and a huge image is never one of four.
-    pub image_permits: tokio::sync::Semaphore,
+    pub image_permits: Arc<tokio::sync::Semaphore>,
     /// Assets whose image failed to draw, so a view does not decode them again.
     pub undrawable: std::sync::Mutex<std::collections::HashSet<String>>,
     /// Serialises claiming a fresh instance, so two first requests cannot both
@@ -103,6 +110,9 @@ pub struct App {
     /// Lets agents import images from private addresses. Off, and only ever
     /// turned on by tests that serve images from loopback.
     pub allow_private_imports: std::sync::atomic::AtomicBool,
+    /// Cancelled when this instance is being closed (a demo sandbox at its
+    /// end): open sockets say goodbye and let go of it.
+    pub closing: tokio_util::sync::CancellationToken,
 }
 
 pub type AppState = Arc<App>;
@@ -193,6 +203,11 @@ pub async fn open(config: Config) -> anyhow_lite::Result<AppState> {
         public_url = config.public_url.as_deref().unwrap_or("-"),
         "server ready"
     );
+    let image_permits = config.decode_permits.clone().unwrap_or_else(|| {
+        Arc::new(tokio::sync::Semaphore::new(
+            assets::DECODE_BUDGET_MIB as usize,
+        ))
+    });
     let app = Arc::new(App {
         db,
         config,
@@ -206,11 +221,12 @@ pub async fn open(config: Config) -> anyhow_lite::Result<AppState> {
         vision: Default::default(),
         rooms: Default::default(),
         agent_writes: Default::default(),
-        image_permits: tokio::sync::Semaphore::new(assets::DECODE_BUDGET_MIB as usize),
+        image_permits,
         undrawable: Default::default(),
         setup_lock: Default::default(),
         local_user,
         allow_private_imports: Default::default(),
+        closing: Default::default(),
     });
     vision::load(&app).await?;
     vision::spawn(Arc::downgrade(&app));
@@ -363,7 +379,10 @@ pub fn router(state: AppState) -> Router {
 
 /// On every response: no MIME sniffing, framed only by this origin, and an
 /// API answer that says nothing about caching is kept out of shared caches.
-async fn security_headers(req: axum::extract::Request, next: axum::middleware::Next) -> Response {
+pub(crate) async fn security_headers(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
     let api = req.uri().path().starts_with("/api/");
     let mut response = next.run(req).await;
     let h = response.headers_mut();

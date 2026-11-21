@@ -914,6 +914,16 @@ export interface components {
             providers?: components["schemas"]["Provider"][];
             /** Read-only share links are available (ADR-0026). */
             sharingEnabled?: boolean;
+            /** Only on a demo sandbox: when it ends and what it holds. */
+            demo?: components["schemas"]["DemoPolicy"];
+        };
+        DemoPolicy: {
+            /** ISO-8601 UTC: the sandbox and everything in it is deleted then. */
+            endsAt: string;
+            maxBoards: number;
+            maxItems: number;
+            /** Bytes of images a visitor may add. */
+            storageBytes: number;
         };
         Provider: {
             id: string;
