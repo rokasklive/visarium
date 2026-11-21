@@ -17,7 +17,10 @@ import {
   useRevokeAnyShare,
   useRevokeInvitation,
   useSaveProvider,
+  useSaveVision,
   useSetRole,
+  useTestVision,
+  useVision,
 } from '~/api/accounts';
 import { useBoards } from '~/api/boards';
 import { type Account, providerStart, useSession } from '~/api/session';
@@ -66,6 +69,7 @@ function InstanceSettings() {
     ['invitations', 'Invitations', true],
     ['shares', 'Share links', session.data?.sharingEnabled ?? false],
     ['sign-in', 'Sign-in', admin],
+    ['vision', 'Vision model', admin],
   ];
 
   return (
@@ -96,6 +100,7 @@ function InstanceSettings() {
         <InvitationsSection me={me} />
         {session.data?.sharingEnabled ? <SharesSection /> : null}
         {admin ? <SignInSection /> : null}
+        {admin ? <VisionSection /> : null}
       </div>
     </div>
   );
@@ -364,6 +369,146 @@ function SharesSection() {
         ))}
       </ul>
       <Problem error={revoke.error} />
+    </section>
+  );
+}
+
+// --- the vision model (admins) ----------------------------------------------------
+
+/**
+ * One OpenAI-compatible vision model that describes every image, so agents
+ * whose model cannot see images still read what they show (image-descriptions).
+ * The key is write-only: the page knows only whether one is set.
+ */
+function VisionSection() {
+  const vision = useVision(true);
+  const save = useSaveVision();
+  const test = useTestVision();
+  const v = vision.data;
+  const [baseUrl, setBaseUrl] = useState<string | null>(null);
+  const [model, setModel] = useState<string | null>(null);
+  const [apiKey, setApiKey] = useState('');
+  const [prompt, setPrompt] = useState<string | null>(null);
+  // Until edited, the fields show what is saved.
+  const values = {
+    baseUrl: baseUrl ?? v?.baseUrl ?? '',
+    model: model ?? v?.model ?? '',
+    prompt: prompt ?? v?.prompt ?? '',
+  };
+  const input = (enabled: boolean) => ({
+    baseUrl: values.baseUrl.trim(),
+    model: values.model.trim(),
+    prompt: values.prompt,
+    enabled,
+    ...(apiKey ? { apiKey } : {}),
+  });
+  const ready = values.baseUrl.trim() !== '' && values.model.trim() !== '';
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    save.mutate(input(v?.configured ? v.enabled : true), { onSuccess: () => setApiKey('') });
+  }
+
+  return (
+    <section
+      id="vision"
+      className="mb-6 scroll-mt-6 border-b border-line pb-6"
+      data-testid="vision-section"
+    >
+      <SectionHeading>Vision model</SectionHeading>
+      <p className="mb-3 text-[11px] text-ink-dim">
+        A model that can see images writes a short description of every image, with any text in it,
+        so agents whose model cannot read pictures still know what they show, and search finds
+        images by their content. Any endpoint that speaks the OpenAI chat completions API with
+        images works: OpenAI, OpenRouter, Ollama, LM Studio, vLLM, LiteLLM.
+      </p>
+      <p className="mb-3 text-ink" data-testid="vision-warning">
+        While this is on, every image is sent to the endpoint below to be described.
+      </p>
+      {vision.isError && <p className="text-ink">the vision model could not be loaded</p>}
+      {v?.fromEnv ? (
+        <p className="mb-3 text-ink-dim" data-testid="vision-from-env">
+          Set by <code>VISARIUM_VISION_*</code> on the server: {v.model} at {v.baseUrl}. Change it
+          there.
+        </p>
+      ) : (
+        <form onSubmit={submit} data-testid="vision-form">
+          <TextField
+            label="Base URL (up to /v1)"
+            value={values.baseUrl}
+            onChange={setBaseUrl}
+            autoComplete="off"
+          />
+          <TextField label="Model" value={values.model} onChange={setModel} autoComplete="off" />
+          <TextField
+            label={
+              v?.hasKey ? 'API key (one is set; leave empty to keep it)' : 'API key (optional)'
+            }
+            value={apiKey}
+            onChange={setApiKey}
+            type="password"
+            autoComplete="new-password"
+          />
+          <label className="mb-3 block">
+            <span className="mb-1 block text-[11px] uppercase tracking-wide text-ink-dim">
+              Prompt (empty: the default)
+            </span>
+            <textarea
+              value={values.prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder={v?.defaultPrompt}
+              rows={4}
+              className="w-full rounded-sm border border-line bg-surface-raised px-2 py-1 text-ink placeholder:text-ink-disabled"
+            />
+          </label>
+          <div className="flex items-center gap-2">
+            <GhostButton type="submit" disabled={!ready || save.isPending}>
+              Save
+            </GhostButton>
+            <GhostButton
+              disabled={!ready || test.isPending}
+              onClick={() => test.mutate(input(true))}
+            >
+              {test.isPending ? 'Testing…' : 'Test'}
+            </GhostButton>
+            {v?.configured && (
+              <GhostButton
+                label={v.enabled ? 'Turn the vision model off' : 'Turn the vision model on'}
+                disabled={save.isPending}
+                onClick={() => save.mutate(input(!v.enabled))}
+              >
+                {v.enabled ? 'turn off' : 'turn on'}
+              </GhostButton>
+            )}
+          </div>
+        </form>
+      )}
+      {test.data && (
+        <div className="mt-3 rounded-sm border border-line p-2" data-testid="vision-test-result">
+          {test.data.ok ? (
+            <>
+              <p className="text-ink">The model answered: “{test.data.caption}”</p>
+              <p className="mt-1 text-ink-dim">{test.data.description}</p>
+            </>
+          ) : (
+            <p className="text-ink" role="alert">
+              The test failed: {test.data.error}
+            </p>
+          )}
+        </div>
+      )}
+      <Problem error={save.error ?? test.error} />
+      {v?.configured && (
+        <p className="mt-3 text-[11px] text-ink-dim" data-testid="vision-status">
+          {v.enabled ? 'On' : 'Off'} · {v.described} described · {v.waiting} waiting
+          {v.failed > 0 ? ` · ${v.failed} given up on` : ''}
+        </p>
+      )}
+      {v?.lastError && (
+        <p className="mt-1 text-[11px] text-ink-dim" data-testid="vision-last-error">
+          Last error, {new Date(v.lastError.at).toLocaleString()}: {v.lastError.message}
+        </p>
+      )}
     </section>
   );
 }

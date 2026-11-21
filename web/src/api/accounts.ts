@@ -10,6 +10,8 @@ import {
   type SessionView,
   type ShareLink,
   type SignInProviders,
+  type VisionSetting,
+  type VisionSettingInput,
 } from '@visarium/api-client';
 import { type Account, problemDetail, sessionKey } from './session';
 
@@ -194,6 +196,51 @@ export function useSaveProvider() {
     });
     if (!data) throw new Error(problemDetail(error, 'that provider could not be saved'));
     return data;
+  });
+}
+
+// --- the vision model (admins) ---------------------------------------------
+
+const visionKey = ['instance-vision'] as const;
+
+export function useVision(enabled: boolean) {
+  return useQuery({
+    queryKey: visionKey,
+    enabled,
+    // The queue drains while the page is open.
+    refetchInterval: 15_000,
+    queryFn: async (): Promise<VisionSetting> => {
+      const { data, response } = await api.GET('/api/instance/vision');
+      if (!data) throw new Error(`could not load the vision model: ${response.status}`);
+      return data;
+    },
+  });
+}
+
+export function useSaveVision() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: VisionSettingInput): Promise<VisionSetting> => {
+      const { data, error } = await api.PUT('/api/instance/vision', { body });
+      if (!data) throw new Error(problemDetail(error, 'the vision model could not be saved'));
+      return data;
+    },
+    onSuccess: (data) => queryClient.setQueryData(visionKey, data),
+  });
+}
+
+export type VisionTest =
+  | { ok: true; caption: string; description: string; visibleText: string }
+  | { ok: false; error: string };
+
+/** Describes a sample image with unsaved values: the endpoint's answer or its error. */
+export function useTestVision() {
+  return useMutation({
+    mutationFn: async (body: VisionSettingInput): Promise<VisionTest> => {
+      const { data, error } = await api.POST('/api/instance/vision/test', { body });
+      if (!data) throw new Error(problemDetail(error, 'the test could not run'));
+      return data;
+    },
   });
 }
 

@@ -327,7 +327,7 @@ impl Spool {
             return Err(unreadable("the upload was empty"));
         }
         let hash = hex::encode(self.hasher.finalize());
-        ingest(
+        let asset = ingest(
             app,
             &self.temp.0,
             &hash,
@@ -335,7 +335,10 @@ impl Spool {
             filename,
             uploader,
         )
-        .await
+        .await?;
+        // A new image to describe, if a vision model is set up.
+        app.vision.poke();
+        Ok(asset)
     }
 }
 

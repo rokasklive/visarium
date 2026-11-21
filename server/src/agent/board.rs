@@ -40,6 +40,8 @@ pub struct BoardData {
     pub people: HashMap<String, String>,
     /// Asset id → original filename, for image titles.
     pub filenames: HashMap<String, String>,
+    /// Asset id → its image description, where one was ever attempted.
+    pub descriptions: HashMap<String, crate::vision::Stored>,
     structures: HashMap<String, Extracted>,
 }
 
@@ -166,6 +168,9 @@ impl BoardData {
         .fetch_all(&mut *tx)
         .await
         .map_err(db_fail)?;
+        let descriptions = crate::vision::on_board(&mut tx, &id)
+            .await
+            .map_err(db_fail)?;
         tx.commit().await.map_err(db_fail)?;
         let structures = items
             .iter()
@@ -202,6 +207,7 @@ impl BoardData {
                 .into_iter()
                 .filter_map(|(id, f)| f.map(|f| (id, f)))
                 .collect(),
+            descriptions,
             structures,
         })
     }
@@ -482,6 +488,13 @@ impl BoardData {
             Some(e) => format!("{}#{e}", self.ref_of(item_id)),
             None => self.ref_of(item_id),
         }
+    }
+
+    /// An image item's description, if one was ever attempted.
+    pub fn description_of(&self, item: &ItemRow) -> Option<&crate::vision::Stored> {
+        item.asset_id
+            .as_deref()
+            .and_then(|a| self.descriptions.get(a))
     }
 
     /// A short title: a note's first heading or line, a diagram's `title`,

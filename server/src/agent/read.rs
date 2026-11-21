@@ -204,11 +204,18 @@ fn item_line(b: &BoardData, i: &ItemRow) -> String {
             }
             Err(e) => e,
         },
-        "image" => format!(
-            "{}×{}",
-            i.intrinsic_width.unwrap_or(0),
-            i.intrinsic_height.unwrap_or(0)
-        ),
+        "image" => {
+            let size = format!(
+                "{}×{}",
+                i.intrinsic_width.unwrap_or(0),
+                i.intrinsic_height.unwrap_or(0)
+            );
+            // The caption is the image's own words, so it is quoted, never bare.
+            match b.description_of(i).and_then(|d| d.caption.clone()) {
+                Some(c) if !c.is_empty() => format!("{size} · {:?}", c),
+                _ => size,
+            }
+        }
         _ => String::new(),
     };
     let mut line = format!("{:<4}{}{} · {}", i.short_ref(), b.kind_of(i), title, detail);
@@ -629,7 +636,7 @@ pub async fn item_read(app: &AppState, args: &Value) -> Result<Out, Fail> {
         }
         "image" => {
             text.push_str(&format!(
-                "{}×{} pixels{}. Look at it with item_view(ref: \"{}\").\n",
+                "{}×{} pixels{}. Look at it with item_view(ref: \"{}\").\n\n",
                 i.intrinsic_width.unwrap_or(0),
                 i.intrinsic_height.unwrap_or(0),
                 if i.crop_x.is_some() {
@@ -639,6 +646,14 @@ pub async fn item_read(app: &AppState, args: &Value) -> Result<Out, Fail> {
                 },
                 i.short_ref()
             ));
+            let stored = b.description_of(i);
+            match stored.and_then(crate::vision::block) {
+                Some(block) => text.push_str(&block),
+                None => {
+                    text.push_str(&crate::vision::missing(app, stored));
+                    text.push('\n');
+                }
+            }
         }
         _ => {
             if i.kind == "diagram" {
@@ -982,10 +997,10 @@ pub async fn search(app: &AppState, args: &Value) -> Result<Out, Fail> {
     };
     let kind = opt_str(args, "kind").map(str::to_string);
     if let Some(k) = &kind
-        && !["note", "diagram", "checklist"].contains(&k.as_str())
+        && !["note", "diagram", "checklist", "image"].contains(&k.as_str())
     {
         return Err(format!(
-            "kind '{k}' is not searchable; use note, diagram or checklist."
+            "kind '{k}' is not searchable; use note, diagram, checklist or image."
         ));
     }
     let filter =
@@ -1026,6 +1041,8 @@ pub async fn search(app: &AppState, args: &Value) -> Result<Out, Fail> {
     for (title, _, kind, ref_no, lang, snippet) in &hits {
         let what = match lang {
             Some(l) => format!("{l} diagram"),
+            // The snippet is the vision model's words about the image.
+            None if kind == "image" => "image; from its machine-written description".into(),
             None => kind.clone(),
         };
         text.push_str(&format!(
@@ -1036,7 +1053,7 @@ pub async fn search(app: &AppState, args: &Value) -> Result<Out, Fail> {
     }
     if total > SEARCH_CAP {
         text.push_str(&format!(
-            "{} more not shown. Narrow it: add words, or pass board and/or kind (note, diagram, checklist).\n",
+            "{} more not shown. Narrow it: add words, or pass board and/or kind (note, diagram, checklist, image).\n",
             total - SEARCH_CAP
         ));
     }
@@ -1276,8 +1293,14 @@ pub async fn item_view(app: &AppState, args: &Value) -> Result<Out, Fail> {
         .await
         .map_err(|e| format!("The image could not be read: {}", e.detail))?;
     use base64::Engine;
+    // The description first, for a model that cannot see the picture after it.
+    let described = b
+        .description_of(i)
+        .and_then(crate::vision::block)
+        .map(|d| format!("\n\n{d}"))
+        .unwrap_or_default();
     let mut out = Out::text(format!(
-        "{} \"{}\", {w} pixels wide{}.",
+        "{} \"{}\", {w} pixels wide{}.{described}",
         i.short_ref(),
         b.title_of(i),
         if crop.is_some() {

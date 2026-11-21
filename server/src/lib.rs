@@ -22,6 +22,7 @@ pub mod oidc;
 pub mod realtime;
 pub mod sharing;
 pub mod telemetry;
+pub mod vision;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -67,6 +68,8 @@ pub struct Config {
     /// OAuth clients may not identify by a Client ID Metadata Document: for a
     /// server that cannot reach the internet to fetch one. They register.
     pub client_documents_disabled: bool,
+    /// The vision model from VISARIUM_VISION_*; when set, the app cannot change it.
+    pub vision: Option<vision::Setting>,
 }
 
 pub struct App {
@@ -80,6 +83,8 @@ pub struct App {
     /// OAuth sign-ins waiting for consent, and codes waiting to be redeemed.
     pub oauth: oauth::Pending,
     pub oauth_registrations: oauth::Registrations,
+    /// The vision model in force, and the describer's wake-up signal.
+    pub vision: vision::Vision,
     pub rooms: realtime::Rooms,
     /// Writes per agent per minute (ADR-0031).
     pub agent_writes: agent::Limiter,
@@ -197,6 +202,7 @@ pub async fn open(config: Config) -> anyhow_lite::Result<AppState> {
         device_codes: Default::default(),
         oauth: Default::default(),
         oauth_registrations: Default::default(),
+        vision: Default::default(),
         rooms: Default::default(),
         agent_writes: Default::default(),
         image_permits: tokio::sync::Semaphore::new(cpus.clamp(1, 4)),
@@ -204,6 +210,8 @@ pub async fn open(config: Config) -> anyhow_lite::Result<AppState> {
         local_user,
         allow_private_imports: Default::default(),
     });
+    vision::load(&app).await?;
+    vision::spawn(Arc::downgrade(&app));
     // An agent stays on a board's participant list while it keeps calling;
     // this drops the ones that went quiet. Weak, so it ends with the app.
     let weak = Arc::downgrade(&app);
@@ -230,6 +238,7 @@ pub fn router(state: AppState) -> Router {
         .merge(oidc::identity_routes())
         .merge(invitations::admin_routes())
         .merge(instance::routes())
+        .merge(vision::routes())
         .merge(sharing::member_routes())
         .merge(device::member_routes())
         .merge(agent::member_routes())

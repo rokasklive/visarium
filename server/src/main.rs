@@ -13,6 +13,8 @@
 //!   VISARIUM_OAUTH_CLIENT_DOCUMENTS on               off: MCP apps register instead of
 //!                                                    being fetched (no outbound internet)
 //!   VISARIUM_OIDC_{ID}_*       (none)                a sign-in provider; see below
+//!   VISARIUM_VISION_BASE_URL   (none)                with _MODEL (and _API_KEY, _PROMPT):
+//!                                                    the vision model that describes images
 //!   VISARIUM_LOG_LEVEL         info                  error, warn, info, debug, trace
 //!   VISARIUM_LOG_FORMAT        text                  json: one JSON object per line
 //!
@@ -65,6 +67,7 @@ async fn main() -> visarium::anyhow_lite::Result<()> {
         password_disabled: !flag("VISARIUM_AUTH_PASSWORD", "on"),
         sharing_disabled: !flag("VISARIUM_SHARING", "on"),
         client_documents_disabled: !flag("VISARIUM_OAUTH_CLIENT_DOCUMENTS", "on"),
+        vision: visarium::vision::from_env(std::env::vars()),
         public_url: std::env::var("VISARIUM_PUBLIC_URL")
             .ok()
             .map(|u| u.trim().trim_end_matches('/').to_string())

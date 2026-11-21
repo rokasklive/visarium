@@ -533,6 +533,9 @@ async fn a_signed_in_client_is_an_agent_until_revoked() {
     let refresh = t["refresh_token"].as_str().unwrap().to_string();
 
     // It works on /mcp, with the grant chosen at consent, and nowhere else.
+    // A first use in the very millisecond the connection was made reads as
+    // never used ("last used" is last_seen_at != created_at), so wait one.
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     let listed = app.mcp(&access).await;
     assert_eq!(listed.status, StatusCode::OK);
     assert!(

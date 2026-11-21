@@ -523,8 +523,8 @@ async fn mcp(
         caller.agent = name;
     }
     let result = match method {
-        "initialize" => initialize(&params),
-        "server/discover" => discover(),
+        "initialize" => initialize(&app, &params),
+        "server/discover" => discover(&app),
         "ping" => json!({}),
         "tools/list" => {
             // Not cached for long: the grant can change between calls.
@@ -578,7 +578,7 @@ fn server_info() -> Value {
 }
 
 /// The pre-2026 handshake, for clients that still send `initialize`.
-fn initialize(params: &Value) -> Value {
+fn initialize(app: &AppState, params: &Value) -> Value {
     let asked = params
         .get("protocolVersion")
         .and_then(Value::as_str)
@@ -592,7 +592,7 @@ fn initialize(params: &Value) -> Value {
         "protocolVersion": version,
         "capabilities": capabilities(),
         "serverInfo": server_info(),
-        "instructions": INSTRUCTIONS,
+        "instructions": instructions(app),
     })
 }
 
@@ -601,11 +601,11 @@ fn initialize(params: &Value) -> Value {
 /// anything mid-call, so every required field matters: `supportedVersions`,
 /// `ttlMs`, `cacheScope`, and (added for every result) `resultType`. The
 /// server's name goes in `_meta`, not at the top level.
-fn discover() -> Value {
+fn discover(app: &AppState) -> Value {
     json!({
         "supportedVersions": [PROTOCOL],
         "capabilities": capabilities(),
-        "instructions": INSTRUCTIONS,
+        "instructions": instructions(app),
         "ttlMs": LIST_TTL_MS,
         "cacheScope": "public",
         "_meta": { "io.modelcontextprotocol/serverInfo": server_info() },
@@ -747,6 +747,14 @@ Board management (board_create, board_rename, board_duplicate, board_delete) app
 
 The visarium://guide resource has an example call for every tool.";
 
+/// The instructions, with a line about image descriptions while they are on.
+fn instructions(app: &AppState) -> String {
+    format!(
+        "{INSTRUCTIONS}{}",
+        crate::vision::instructions_line(app).unwrap_or_default()
+    )
+}
+
 fn tools(manage_boards: bool) -> Value {
     let board = json!({ "type": "string", "description": "The board's exact name, or its id." });
     let r = |d: &str| json!({ "type": "string", "description": d });
@@ -831,19 +839,19 @@ fn tools(manage_boards: bool) -> Value {
           "description": "A board as a table of contents in Markdown: frames and groups as sections, one line per item (ref, kind, title, size, links in and out), checklist progress, broken links, the revision and the last change. No source; read items with item_read. Pass focus: \"g3\" to list one frame in full when the overview says it was cut short.",
           "inputSchema": { "type": "object", "properties": { "board": board, "focus": r("Optional: a group ref to list in full.") }, "required": ["board"] }, "annotations": read_only },
         { "name": "item_read", "title": "Read one item",
-          "description": "One item in full: a note's or diagram's numbered source (100 lines at a time; pass offset for more), a diagram's elements, edges and the links on each element, a checklist's tasks with their state and who changed them, and the item's revision (pass it to item_edit as base_rev).",
+          "description": "One item in full: a note's or diagram's numbered source (100 lines at a time; pass offset for more), a diagram's elements, edges and the links on each element, a checklist's tasks with their state and who changed them, an image's text description and visible text when the server has a vision model, and the item's revision (pass it to item_edit as base_rev).",
           "inputSchema": { "type": "object", "properties": { "board": board, "ref": r("e.g. d2, n4, c1."), "offset": { "type": "integer", "description": "First line to show, 0-based." } }, "required": ["board", "ref"] }, "annotations": read_only },
         { "name": "trace", "title": "Follow an item or element",
           "description": "Everything around one thing. For a diagram element (d1#OpQueue): its edges in the diagram, what links to it, and name matches elsewhere (the same name in another diagram, a note or a task — matches, not links). For an item: every link in and out, with the item at the other end.",
           "inputSchema": { "type": "object", "properties": { "board": board, "ref": r("An item ref (c1) or element ref (d1#OpQueue).") }, "required": ["board", "ref"] }, "annotations": read_only },
         { "name": "search", "title": "Search text",
           "description": "Finds words in notes, diagram sources (so element names), checklist titles and task texts, across every board or one. Returns refs with a snippet. Plain words, all of which must match.",
-          "inputSchema": { "type": "object", "properties": { "query": r("Words to find, e.g. \"IndexedDB schema\"."), "board": r("Optional: one board."), "kind": { "type": "string", "enum": ["note", "diagram", "checklist"] } }, "required": ["query"] }, "annotations": read_only },
+          "inputSchema": { "type": "object", "properties": { "query": r("Words to find, e.g. \"IndexedDB schema\"."), "board": r("Optional: one board."), "kind": { "type": "string", "enum": ["note", "diagram", "checklist", "image"] } }, "required": ["query"] }, "annotations": read_only },
         { "name": "changes", "title": "What changed since a revision",
           "description": "What happened on a board after since_rev, oldest first, as short sentences naming who did what to which ref. Use it to catch up instead of re-reading the board.",
           "inputSchema": { "type": "object", "properties": { "board": board, "since_rev": { "type": "integer", "description": "The revision you last saw (board_read shows it)." } }, "required": ["board", "since_rev"] }, "annotations": read_only },
         { "name": "item_view", "title": "Look at an image",
-          "description": "An image item's pixels, as the board shows it (cropped if cropped), at about the width you ask for. Only images: read everything else with item_read.",
+          "description": "An image item's pixels, as the board shows it (cropped if cropped), at about the width you ask for, after its text description when the server has one. Only images: read everything else with item_read.",
           "inputSchema": { "type": "object", "properties": { "board": board, "ref": r("An image ref, e.g. i1."), "width": { "type": "integer", "description": "Pixels wide, default 1024." } }, "required": ["board", "ref"] }, "annotations": read_only },
         { "name": "item_create", "title": "Add a note, diagram, checklist or image",
           "description": "Adds an item, placed by the server next to (near, below, right_of) or inside (in) something you name, optionally with a link from it, all in one step. Example: a note that explains a node — kind \"note\", source \"…\", near \"d1\", link { type \"describes\", to \"d1#OpQueue\" }. Returns the new ref.",
@@ -922,6 +930,7 @@ fn guide() -> String {
 - trace {{ \"board\": \"Offline sync\", \"ref\": \"d1#OpQueue\" }}\n\
 - search {{ \"query\": \"IndexedDB\" }}\n\
 - changes {{ \"board\": \"Offline sync\", \"since_rev\": 412 }}\n\
+- item_read {{ \"board\": \"Offline sync\", \"ref\": \"i1\" }} (an image: its description and visible text, when the server has a vision model)\n\
 - item_view {{ \"board\": \"Offline sync\", \"ref\": \"i1\", \"width\": 1024 }}\n\
 - item_create {{ \"board\": \"Offline sync\", \"kind\": \"note\", \"source\": \"OpQueue drains on reconnect.\", \"near\": \"d1\", \"link\": {{ \"type\": \"describes\", \"to\": \"d1#OpQueue\" }}, \"request_id\": \"note-opqueue-1\" }}\n\
 - item_create {{ \"board\": \"Offline sync\", \"kind\": \"image\", \"url\": \"https://example.com/light.jpg\", \"near\": \"n2\", \"link\": {{ \"type\": \"comments\", \"to\": \"n2\" }} }}\n\

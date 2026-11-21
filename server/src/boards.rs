@@ -1242,14 +1242,39 @@ async fn take_ref(tx: &mut Transaction<'_, Sqlite>, board: &str, letter: &str) -
 }
 
 /// What search finds an item by: a note's or diagram's source, a checklist's
-/// title and task texts. Images have no text. Same expression as migration 0005.
+/// title and task texts, an image's description and visible text (once it has
+/// one). Migration 0005 wrote the same, before images had text.
 const ITEM_TEXT_SQL: &str = "INSERT INTO item_text (text, canvas_id, item_id)
      SELECT CASE kind
               WHEN 'checklist' THEN coalesce(json_extract(body, '$.title'), '') || char(10) ||
                    coalesce((SELECT group_concat(json_extract(value, '$.text'), char(10)) FROM json_each(body, '$.tasks')), '')
+              WHEN 'image' THEN (SELECT coalesce(d.caption, '') || char(10) || coalesce(d.description, '') || char(10) || coalesce(d.visible_text, '')
+                                   FROM image_description d WHERE d.asset_id = canvas_item.asset_id)
               ELSE body
             END, canvas_id, id
-       FROM canvas_item WHERE id = ? AND kind <> 'image'";
+       FROM canvas_item WHERE id = ?
+        AND (kind <> 'image' OR EXISTS (SELECT 1 FROM image_description d WHERE d.asset_id = canvas_item.asset_id AND d.caption IS NOT NULL))";
+
+/// Re-indexes every item showing an asset, once its description changed.
+pub async fn reindex_asset(db: &sqlx::SqlitePool, asset: &str) -> sqlx::Result<()> {
+    let mut tx = db.begin().await?;
+    let items: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM canvas_item WHERE asset_id = ? AND kind = 'image'")
+            .bind(asset)
+            .fetch_all(&mut *tx)
+            .await?;
+    for item in &items {
+        sqlx::query("DELETE FROM item_text WHERE item_id = ?")
+            .bind(item)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(ITEM_TEXT_SQL)
+            .bind(item)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await
+}
 
 async fn reindex(tx: &mut Transaction<'_, Sqlite>, item: &str) -> ApiResult<()> {
     sqlx::query("DELETE FROM item_text WHERE item_id = ?")

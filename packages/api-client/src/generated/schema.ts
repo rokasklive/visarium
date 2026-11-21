@@ -1892,6 +1892,35 @@ export interface OAuthRequest {
     clientHost?: string | null;
 }
 
+/** The instance's vision model (image-descriptions). Never carries the API key. */
+export interface VisionSetting {
+    configured: boolean;
+    baseUrl?: string | null;
+    model?: string | null;
+    /** Empty: the default prompt. */
+    prompt: string;
+    enabled: boolean;
+    hasKey: boolean;
+    /** Set by VISARIUM_VISION_*: read-only here. */
+    fromEnv: boolean;
+    defaultPrompt: string;
+    /** Images waiting to be described with the current setting. */
+    waiting: number;
+    described: number;
+    /** Given up on after repeated failures, until the setting changes. */
+    failed: number;
+    lastError?: { message: string; at: string } | null;
+}
+
+/** A vision model setup to save or test. An empty apiKey keeps the stored one. */
+export interface VisionSettingInput {
+    baseUrl: string;
+    model: string;
+    apiKey?: string;
+    prompt?: string;
+    enabled?: boolean;
+}
+
 /** The desktop's single-user grant for tokenless local agents. */
 export interface AgentSettings {
     localAgentsManageBoards: boolean;
@@ -2112,6 +2141,27 @@ export interface paths {
             NoParams,
             Body<{ request: string; approve: boolean; manageBoards?: boolean }>,
             { 200: Json<{ redirect: string }> }
+        >;
+    };
+    "/api/instance/vision": {
+        parameters: NoParams;
+        /** Admins only. The setting without its key, and how far describing has got */
+        get: Read<NoParams, { 200: Json<VisionSetting> }>;
+        /** 409 when set by the environment */
+        put: Op<NoParams, Body<VisionSettingInput>, { 200: Json<VisionSetting> }>;
+    };
+    "/api/instance/vision/test": {
+        parameters: NoParams;
+        /** Describes a sample image with these (unsaved) values */
+        post: Op<
+            NoParams,
+            Body<VisionSettingInput>,
+            {
+                200: Json<
+                    | { ok: true; caption: string; description: string; visibleText: string }
+                    | { ok: false; error: string }
+                >;
+            }
         >;
     };
     "/api/accounts/{id}/role": {
