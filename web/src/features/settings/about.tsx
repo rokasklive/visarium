@@ -7,6 +7,10 @@ import changelog from '../../../../CHANGELOG.md?raw';
 
 declare const __VISARIUM_BUILD__: string;
 
+/** Where this program's source is offered. A fork that changes it must change this too. */
+const SOURCE = 'https://github.com/rokasklive/visarium';
+const link = 'underline underline-offset-2 hover:text-ink';
+
 type UpdateView =
   | { type: 'checking' | 'installing' }
   | { type: 'available'; version: string; canInstall: boolean }
@@ -98,6 +102,23 @@ export function About({
         </dd>
         <dt className="text-ink-dim">Build</dt>
         <dd>{__VISARIUM_BUILD__}</dd>
+        {/* The AGPL's "Appropriate Legal Notices" (§5d) and source offer (§13).
+            New windows: the desktop app hands them to the system browser. */}
+        <dt className="text-ink-dim">Licence</dt>
+        <dd>
+          © 2026 Rokas Kučinskas. Free software under the{' '}
+          <a className={link} href="/licenses.txt" target="_blank" rel="noreferrer">
+            GNU AGPL v3.0
+          </a>
+          , with no warranty.{' '}
+          <a className={link} href={SOURCE} target="_blank" rel="noreferrer">
+            Source code
+          </a>
+          {' · '}
+          <a className={link} href="/licenses.txt" target="_blank" rel="noreferrer">
+            Third-party licences
+          </a>
+        </dd>
       </dl>
       <div className="mt-2 text-ink-dim" role="status" aria-live="polite">
         {update?.type === 'checking' ? 'Checking for updates…' : null}

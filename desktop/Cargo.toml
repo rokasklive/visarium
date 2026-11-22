@@ -3,6 +3,7 @@ name = "visarium-desktop"
 version = "0.1.0"
 edition = "2024"
 publish = false
+license = "AGPL-3.0-only"
 
 [features]
 alpha-updater = ["dep:flate2", "dep:libc", "dep:tar", "dep:tempfile", "dep:tauri-plugin-updater"]

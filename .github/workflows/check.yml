@@ -47,6 +47,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: pnpm check
       - run: pnpm typecheck
+      - run: node web/scripts/licenses.mjs --check
       - run: cargo test --workspace --locked
       - run: pnpm test
       - run: pnpm --filter @visarium/web build

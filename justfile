@@ -41,6 +41,10 @@ backend:
 frontend:
     pnpm --filter @visarium/web dev --port {{web_port}} --strictPort
 
+# Regenerate web/public/licenses.txt after changing dependencies
+licenses:
+    node web/scripts/licenses.mjs
+
 # The desktop app
 desktop:
     pnpm desktop
@@ -56,6 +60,7 @@ check:
     pnpm check
     pnpm typecheck
     cargo deny check
+    node web/scripts/licenses.mjs --check
     just test
 
 # Rust and TypeScript tests, and proof the production bundle has no dev tools

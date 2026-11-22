@@ -21,4 +21,10 @@ Self-hosted: `docker compose up -d` (settings in `.env.example`).
 
 ## Licence
 
-Not yet chosen.
+Copyright © 2026 Rokas Kučinskas.
+
+Visarium is free software under the [GNU Affero General Public License v3.0 only](LICENSE)
+(`AGPL-3.0-only`). If you run a modified version as a network service, you must offer its
+source to the people who use it.
+
+Contributions are accepted under the same licence.
