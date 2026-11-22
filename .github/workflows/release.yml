@@ -1,0 +1,448 @@
+# Releasing:
+#
+#   just version 0.1.0                 # then a "## 0.1.0" section in CHANGELOG.md; commit, push
+#   gh release create v0.1.0 --target master --title "Visarium 0.1.0 Shirakawa" --notes-file <notes.md>
+#
+# The release notes are yours, kept as written. The app's own notes (the
+# updater's and Settings → About) come from the CHANGELOG.md section.
+#
+# Publishing the release starts this. It turns the release back into a draft at
+# once, builds and checks everything, attaches the installers, the updater feed
+# (latest.json) and checksums, pushes the multi-arch image to GHCR, and only
+# then publishes the release again. If anything fails, the release stays a
+# draft and the image is not pushed: fix it, then delete the draft and its tag
+# and run `gh release create` again.
+#
+# Rehearsal: run this workflow by hand (Actions → Release → Run workflow). It
+# does all of the above for the version in desktop/tauri.conf.json, signed and
+# notarized, but publishes nothing: the result is in the run's artifacts.
+
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      notarized_alpha:
+        description: Instead, build the isolated notarized macOS alpha pair for testing in-app updates
+        type: boolean
+        default: false
+      feed_ca:
+        description: For the alpha pair, base64 PEM of the public loopback feed CA (not its private key)
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  PUBLISH: ${{ github.event_name == 'release' }}
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  verify:
+    if: ${{ !inputs.notarized_alpha }}
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - name: Take the release back to a draft until its assets are attached
+        if: env.PUBLISH == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=true
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - id: version
+        name: Check the tag, the versions, the changelog and the updater key agree
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version=$(jq -er .version desktop/tauri.conf.json)
+          tag=${TAG:-v$version}
+          fail() { echo "::error::$1"; exit 1; }
+          [[ "$tag" == "v$version" ]] || fail "Tag $tag, but desktop/tauri.conf.json is $version (just version ${tag#v})"
+          for crate in server/Cargo.toml desktop/Cargo.toml; do
+            grep -qx "version = \"$version\"" "$crate" || fail "$crate is not version $version (just version $version)"
+          done
+          awk -v v="$version" '/^## / {p = ($2 == v); next} p' CHANGELOG.md | grep -q '^- ' \
+            || fail "CHANGELOG.md has no \"## $version\" section with entries"
+          jq -er '.plugins.updater.pubkey | select(length > 0)' desktop/tauri.conf.json >/dev/null \
+            || fail "desktop/tauri.conf.json has no updater public key"
+          {
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "prerelease=$([[ "$version" == *-* ]] && echo true || echo false)"
+          } >> "$GITHUB_OUTPUT"
+
+  check:
+    needs: verify
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/check.yml
+
+  desktop:
+    needs: verify
+    name: Desktop ${{ matrix.updater }}
+    runs-on: ${{ matrix.runner }}
+    # The signing secrets live in this environment, not in the repository.
+    environment: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            updater: darwin-aarch64
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            updater: darwin-x86_64
+          - runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            updater: windows-x86_64
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            updater: linux-x86_64
+    env:
+      TARGET: ${{ matrix.target }}
+      UPDATER: ${{ matrix.updater }}
+      VERSION: ${{ needs.verify.outputs.version }}
+      # Updater archives are made for releases only, so local builds need no key.
+      UPDATER_CONFIG: '{"bundle":{"createUpdaterArtifacts":true}}'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26"
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            libxdo-dev libssl-dev librsvg2-dev libdbus-1-dev patchelf xdg-utils
+
+      # No build cache: a release is built from nothing.
+      - name: Install build tools and dependencies
+        run: |
+          rustup toolchain install
+          rustup target add "$TARGET"
+          pnpm install --frozen-lockfile
+
+      - name: Build before loading any signing credentials
+        env:
+          AWS_LC_SYS_PREBUILT_NASM: "1"
+        run: pnpm run desktop:build --ci --target "$TARGET" --no-bundle -- --locked
+
+      - name: Bundle and sign
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ runner.os == 'macOS' && secrets.APPLE_CERTIFICATE || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ runner.os == 'macOS' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+          APPLE_ID: ${{ runner.os == 'macOS' && secrets.APPLE_ID || '' }}
+          APPLE_PASSWORD: ${{ runner.os == 'macOS' && secrets.APPLE_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ runner.os == 'macOS' && secrets.APPLE_TEAM_ID || '' }}
+        run: |
+          : "${TAURI_SIGNING_PRIVATE_KEY:?Set the TAURI_SIGNING_PRIVATE_KEY secret}"
+          : "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:?Set the TAURI_SIGNING_PRIVATE_KEY_PASSWORD secret}"
+          case "$RUNNER_OS" in
+            macOS)
+              : "${APPLE_CERTIFICATE:?Set the APPLE_CERTIFICATE secret}"
+              : "${APPLE_CERTIFICATE_PASSWORD:?Set the APPLE_CERTIFICATE_PASSWORD secret}"
+              : "${APPLE_ID:?Set the APPLE_ID secret}"
+              : "${APPLE_PASSWORD:?Set the APPLE_PASSWORD secret to an app-specific password}"
+              : "${APPLE_TEAM_ID:?Set the APPLE_TEAM_ID secret}"
+              bundles=app,dmg ;;
+            # ponytail: unsigned until Windows code signing is set up; SmartScreen warns.
+            Windows) bundles=nsis ;;
+            Linux) bundles=deb,appimage ;;
+          esac
+          pnpm exec tauri bundle --ci --target "$TARGET" --config "$UPDATER_CONFIG" --bundles "$bundles"
+
+      - name: Verify macOS signing and notarization
+        if: runner.os == 'macOS'
+        run: |
+          bundle="target/$TARGET/release/bundle"
+          app="$bundle/macos/Visarium.app"
+          hdiutil verify "$bundle"/dmg/*.dmg
+          codesign --verify --deep --strict "$app"
+          codesign --display --verbose=4 "$app" 2>&1 | grep '^Authority=Developer ID Application:'
+          xcrun stapler validate "$app"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$VERSION"
+
+      - name: Collect the installers and the updater bundle
+        run: |
+          bundle="target/$TARGET/release/bundle"
+          mkdir dist
+          shopt -s failglob
+          case "$RUNNER_OS" in
+            macOS)
+              cp "$bundle"/dmg/*.dmg dist/
+              arch=${TARGET%%-*}
+              update="Visarium_${VERSION}_${arch/x86_64/x64}.app.tar.gz"
+              cp "$bundle/macos/Visarium.app.tar.gz" "dist/$update"
+              cp "$bundle/macos/Visarium.app.tar.gz.sig" "dist/$update.sig" ;;
+            Windows)
+              cp "$bundle"/nsis/*-setup.exe "$bundle"/nsis/*-setup.exe.sig dist/
+              update=$(basename "$bundle"/nsis/*-setup.exe) ;;
+            Linux)
+              dpkg-deb --info "$bundle"/deb/*.deb
+              cp "$bundle"/deb/*.deb "$bundle"/appimage/*.AppImage "$bundle"/appimage/*.AppImage.sig dist/
+              update=$(basename "$bundle"/appimage/*.AppImage) ;;
+          esac
+          # Which file this platform's updater downloads; the publish job builds latest.json from these.
+          echo "$update" > "dist/updater-$UPDATER"
+          ls -l dist
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-${{ matrix.updater }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  image:
+    needs: verify
+    name: Image ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-22.04
+          # The Mac mini: a self-hosted runner labelled visarium-arm64, with Docker running.
+          - arch: arm64
+            runner: [self-hosted, visarium-arm64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: infra/docker/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          tags: visarium:release
+          cache-from: type=gha,scope=image-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=image-${{ matrix.arch }}
+
+      - run: infra/docker/smoke.sh visarium:release
+
+      - if: env.PUBLISH == 'true'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Pushed by digest only: no tag points at it until every platform is in.
+      - id: push
+        if: env.PUBLISH == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: infra/docker/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=image-${{ matrix.arch }}
+
+      - if: env.PUBLISH == 'true'
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: mkdir -p digests && touch "digests/${DIGEST#sha256:}"
+      - if: env.PUBLISH == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: digest-${{ matrix.arch }}
+          path: digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: [verify, check, desktop, image]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+      TAG: ${{ needs.verify.outputs.tag }}
+      PRERELEASE: ${{ needs.verify.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: desktop-*
+          path: dist
+          merge-multiple: true
+
+      - name: Verify every updater signature against the key the app ships with
+        run: |
+          sudo apt-get update && sudo apt-get install -y minisign
+          jq -er .plugins.updater.pubkey desktop/tauri.conf.json | base64 --decode > "$RUNNER_TEMP/updater.pub"
+          for marker in dist/updater-*; do
+            file="dist/$(cat "$marker")"
+            base64 --decode "$file.sig" > "$RUNNER_TEMP/update.minisig"
+            minisign -Vm "$file" -p "$RUNNER_TEMP/updater.pub" -x "$RUNNER_TEMP/update.minisig"
+          done
+
+      - name: Write latest.json and checksums
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          notes=$(awk -v v="$VERSION" '/^## / {p = ($2 == v); next} p' CHANGELOG.md)
+          platforms='{}'
+          for marker in dist/updater-*; do
+            file=$(cat "$marker")
+            platforms=$(jq --arg key "${marker#dist/updater-}" \
+              --arg url "https://github.com/$REPO/releases/download/$TAG/$file" \
+              --rawfile signature "dist/$file.sig" \
+              '. + {($key): {url: $url, signature: ($signature | rtrimstr("\n"))}}' <<< "$platforms")
+            rm "$marker"
+          done
+          jq -n --arg version "$VERSION" --arg notes "$notes" --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --argjson platforms "$platforms" \
+            '{version: $version, notes: $notes, pub_date: $date, platforms: $platforms}' > dist/latest.json
+          jq -e '.platforms | length == 4' dist/latest.json
+          (cd dist && sha256sum -- * > SHA256SUMS)
+          cat dist/latest.json
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: env.PUBLISH != 'true'
+        with:
+          name: release-rehearsal
+          path: dist/
+          retention-days: 7
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: env.PUBLISH == 'true'
+        with:
+          pattern: digest-*
+          path: digests
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        if: env.PUBLISH == 'true'
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        if: env.PUBLISH == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        if: env.PUBLISH == 'true'
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}},value=${{ env.TAG }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.TAG }},enable=${{ env.PRERELEASE == 'false' }}
+            type=raw,value=latest,enable=${{ env.PRERELEASE == 'false' }}
+
+      - id: manifest
+        name: Tag the multi-arch image
+        if: env.PUBLISH == 'true'
+        run: |
+          tags=$(jq -r '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          # shellcheck disable=SC2046,SC2086
+          docker buildx imagetools create $tags \
+            --annotation "index:org.opencontainers.image.description=An AI-first infinite canvas where you and your agents build common ground" \
+            --annotation "index:org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --annotation "index:org.opencontainers.image.licenses=AGPL-3.0-only" \
+            --annotation "index:org.opencontainers.image.version=$VERSION" \
+            $(printf "$IMAGE@sha256:%s " $(ls digests))
+          docker buildx imagetools inspect "$IMAGE:$VERSION"
+          echo "digest=$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{json .Manifest}}' | jq -r .digest)" >> "$GITHUB_OUTPUT"
+
+      # Attestations need a public repository (or GitHub Enterprise).
+      - if: env.PUBLISH == 'true' && !github.event.repository.private
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.manifest.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attach the assets and publish the release
+        if: env.PUBLISH == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          latest=$([[ "$PRERELEASE" == true ]] && echo --latest=false || echo --latest)
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false "$latest"
+
+  # Two notarized versions with their own identity and a loopback feed, to try
+  # the in-app update against a real Developer ID build before releasing.
+  notarized-alpha:
+    if: inputs.notarized_alpha
+    name: Notarized macOS alpha pair (Apple Silicon)
+    runs-on: macos-15
+    environment: release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26"
+      - name: Install build tools and dependencies
+        run: |
+          rustup toolchain install
+          rustup target add aarch64-apple-darwin
+          pnpm install --frozen-lockfile
+      - name: Build and verify both notarized alpha versions
+        env:
+          VISARIUM_ALPHA_FEED_CA: ${{ inputs.feed_ca }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: node desktop/scripts/alpha-update.mjs build-notarized "$RUNNER_TEMP/visarium-alpha"
+      - name: Upload private alpha pair
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: visarium-notarized-alpha-arm64
+          path: |
+            ${{ runner.temp }}/visarium-alpha/baseline.zip
+            ${{ runner.temp }}/visarium-alpha/feed/latest.json
+            ${{ runner.temp }}/visarium-alpha/feed/Visarium-Alpha.app.tar.gz
+          if-no-files-found: error
+          retention-days: 3

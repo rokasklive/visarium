@@ -1,1 +1,11 @@
+# The build context: only what infra/docker/Dockerfile COPYs needs to be here.
 **/node_modules
+target
+data
+.git
+.env*
+web/dist
+web/test-results
+web/bench-results
+docs
+openspec

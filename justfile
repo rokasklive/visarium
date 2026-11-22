@@ -70,6 +70,12 @@ test:
     pnpm --filter @visarium/web build
     pnpm --filter @visarium/web check:bundle
 
+# Set the release version everywhere it lives; then add its "## X.Y.Z" CHANGELOG section
+version v:
+    perl -0pi -e 's/^version = "[^"]*"/version = "{{v}}"/m' server/Cargo.toml desktop/Cargo.toml
+    perl -0pi -e 's/"version": "[^"]*"/"version": "{{v}}"/' desktop/tauri.conf.json
+    cargo update -q -w
+
 # The production image, but with the inspector: for a dev environment
 dev-image:
     WEB_BUILD=dev docker compose build

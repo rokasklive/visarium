@@ -1,9 +1,11 @@
-//! Only the local Settings page can use this rehearsal feed. Checks and
-//! installation stay inside the app, with no privileged installer fallback.
+//! In-app updates from Settings → About, on every platform.
+//!
+//! Release builds check the GitHub release feed (`plugins.updater` in
+//! tauri.conf.json); the `alpha-updater` feature points the same flow at the
+//! loopback rehearsal feed and trusts only its pinned CA. Installing is only
+//! offered before the library has been opened this launch, so no edit or
+//! upload is in flight when the app is replaced.
 
-use std::ffi::CString;
-use std::os::unix::ffi::OsStrExt;
-use std::path::Path;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -52,25 +54,31 @@ fn is_home_url(url: &Url) -> bool {
 async fn offered_update(
     app: &AppHandle,
 ) -> Result<Option<Update>, Box<dyn std::error::Error + Send + Sync>> {
-    let ca = std::fs::read(app.path().resource_dir()?.join("alpha-feed.pem"))?;
-    let certificate = reqwest::Certificate::from_pem(&ca)?;
-    let updater = app
-        .updater_builder()
-        .configure_client(move |client| {
+    let builder = app.updater_builder().timeout(Duration::from_secs(30));
+    #[cfg(feature = "alpha-updater")]
+    let builder = {
+        let ca = std::fs::read(app.path().resource_dir()?.join("alpha-feed.pem"))?;
+        let certificate = reqwest::Certificate::from_pem(&ca)?;
+        builder.configure_client(move |client| {
             client
                 .tls_certs_only([certificate.clone()])
                 .no_proxy()
                 .redirect(reqwest::redirect::Policy::none())
         })
-        .timeout(Duration::from_secs(30))
-        .build()?;
-    Ok(updater.check().await?)
+    };
+    Ok(builder.build()?.check().await?)
 }
 
 pub async fn check(app: &AppHandle) -> Result<serde_json::Value, String> {
     match offered_update(app).await {
         Ok(Some(update)) => {
             tracing::info!(version = %update.version, "update available");
+            if !can_replace_itself() {
+                return Err(format!(
+                    "Visarium {} is available. Install the new package from the releases page.",
+                    update.version
+                ));
+            }
             let can_install = !app
                 .state::<Mutex<UpdateState>>()
                 .lock()
@@ -86,10 +94,7 @@ pub async fn check(app: &AppHandle) -> Result<serde_json::Value, String> {
         }
         Err(e) => {
             tracing::warn!(error = %e, "update check failed");
-            Err(
-                "Could not check for updates. Check that the alpha feed is running and try again."
-                    .into(),
-            )
+            Err(CHECK_FAILED.into())
         }
     }
 }
@@ -104,7 +109,7 @@ pub async fn install(window: &WebviewWindow, version: &str) -> Result<(), String
         .await
         .map_err(|e| {
             tracing::warn!(error = %e, "update recheck failed");
-            "Could not reach the alpha feed. Check for updates again."
+            "Could not reach the update feed. Check for updates again."
         })?
         .filter(|update| update.version == version)
         .ok_or("The offered version changed. Check for updates again.")?;
@@ -126,7 +131,14 @@ pub async fn install(window: &WebviewWindow, version: &str) -> Result<(), String
         }
         state.installing = true;
     }
+    #[cfg(target_os = "macos")]
     let result = tauri::async_runtime::spawn_blocking(move || swap_verified_app(&bytes)).await;
+    // Windows runs the NSIS installer, which closes the app; Linux replaces the AppImage.
+    #[cfg(not(target_os = "macos"))]
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        update.install(&bytes).map_err(std::io::Error::other)
+    })
+    .await;
     let failure = match result {
         Ok(Ok(())) => None,
         Ok(Err(e)) => Some(e.to_string()),
@@ -135,17 +147,36 @@ pub async fn install(window: &WebviewWindow, version: &str) -> Result<(), String
     if let Some(error) = failure {
         state.lock().unwrap().installing = false;
         tracing::error!(error, version, "update install failed");
-        return Err("Could not replace Visarium. The app must be in a writable location on a volume that supports atomic replacement.".into());
+        return Err(INSTALL_FAILED.into());
     }
     tracing::info!(version, "update installed; restarting");
     app.request_restart();
     Ok(())
 }
 
+#[cfg(feature = "alpha-updater")]
+const CHECK_FAILED: &str =
+    "Could not check for updates. Check that the alpha feed is running and try again.";
+#[cfg(not(feature = "alpha-updater"))]
+const CHECK_FAILED: &str = "Could not check for updates. Check your connection and try again.";
+
+#[cfg(target_os = "macos")]
+const INSTALL_FAILED: &str = "Could not replace Visarium. The app must be in a writable location on a volume that supports atomic replacement.";
+#[cfg(not(target_os = "macos"))]
+const INSTALL_FAILED: &str =
+    "Could not install the update. Download it from the releases page instead.";
+
+/// The updater replaces a macOS bundle, a Windows install or an AppImage, but
+/// not a .deb: a package manager owns that file.
+fn can_replace_itself() -> bool {
+    cfg!(not(target_os = "linux")) || std::env::var_os("APPIMAGE").is_some()
+}
+
 fn reopen_message() -> String {
     "Finish saving your work, reopen Visarium, and choose Settings from the startup screen.".into()
 }
 
+#[cfg(target_os = "macos")]
 fn swap_verified_app(bytes: &[u8]) -> std::io::Result<()> {
     let executable = std::env::current_exe()?;
     let app = executable
@@ -167,7 +198,10 @@ fn swap_verified_app(bytes: &[u8]) -> std::io::Result<()> {
     swap_paths(&replacement, app)
 }
 
-fn swap_paths(replacement: &Path, current: &Path) -> std::io::Result<()> {
+#[cfg(target_os = "macos")]
+fn swap_paths(replacement: &std::path::Path, current: &std::path::Path) -> std::io::Result<()> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
     let replacement = CString::new(replacement.as_os_str().as_bytes())?;
     let current = CString::new(current.as_os_str().as_bytes())?;
     // Both complete bundles are on the same volume. If the swap fails, the
@@ -192,6 +226,7 @@ fn swap_paths(replacement: &Path, current: &Path) -> std::io::Result<()> {
 mod tests {
     use super::*;
 
+    #[cfg(not(windows))]
     #[test]
     fn recognizes_only_the_bundled_startup_page() {
         for home in ["tauri://localhost", "tauri://localhost/"] {
@@ -202,6 +237,7 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn swaps_bundles_without_leaving_the_install_path_empty() {
         let dir = tempfile::tempdir().unwrap();

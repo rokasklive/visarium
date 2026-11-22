@@ -44,8 +44,7 @@ pub fn setup(app: &mut tauri::App) -> tauri::Result<()> {
         started: Instant::now(),
     });
     app.manage(ClientErrors::default());
-    #[cfg(all(target_os = "macos", feature = "alpha-updater"))]
-    crate::alpha_update::setup(app)?;
+    crate::update::setup(app)?;
     Ok(())
 }
 
@@ -176,39 +175,23 @@ fn require_settings(window: &WebviewWindow) -> Result<(), String> {
 #[tauri::command]
 pub async fn check_for_updates(window: WebviewWindow) -> Result<serde_json::Value, String> {
     require_settings(&window)?;
-    #[cfg(all(target_os = "macos", feature = "alpha-updater"))]
-    {
-        crate::alpha_update::check(window.app_handle()).await
-    }
-    #[cfg(not(all(target_os = "macos", feature = "alpha-updater")))]
-    Ok(serde_json::json!({ "status": "unconfigured" }))
+    crate::update::check(window.app_handle()).await
 }
 
 #[tauri::command]
 pub async fn install_update(window: WebviewWindow, version: String) -> Result<(), String> {
     require_settings(&window)?;
-    #[cfg(all(target_os = "macos", feature = "alpha-updater"))]
-    {
-        crate::alpha_update::install(&window, &version).await
-    }
-    #[cfg(not(all(target_os = "macos", feature = "alpha-updater")))]
-    {
-        let _ = version;
-        Err("Updates are unavailable in this build.".into())
-    }
+    crate::update::install(&window, &version).await
 }
 
 #[tauri::command]
 pub fn mark_library_opened(app: AppHandle, window: WebviewWindow) {
-    #[cfg(all(target_os = "macos", feature = "alpha-updater"))]
     if window
         .url()
         .is_ok_and(|url| app.state::<LocalPort>().library().origin() == url.origin())
     {
-        crate::alpha_update::mark_library_opened(&app);
+        crate::update::mark_library_opened(&app);
     }
-    #[cfg(not(all(target_os = "macos", feature = "alpha-updater")))]
-    let _ = (app, window);
 }
 
 #[tauri::command]

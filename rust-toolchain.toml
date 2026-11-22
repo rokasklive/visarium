@@ -1,0 +1,6 @@
+# One compiler for development, CI, the Docker image and release builds.
+# Bump it deliberately (Dependabot doesn't), together with infra/docker/Dockerfile.
+[toolchain]
+channel = "1.99.1"
+profile = "minimal"
+components = ["rustfmt", "clippy"]
