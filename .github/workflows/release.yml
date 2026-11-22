@@ -306,7 +306,8 @@ jobs:
 
   publish:
     needs: [verify, check, desktop, image]
-    runs-on: ubuntu-22.04
+    # 24.04: minisign is not packaged for 22.04.
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       packages: write
@@ -352,7 +353,7 @@ jobs:
           done
           jq -n --arg version "$VERSION" --arg notes "$notes" --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --argjson platforms "$platforms" \
-            '{version: $version, notes: $notes, pub_date: $date, platforms: $platforms}' > dist/latest.json
+            '{version: $version, notes: ($notes | gsub("^\\s+|\\s+$"; "")), pub_date: $date, platforms: $platforms}' > dist/latest.json
           jq -e '.platforms | length == 4' dist/latest.json
           (cd dist && sha256sum -- * > SHA256SUMS)
           cat dist/latest.json
