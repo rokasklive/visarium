@@ -70,10 +70,12 @@ test:
     pnpm --filter @visarium/web build
     pnpm --filter @visarium/web check:bundle
 
-# Set the release version everywhere it lives; then add its "## X.Y.Z" CHANGELOG section
+# Set the release version everywhere it lives; then add its "## vX.Y.Z" CHANGELOG section
 version v:
     perl -0pi -e 's/^version = "[^"]*"/version = "{{v}}"/m' server/Cargo.toml desktop/Cargo.toml
     perl -0pi -e 's/"version": "[^"]*"/"version": "{{v}}"/' desktop/tauri.conf.json
+    # ponytail: a prerelease version (0.2.0-beta.1) needs the badge edited by hand; its dash is the badge's separator.
+    perl -pi -e 's/badge\/v[^-]+-([^-]+)-(.*?)alt="v\S+ /badge\/v{{v}}-$1-$2alt="v{{v}} /' README.md
     cargo update -q -w
 
 # The production image, but with the inspector: for a dev environment

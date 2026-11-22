@@ -18,12 +18,13 @@ type UpdateView =
 const reopen =
   'Finish saving your work, reopen Visarium, and choose Settings from the startup screen.';
 
-function notesFor(version: string | undefined) {
+/** The CHANGELOG lines for `version` (bare semver), under `## vX.Y.Z` or `## X.Y.Z`. */
+export function notesFor(version: string | undefined) {
   return changelog
     .split(/^## /m)
     .slice(1)
     .map((section) => section.trim().split('\n'))
-    .find(([heading]) => heading?.trim() === version)
+    .find(([heading]) => version !== undefined && heading?.trim().replace(/^v/, '') === version)
     ?.slice(1)
     .filter((line) => line.startsWith('- '))
     .map((line) => line.slice(2));
@@ -85,7 +86,7 @@ export function About({
         <dt className="text-ink-dim">Version</dt>
         <dd className="flex flex-wrap items-center gap-3">
           <span>
-            {version ?? '—'}
+            {version ? `v${version}` : '—'}
             {codenameFor(version) ? (
               <span className="ml-2 text-ink-dim italic">{codenameFor(version)}</span>
             ) : null}
@@ -128,7 +129,7 @@ export function About({
         {update?.type === 'available' ? (
           <div className="flex flex-wrap items-center gap-2">
             <span>
-              Version {update.version}
+              Visarium v{update.version}
               {codenameFor(update.version) ? ` (${codenameFor(update.version)})` : ''} is available.
             </span>
             {update.canInstall ? (

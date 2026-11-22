@@ -75,7 +75,7 @@ pub async fn check(app: &AppHandle) -> Result<serde_json::Value, String> {
             tracing::info!(version = %update.version, "update available");
             if !can_replace_itself() {
                 return Err(format!(
-                    "Visarium {} is available. Install the new package from the releases page.",
+                    "Visarium v{} is available. Install the new package from the releases page.",
                     update.version
                 ));
             }

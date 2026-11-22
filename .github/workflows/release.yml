@@ -1,7 +1,7 @@
 # Releasing:
 #
-#   just version 0.1.0                 # then a "## 0.1.0" section in CHANGELOG.md; commit, merge
-#   gh release create v0.1.0 --draft --target master --title "Visarium 0.1.0 Shirakawa" --notes-file release/v0.1.0.md
+#   just version 0.1.0                 # then a "## v0.1.0" section in CHANGELOG.md; commit, merge
+#   gh release create v0.1.0 --draft --target master --title "Visarium v0.1.0 Shirakawa" --notes-file release/v0.1.0.md
 #   gh workflow run release.yml -f tag=v0.1.0
 #
 # The release notes are yours, kept as written. The app's own notes (the
@@ -93,8 +93,8 @@ jobs:
           for crate in server/Cargo.toml desktop/Cargo.toml; do
             grep -qx "version = \"$version\"" "$crate" || fail "$crate is not version $version (just version $version)"
           done
-          awk -v v="$version" '/^## / {p = ($2 == v); next} p' CHANGELOG.md | grep -q '^- ' \
-            || fail "CHANGELOG.md has no \"## $version\" section with entries"
+          awk -v v="$version" '/^## / {p = ($2 == v || $2 == "v" v); next} p' CHANGELOG.md | grep -q '^- ' \
+            || fail "CHANGELOG.md has no \"## v$version\" section with entries"
           jq -er '.plugins.updater.pubkey | select(length > 0)' desktop/tauri.conf.json >/dev/null \
             || fail "desktop/tauri.conf.json has no updater public key"
           {
@@ -341,7 +341,7 @@ jobs:
         env:
           REPO: ${{ github.repository }}
         run: |
-          notes=$(awk -v v="$VERSION" '/^## / {p = ($2 == v); next} p' CHANGELOG.md)
+          notes=$(awk -v v="$VERSION" '/^## / {p = ($2 == v || $2 == "v" v); next} p' CHANGELOG.md)
           platforms='{}'
           for marker in dist/updater-*; do
             file=$(cat "$marker")
