@@ -3,6 +3,16 @@
 #   docker compose up -d
 #
 # Put your own reverse proxy in front if you want TLS — none is bundled.
+#
+# A proxy running in another container? Join its network from a
+# compose.override.yml next to this file (Compose loads it on its own):
+#
+#   services:
+#     app:
+#       networks: [default, proxy]
+#   networks:
+#     proxy:
+#       external: true
 
 name: visarium
 
@@ -18,9 +28,6 @@ services:
     # (and delete `build:`). Tags: X.Y.Z, X.Y, latest; edge follows master.
     image: visarium:local
     restart: unless-stopped
-    networks:
-      - default
-      - proxy
     # Match the owner of your data directories. On a NAS mount this is the
     # difference between "it works" and a week of permission errors.
     user: "${APP_UID:-1000}:${APP_GID:-1000}"
@@ -44,8 +51,3 @@ services:
       # Regenerable cache. Losing it costs CPU, not data.
       - ${DERIVATIVES_HOST_PATH:-./data/derivatives}:/data/derivatives:z
     stop_grace_period: 10s
-
-networks:
-  default:
-  proxy:
-    external: true

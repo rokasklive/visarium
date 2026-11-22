@@ -61,7 +61,7 @@ More demos at [www.visarium.dev](https://www.visarium.dev).
 
 ## Quick start
 
-Requires Node ≥ 24, stable Rust, pnpm and [just](https://just.systems).
+Requires Node ≥ 26, stable Rust, pnpm and [just](https://just.systems).
 
 ```sh
 pnpm install
@@ -71,7 +71,39 @@ just test       # Rust + TypeScript tests
 just            # all recipes
 ```
 
-**Self-host:** `docker compose up -d` (configure from `.env.example`).
+<details>
+<summary><b>Self-host the server</b> (Docker, amd64 and arm64)</summary>
+
+<br>
+
+One container serves the web app, the API, live updates and the MCP endpoint. Your data lives in directories on the host.
+
+1. **Get the compose file and settings.**
+
+   ```sh
+   git clone https://github.com/rokasklive/visarium.git && cd visarium
+   cp .env.example .env
+   ```
+
+2. **Choose how people sign in.** The server refuses to start without at least one way in. In `.env`, either add an OpenID Connect provider (recommended), or set `VISARIUM_AUTH_PASSWORD=on` for a first run. Set `VISARIUM_PUBLIC_URL` to the address people will use: sign-in providers, share links and MCP apps all need it.
+
+3. **Pick the image.** To run a release, open `compose.yml`, set `image: ghcr.io/rokasklive/visarium:0.1` and delete the `build:` block. Tags are `X.Y.Z`, `X.Y` and `latest`, and `edge` follows `master`. Leave it as it is to build from source.
+
+4. **Start it.**
+
+   ```sh
+   docker compose up -d
+   ```
+
+5. **Claim it straight away.** Open <http://localhost:8080> and create the admin account: on a fresh instance, the first person to open it gets admin. Only then point your reverse proxy at it. The app listens on loopback only and ships no TLS, so the proxy provides it. If the proxy runs in another container, the top of `compose.yml` shows how to join its network.
+
+**Your data.** `DATABASE_HOST_PATH` holds the SQLite database: keep it on a local disk, never a network mount. `ASSETS_HOST_PATH` holds the original files, and a NAS mount is fine for it. Back both up. `DERIVATIVES_HOST_PATH` is a cache that can be rebuilt.
+
+**Connect agents.** Point any MCP client at `https://<your-host>/mcp`. You sign in and approve the app in your browser, and you can revoke it under Settings → Agents.
+
+**Upgrade.** Change the image tag, then run `docker compose pull && docker compose up -d`.
+
+</details>
 
 > [!NOTE]
 > The Linux desktop app works, but it has had less testing than the macOS and Windows builds. Dropped files land at the centre of the window, and pasting a copied file does not work yet.
