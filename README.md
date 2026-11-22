@@ -3,97 +3,50 @@
 </p>
 
 <p align="center">
-  A persistent, infinite canvas for collecting and arranging image references —
-  on your desktop on its own, or self-hosted with other people on it.
+  <b>An infinite canvas for image references, built for people and their agents.</b><br>
+  Runs as a local desktop app, or self-hosted for live collaboration.
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="AGPL-3.0 license">
-  <img src="https://img.shields.io/badge/server-Rust%20%2B%20axum%20%2B%20SQLite-orange" alt="Rust server">
-  <img src="https://img.shields.io/badge/web-React%20%2B%20Vite-61dafb" alt="React web app">
-  <img src="https://img.shields.io/badge/desktop-Tauri-ffc131" alt="Tauri desktop">
+  <img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="AGPL-3.0">
+  <img src="https://img.shields.io/badge/Rust-axum%20%C2%B7%20SQLite-orange" alt="Rust">
+  <img src="https://img.shields.io/badge/React-Vite-61dafb" alt="React">
+  <img src="https://img.shields.io/badge/Tauri-desktop-ffc131" alt="Tauri">
+  <img src="https://img.shields.io/badge/MCP-ready-8a2be2" alt="MCP">
 </p>
 
 ---
 
-## What it is
+Moodboards, reference sheets, research and screenshots all go on a board that scrolls and zooms without limit. Drop images onto it, add notes, diagrams and checklists, link related items, and zoom out to see the whole picture.
 
-Visarium is a board for the images you're collecting — moodboards, reference
-sheets, research, screenshots — that scrolls and zooms forever instead of
-running out of room. Drop pictures onto it, annotate them with notes,
-diagrams and checklists, link related things together, and zoom out to see
-how it all fits.
+## Features
 
-Run it as a local desktop app, or self-host the server and work on the same
-boards with other people, live.
+- **Infinite canvas**: the board has no edges.
+- **Drag in, drag out**: bring in files from a folder or a browser, one at a time or in batches, and drag images back out.
+- **Edit in place**: resize, rotate and crop images on the board. Animated GIFs keep playing.
+- **Notes, diagrams, checklists**: Markdown notes keep formatting when you paste, and diagrams are written in Mermaid or PlantUML.
+- **Typed links**: links between items say what they mean (`describes`, `implements`, `depends-on` and so on), not just "connected".
+- **Agents on your boards**: connect Claude, ChatGPT, Cursor or any other MCP client to a self-hosted server using only its address. Approve access once and revoke it any time.
+- **Built-in vision**: point the server at any OpenAI-compatible vision model and every image gets a description that agents and search can use.
+- **Your auth**: sign in with an OpenID Connect provider, or switch on password sign-in.
 
-## Standout features
+## Quick start
 
-- **An infinite canvas.** Zoom out and the board keeps going — more pictures,
-  more context, no edge to hit.
-
-  ![Infinite canvas](docs/media/infinite-canvas.gif)
-
-- **Drag in, drag out.** Pull files straight from a folder onto the board,
-  one at a time or a whole batch at once, and drag any image back out to your
-  desktop just as easily.
-
-  ![Importing and exporting files](docs/media/in-and-out.gif)
-  ![Importing several images at once](docs/media/multiples.gif)
-
-- **Clip straight from the browser.** Keep a site open beside the board and
-  drag images from it directly onto your canvas.
-
-  ![Quick add from a browser](docs/media/quick-add.gif)
-
-- **Typed links between items, and GIFs that actually play.** Connect notes,
-  images, diagrams and checklists with relationships that say what they
-  mean, not just a line — and animated images stay live right on the canvas.
-
-  ![Linking items together, with live GIF playback](docs/media/link-nodes.gif)
-
-- **Resize, rotate, crop — in place.** Reframe an image reference right on
-  the board, no round-trip to an editor.
-
-  ![Manipulating and cropping an image](docs/media/manipulate-crop.gif)
-
-- **Rich Markdown notes.** Paste formatted text and it keeps its shape.
-
-  ![Markdown notes](docs/media/markdown.gif)
-
-- **Agents on your boards.** Connect Claude, ChatGPT, Cursor and other MCP
-  apps to a self-hosted server by its address alone — sign in and approve
-  once, revoke any time from Settings.
-- **Vision, built in.** Point a self-hosted server at any OpenAI-compatible
-  vision model and every image gets a description, so agents that can't see
-  pictures — and search — still know what's in them.
-- **Your call on auth.** Sign in with an OpenID Connect provider, or turn on
-  password sign-in explicitly. Self-hosted means your boards, your rules.
-
-## Running it
-
-Needs Node ≥ 24, stable Rust, pnpm and [just](https://just.systems).
+Requires Node ≥ 24, stable Rust, pnpm and [just](https://just.systems).
 
 ```sh
 pnpm install
-just dev        # Rust server on :8080 + Vite on :5173
-just desktop    # the desktop app
-just test       # Rust and TypeScript tests
-just            # everything else
+just dev        # server on :8080 + web on :5173
+just desktop    # desktop app
+just test       # Rust + TypeScript tests
+just            # all recipes
 ```
 
-Self-hosted: `docker compose up -d` (settings in `.env.example`).
+**Self-host:** `docker compose up -d` (configure from `.env.example`).
 
-> **Linux:** the desktop app works, but it has had far less polish and testing
-> than on macOS and Windows. Expect rough edges, for example dropped files land
-> at the window centre and pasting a copied file does not work yet.
+> [!NOTE]
+> The Linux desktop app works, but it has had less testing than the macOS and Windows builds. Dropped files land at the centre of the window, and pasting a copied file does not work yet.
 
-## Licence
+## License
 
-Copyright © 2026 Rokas Kučinskas.
-
-Visarium is free software under the [GNU Affero General Public License v3.0 only](LICENSE)
-(`AGPL-3.0-only`). If you run a modified version as a network service, you must offer its
-source to the people who use it.
-
-Contributions are accepted under the same licence.
+[AGPL-3.0-only](LICENSE) © 2026 Rokas Kučinskas. If you run a modified version as a network service, you must offer its source to the people who use it. Contributions are accepted under the same license.
