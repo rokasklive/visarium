@@ -673,1857 +673,1671 @@ For more information on this, and how to apply and follow the GNU AGPL, see
 Rust crates (server and desktop app)
 ==============================================================================
 
-adler2 2.0.1 — 0BSD OR MIT OR Apache-2.0 — https://github.com/oyvindln/adler2
+adler2 — 0BSD OR MIT OR Apache-2.0 — https://github.com/oyvindln/adler2
     licence text [1] [2] [3]
-aes 0.9.4 — MIT OR Apache-2.0 — https://github.com/RustCrypto/block-ciphers
+aes — MIT OR Apache-2.0 — https://github.com/RustCrypto/block-ciphers
     licence text [4] [5]
-aho-corasick 1.1.5 — Unlicense OR MIT — https://github.com/BurntSushi/aho-corasick
+aho-corasick — Unlicense OR MIT — https://github.com/BurntSushi/aho-corasick
     licence text [6] [7] [8]
-alloc-no-stdlib 3.0.0 — BSD-3-Clause — https://github.com/dropbox/rust-alloc-no-stdlib
+alloc-no-stdlib — BSD-3-Clause — https://github.com/dropbox/rust-alloc-no-stdlib
     licence text [9]
-alloc-stdlib 0.3.0 — BSD-3-Clause — https://github.com/dropbox/rust-alloc-no-stdlib
+alloc-stdlib — BSD-3-Clause — https://github.com/dropbox/rust-alloc-no-stdlib
     (no licence file in the package; licence as named above)
-allocator-api2 0.2.21 — MIT OR Apache-2.0 — https://github.com/zakarumych/allocator-api2
+allocator-api2 — MIT OR Apache-2.0 — https://github.com/zakarumych/allocator-api2
     licence text [10] [3]
-android_system_properties 0.1.6 — MIT OR Apache-2.0 — https://github.com/nical/android_system_properties
+android_system_properties — MIT OR Apache-2.0 — https://github.com/nical/android_system_properties
     licence text [11] [12]
-anyhow 1.0.104 — MIT OR Apache-2.0 — https://github.com/dtolnay/anyhow
+anyhow — MIT OR Apache-2.0 — https://github.com/dtolnay/anyhow
     licence text [10] [3]
-apple-native-keyring-store 1.0.2 — MIT OR Apache-2.0 — https://github.com/open-source-cooperative/apple-native-keyring-store.git
+apple-native-keyring-store — MIT OR Apache-2.0 — https://github.com/open-source-cooperative/apple-native-keyring-store.git
     licence text [13] [14]
-argon2 0.6.0 — MIT OR Apache-2.0 — https://github.com/RustCrypto/password-hashes
+argon2 — MIT OR Apache-2.0 — https://github.com/RustCrypto/password-hashes
     licence text [4] [15]
-async-broadcast 0.7.2 — MIT OR Apache-2.0 — https://github.com/smol-rs/async-broadcast
+async-broadcast — MIT OR Apache-2.0 — https://github.com/smol-rs/async-broadcast
     licence text [16] [17]
-async-channel 2.5.0 — Apache-2.0 OR MIT — https://github.com/smol-rs/async-channel
+async-channel — Apache-2.0 OR MIT — https://github.com/smol-rs/async-channel
     licence text [4] [3]
-async-compression 0.4.52 — MIT OR Apache-2.0 — https://github.com/Nullus157/async-compression
+async-compression — MIT OR Apache-2.0 — https://github.com/Nullus157/async-compression
     licence text [4] [18]
-async-executor 1.14.1 — Apache-2.0 OR MIT — https://github.com/smol-rs/async-executor
+async-executor — Apache-2.0 OR MIT — https://github.com/smol-rs/async-executor
     licence text [4] [3]
-async-io 2.6.0 — Apache-2.0 OR MIT — https://github.com/smol-rs/async-io
+async-io — Apache-2.0 OR MIT — https://github.com/smol-rs/async-io
     licence text [4] [3]
-async-lock 3.5.0 — Apache-2.0 OR MIT — https://github.com/smol-rs/async-lock
+async-lock — Apache-2.0 OR MIT — https://github.com/smol-rs/async-lock
     licence text [4] [3]
-async-process 2.5.0 — Apache-2.0 OR MIT — https://github.com/smol-rs/async-process
+async-process — Apache-2.0 OR MIT — https://github.com/smol-rs/async-process
     licence text [4] [3]
-async-recursion 1.2.0 — MIT OR Apache-2.0 — https://github.com/dcchut/async-recursion
+async-recursion — MIT OR Apache-2.0 — https://github.com/dcchut/async-recursion
     licence text [4] [3]
-async-signal 0.2.14 — Apache-2.0 OR MIT — https://github.com/smol-rs/async-signal
+async-signal — Apache-2.0 OR MIT — https://github.com/smol-rs/async-signal
     licence text [4] [3]
-async-task 4.7.1 — Apache-2.0 OR MIT — https://github.com/smol-rs/async-task
+async-task — Apache-2.0 OR MIT — https://github.com/smol-rs/async-task
     licence text [4] [3]
-async-trait 0.1.92 — MIT OR Apache-2.0 — https://github.com/dtolnay/async-trait
+async-trait — MIT OR Apache-2.0 — https://github.com/dtolnay/async-trait
     licence text [10] [3]
-atk 0.18.2 — MIT — https://github.com/gtk-rs/gtk3-rs
+atk — MIT — https://github.com/gtk-rs/gtk3-rs
     licence text [3]
-atk-sys 0.18.2 — MIT — https://github.com/gtk-rs/gtk3-rs
+atk-sys — MIT — https://github.com/gtk-rs/gtk3-rs
     licence text [3]
-atoi 2.0.0 — MIT — https://github.com/pacman82/atoi-rs
+atoi — MIT — https://github.com/pacman82/atoi-rs
     licence text [19]
-atomic-waker 1.1.2 — Apache-2.0 OR MIT — https://github.com/smol-rs/atomic-waker
+atomic-waker — Apache-2.0 OR MIT — https://github.com/smol-rs/atomic-waker
     licence text [4] [3] [20]
-autocfg 1.5.1 — Apache-2.0 OR MIT — https://github.com/cuviper/autocfg
+autocfg — Apache-2.0 OR MIT — https://github.com/cuviper/autocfg
     licence text [4] [21]
-aws-lc-rs 1.19.0 — ISC AND (Apache-2.0 OR ISC) — https://github.com/aws/aws-lc-rs
+aws-lc-rs — ISC AND (Apache-2.0 OR ISC) — https://github.com/aws/aws-lc-rs
     licence text [22]
-aws-lc-sys 0.47.0 — ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0) — https://github.com/aws/aws-lc-rs
+aws-lc-sys — ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0) — https://github.com/aws/aws-lc-rs
     licence text [23]
-axum 0.8.9 — MIT — https://github.com/tokio-rs/axum
+axum — MIT — https://github.com/tokio-rs/axum
     licence text [24]
-axum-core 0.5.6 — MIT — https://github.com/tokio-rs/axum
+axum-core — MIT — https://github.com/tokio-rs/axum
     licence text [25]
-axum-extra 0.12.6 — MIT — https://github.com/tokio-rs/axum
+axum-extra — MIT — https://github.com/tokio-rs/axum
     licence text [26]
-base16ct 1.0.0 — Apache-2.0 OR MIT — https://github.com/RustCrypto/formats
+base16ct — Apache-2.0 OR MIT — https://github.com/RustCrypto/formats
     licence text [4] [27]
-base64 0.21.7 — MIT OR Apache-2.0 — https://github.com/marshallpierce/rust-base64
-    licence text [4] [28]
-base64 0.22.1 — MIT OR Apache-2.0 — https://github.com/marshallpierce/rust-base64
-    licence text [4] [28]
-base64 0.23.1 — MIT OR Apache-2.0 — https://github.com/marshallpierce/rust-base64
-    licence text [4] [29]
-base64ct 1.8.3 — Apache-2.0 OR MIT — https://github.com/RustCrypto/formats
+base64 — MIT OR Apache-2.0 — https://github.com/marshallpierce/rust-base64
+    licence text [4] [28] [29]
+base64ct — Apache-2.0 OR MIT — https://github.com/RustCrypto/formats
     licence text [4] [30]
-bcrypt 0.19.3 — MIT — https://github.com/Keats/rust-bcrypt
+bcrypt — MIT — https://github.com/Keats/rust-bcrypt
     licence text [31]
-bit-set 0.11.1 — Apache-2.0 OR MIT — https://github.com/contain-rs/bit-vec
+bit-set — Apache-2.0 OR MIT — https://github.com/contain-rs/bit-set
     licence text [4] [32]
-bit-set 0.8.0 — Apache-2.0 OR MIT — https://github.com/contain-rs/bit-set
+bit-vec — Apache-2.0 OR MIT — https://github.com/contain-rs/bit-vec
     licence text [4] [32]
-bit-vec 0.10.2 — Apache-2.0 OR MIT — https://github.com/contain-rs/bit-vec
-    licence text [4] [32]
-bit-vec 0.8.0 — Apache-2.0 OR MIT — https://github.com/contain-rs/bit-vec
-    licence text [4] [32]
-bitflags 1.3.2 — MIT/Apache-2.0 — https://github.com/bitflags/bitflags
+bitflags — MIT/Apache-2.0 / MIT OR Apache-2.0 — https://github.com/bitflags/bitflags
     licence text [4] [33]
-bitflags 2.13.2 — MIT OR Apache-2.0 — https://github.com/bitflags/bitflags
-    licence text [4] [33]
-blake2 0.11.0 — MIT OR Apache-2.0 — https://github.com/RustCrypto/hashes
+blake2 — MIT OR Apache-2.0 — https://github.com/RustCrypto/hashes
     licence text [4] [34]
-block-buffer 0.10.4 — MIT OR Apache-2.0 — https://github.com/RustCrypto/utils
-    licence text [4] [35]
-block-buffer 0.12.1 — MIT OR Apache-2.0 — https://github.com/RustCrypto/utils
+block-buffer — MIT OR Apache-2.0 — https://github.com/RustCrypto/utils
+    licence text [4] [35] [36]
+block-padding — MIT OR Apache-2.0 — https://github.com/RustCrypto/utils
     licence text [4] [36]
-block-padding 0.4.2 — MIT OR Apache-2.0 — https://github.com/RustCrypto/utils
-    licence text [4] [36]
-block2 0.6.2 — MIT — https://github.com/madsmtm/objc2
+block2 — MIT — https://github.com/madsmtm/objc2
     (no licence file in the package; licence as named above)
-blocking 1.7.0 — Apache-2.0 OR MIT — https://github.com/smol-rs/blocking
+blocking — Apache-2.0 OR MIT — https://github.com/smol-rs/blocking
     licence text [4] [3]
-blowfish 0.10.0 — MIT OR Apache-2.0 — https://github.com/RustCrypto/block-ciphers
+blowfish — MIT OR Apache-2.0 — https://github.com/RustCrypto/block-ciphers
     licence text [4] [37]
-brotli 9.1.3 — BSD-3-Clause AND MIT — https://github.com/dropbox/rust-brotli
+brotli — BSD-3-Clause AND MIT — https://github.com/dropbox/rust-brotli
     licence text [9] [38]
-brotli-decompressor 6.3.2 — BSD-3-Clause/MIT — https://github.com/dropbox/rust-brotli-decompressor
+brotli-decompressor — BSD-3-Clause/MIT — https://github.com/dropbox/rust-brotli-decompressor
     licence text [9]
-bs58 0.5.1 — MIT/Apache-2.0 — https://github.com/Nullus157/bs58-rs
+bs58 — MIT/Apache-2.0 — https://github.com/Nullus157/bs58-rs
     licence text [4] [39]
-bumpalo 3.20.4 — MIT OR Apache-2.0 — https://github.com/fitzgen/bumpalo
+bumpalo — MIT OR Apache-2.0 — https://github.com/fitzgen/bumpalo
     licence text [4] [40]
-bytemuck 1.25.2 — Zlib OR Apache-2.0 OR MIT — https://github.com/Lokathor/bytemuck
+bytemuck — Zlib OR Apache-2.0 OR MIT — https://github.com/Lokathor/bytemuck
     licence text [4] [41] [42]
-byteorder 1.5.0 — Unlicense OR MIT — https://github.com/BurntSushi/byteorder
+byteorder — Unlicense OR MIT — https://github.com/BurntSushi/byteorder
     licence text [6] [7] [8]
-byteorder-lite 0.1.0 — Unlicense OR MIT — https://github.com/image-rs/byteorder-lite
+byteorder-lite — Unlicense OR MIT — https://github.com/image-rs/byteorder-lite
     licence text [7] [8]
-bytes 1.12.2 — MIT — https://github.com/tokio-rs/bytes
+bytes — MIT — https://github.com/tokio-rs/bytes
     licence text [43]
-cairo-rs 0.18.5 — MIT — https://github.com/gtk-rs/gtk-rs-core
+cairo-rs — MIT — https://github.com/gtk-rs/gtk-rs-core
     licence text [3]
-cairo-sys-rs 0.18.2 — MIT — https://github.com/gtk-rs/gtk-rs-core
+cairo-sys-rs — MIT — https://github.com/gtk-rs/gtk-rs-core
     licence text [3]
-camino 1.2.6 — MIT OR Apache-2.0 — https://github.com/camino-rs/camino
+camino — MIT OR Apache-2.0 — https://github.com/camino-rs/camino
     licence text [4] [3]
-cargo_metadata 0.19.2 — MIT — https://github.com/oli-obk/cargo_metadata
+cargo_metadata — MIT — https://github.com/oli-obk/cargo_metadata
     licence text [3]
-cargo_toml 1.0.1 — Apache-2.0 OR MIT — https://gitlab.com/lib.rs/cargo_toml
+cargo_toml — Apache-2.0 OR MIT — https://gitlab.com/lib.rs/cargo_toml
     licence text [44]
-cargo-platform 0.1.9 — MIT OR Apache-2.0 — https://github.com/rust-lang/cargo
+cargo-platform — MIT OR Apache-2.0 — https://github.com/rust-lang/cargo
     licence text [2] [3]
-cbc 0.2.1 — MIT OR Apache-2.0 — https://github.com/RustCrypto/block-modes
+cbc — MIT OR Apache-2.0 — https://github.com/RustCrypto/block-modes
     licence text [4] [45]
-cc 1.11.2 — MIT OR Apache-2.0 — https://github.com/rust-lang/cc-rs
+cc — MIT OR Apache-2.0 — https://github.com/rust-lang/cc-rs
     licence text [4] [46]
-cesu8 1.1.0 — Apache-2.0/MIT — https://github.com/emk/cesu8-rs
+cesu8 — Apache-2.0/MIT — https://github.com/emk/cesu8-rs
     (no licence file in the package; licence as named above)
-cfb 0.14.0 — MIT — https://github.com/mdsteele/rust-cfb
+cfb — MIT — https://github.com/mdsteele/rust-cfb
     licence text [47]
-cfg_aliases 0.2.2 — MIT — https://github.com/katharostech/cfg_aliases
+cfg_aliases — MIT — https://github.com/katharostech/cfg_aliases
     licence text [48] [49]
-cfg-expr 0.15.8 — MIT OR Apache-2.0 — https://github.com/EmbarkStudios/cfg-expr
+cfg-expr — MIT OR Apache-2.0 — https://github.com/EmbarkStudios/cfg-expr
     licence text [4] [50]
-cfg-if 1.0.5 — MIT OR Apache-2.0 — https://github.com/rust-lang/cfg-if
+cfg-if — MIT OR Apache-2.0 — https://github.com/rust-lang/cfg-if
     licence text [4] [46]
-chacha20 0.10.2 — MIT OR Apache-2.0 — https://github.com/RustCrypto/stream-ciphers
+chacha20 — MIT OR Apache-2.0 — https://github.com/RustCrypto/stream-ciphers
     licence text [4] [51]
-chrono 0.4.45 — MIT OR Apache-2.0 — https://github.com/chronotope/chrono
+chrono — MIT OR Apache-2.0 — https://github.com/chronotope/chrono
     licence text [52]
-cipher 0.5.2 — MIT OR Apache-2.0 — https://github.com/RustCrypto/traits
+cipher — MIT OR Apache-2.0 — https://github.com/RustCrypto/traits
     licence text [4] [53]
-cmake 0.1.58 — MIT OR Apache-2.0 — https://github.com/rust-lang/cmake-rs
+cmake — MIT OR Apache-2.0 — https://github.com/rust-lang/cmake-rs
     licence text [4] [46]
-cmov 0.5.4 — Apache-2.0 OR MIT — https://github.com/RustCrypto/utils
+cmov — Apache-2.0 OR MIT — https://github.com/RustCrypto/utils
     licence text [4] [54]
-color_quant 1.1.0 — MIT — https://github.com/image-rs/color_quant.git
+color_quant — MIT — https://github.com/image-rs/color_quant.git
     licence text [55]
-combine 4.6.9 — MIT — https://github.com/Marwes/combine
+combine — MIT — https://github.com/Marwes/combine
     licence text [56]
-compression-codecs 0.4.47 — MIT OR Apache-2.0 — https://github.com/Nullus157/async-compression
+compression-codecs — MIT OR Apache-2.0 — https://github.com/Nullus157/async-compression
     licence text [4] [18]
-compression-core 0.4.34 — MIT OR Apache-2.0 — https://github.com/Nullus157/async-compression
+compression-core — MIT OR Apache-2.0 — https://github.com/Nullus157/async-compression
     licence text [4] [18]
-concurrent-queue 2.5.0 — Apache-2.0 OR MIT — https://github.com/smol-rs/concurrent-queue
+concurrent-queue — Apache-2.0 OR MIT — https://github.com/smol-rs/concurrent-queue
     licence text [4] [3]
-const-oid 0.10.3 — Apache-2.0 OR MIT — https://github.com/RustCrypto/formats
-    licence text [4] [57]
-const-oid 0.9.6 — Apache-2.0 OR MIT — https://github.com/RustCrypto/formats/tree/master/const-oid
-    licence text [4] [58]
-constant_time_eq 0.6.1 — CC0-1.0 OR MIT-0 OR Apache-2.0 — https://codeberg.org/cesarb/constant_time_eq
+const-oid — Apache-2.0 OR MIT — https://github.com/RustCrypto/formats/tree/master/const-oid
+    licence text [4] [57] [58]
+constant_time_eq — CC0-1.0 OR MIT-0 OR Apache-2.0 — https://codeberg.org/cesarb/constant_time_eq
     licence text [10] [59] [60]
-cookie 0.18.2 — MIT OR Apache-2.0 — https://github.com/SergioBenitez/cookie-rs
+cookie — MIT OR Apache-2.0 — https://github.com/SergioBenitez/cookie-rs
     licence text [61] [62]
-core_detect 1.0.0 — MIT/Apache-2.0 — https://github.com/thomcc/core_detect
+core_detect — MIT/Apache-2.0 — https://github.com/thomcc/core_detect
     licence text [4] [63]
-core-foundation 0.10.1 — MIT OR Apache-2.0 — https://github.com/servo/core-foundation-rs
+core-foundation — MIT OR Apache-2.0 — https://github.com/servo/core-foundation-rs
     licence text [4] [64]
-core-foundation 0.9.4 — MIT OR Apache-2.0 — https://github.com/servo/core-foundation-rs
+core-foundation-sys — MIT OR Apache-2.0 — https://github.com/servo/core-foundation-rs
     licence text [4] [64]
-core-foundation-sys 0.8.7 — MIT OR Apache-2.0 — https://github.com/servo/core-foundation-rs
+core-graphics — MIT OR Apache-2.0 — https://github.com/servo/core-foundation-rs
     licence text [4] [64]
-core-graphics 0.24.0 — MIT OR Apache-2.0 — https://github.com/servo/core-foundation-rs
+core-graphics-types — MIT OR Apache-2.0 — https://github.com/servo/core-foundation-rs
     licence text [4] [64]
-core-graphics 0.25.0 — MIT OR Apache-2.0 — https://github.com/servo/core-foundation-rs
-    licence text [4] [64]
-core-graphics-types 0.2.0 — MIT OR Apache-2.0 — https://github.com/servo/core-foundation-rs
-    licence text [4] [64]
-cpubits 0.1.1 — MIT OR Apache-2.0 — https://github.com/RustCrypto/utils
+cpubits — MIT OR Apache-2.0 — https://github.com/RustCrypto/utils
     licence text [4] [65]
-cpufeatures 0.2.17 — MIT OR Apache-2.0 — https://github.com/RustCrypto/utils
-    licence text [4] [66]
-cpufeatures 0.3.1 — MIT OR Apache-2.0 — https://github.com/RustCrypto/utils
-    licence text [4] [57]
-crc 3.4.0 — MIT OR Apache-2.0 — https://github.com/mrhooray/crc-rs.git
+cpufeatures — MIT OR Apache-2.0 — https://github.com/RustCrypto/utils
+    licence text [4] [66] [58]
+crc — MIT OR Apache-2.0 — https://github.com/mrhooray/crc-rs.git
     licence text [67] [68]
-crc-catalog 2.5.0 — MIT OR Apache-2.0 — https://github.com/akhilles/crc-catalog.git
+crc-catalog — MIT OR Apache-2.0 — https://github.com/akhilles/crc-catalog.git
     (no licence file in the package; licence as named above)
-crc32fast 1.5.5 — MIT OR Apache-2.0 — https://github.com/srijs/rust-crc32fast
+crc32fast — MIT OR Apache-2.0 — https://github.com/srijs/rust-crc32fast
     licence text [69] [70]
-crossbeam-channel 0.5.17 — MIT OR Apache-2.0 — https://github.com/crossbeam-rs/crossbeam
+crossbeam-channel — MIT OR Apache-2.0 — https://github.com/crossbeam-rs/crossbeam
     licence text [4] [71] [72]
-crossbeam-queue 0.3.14 — MIT OR Apache-2.0 — https://github.com/crossbeam-rs/crossbeam
+crossbeam-queue — MIT OR Apache-2.0 — https://github.com/crossbeam-rs/crossbeam
     licence text [4] [71]
-crossbeam-utils 0.8.23 — MIT OR Apache-2.0 — https://github.com/crossbeam-rs/crossbeam
+crossbeam-utils — MIT OR Apache-2.0 — https://github.com/crossbeam-rs/crossbeam
     licence text [4] [71]
-crunchy 0.2.4 — MIT — https://github.com/eira-fransham/crunchy
+crunchy — MIT — https://github.com/eira-fransham/crunchy
     licence text [73]
-crypto-bigint 0.7.11 — Apache-2.0 OR MIT — https://github.com/RustCrypto/crypto-bigint
+crypto-bigint — Apache-2.0 OR MIT — https://github.com/RustCrypto/crypto-bigint
     licence text [4] [15]
-crypto-common 0.1.7 — MIT OR Apache-2.0 — https://github.com/RustCrypto/traits
-    licence text [4] [74]
-crypto-common 0.2.2 — MIT OR Apache-2.0 — https://github.com/RustCrypto/traits
-    licence text [4] [75]
-cssparser 0.37.0 — MPL-2.0 — https://github.com/servo/rust-cssparser
+crypto-common — MIT OR Apache-2.0 — https://github.com/RustCrypto/traits
+    licence text [4] [74] [75]
+cssparser — MPL-2.0 — https://github.com/servo/rust-cssparser
     licence text [76]
-cssparser 0.38.0 — MPL-2.0 — https://github.com/servo/rust-cssparser
+cssparser-macros — MPL-2.0 — https://github.com/servo/rust-cssparser
     licence text [76]
-cssparser-macros 0.7.1 — MPL-2.0 — https://github.com/servo/rust-cssparser
-    licence text [76]
-ctor 1.0.14 — Apache-2.0 OR MIT — https://github.com/mmastrac/linktime
+ctor — Apache-2.0 OR MIT — https://github.com/mmastrac/linktime
     licence text [69] [3]
-ctutils 0.4.8 — Apache-2.0 OR MIT — https://github.com/RustCrypto/utils
+ctutils — Apache-2.0 OR MIT — https://github.com/RustCrypto/utils
     licence text [4] [77]
-curve25519-dalek 5.0.0 — BSD-3-Clause — https://github.com/dalek-cryptography/curve25519-dalek/tree/main/curve25519-dalek
+curve25519-dalek — BSD-3-Clause — https://github.com/dalek-cryptography/curve25519-dalek/tree/main/curve25519-dalek
     licence text [78]
-curve25519-dalek-derive 0.1.1 — MIT/Apache-2.0 — https://github.com/dalek-cryptography/curve25519-dalek
+curve25519-dalek-derive — MIT/Apache-2.0 — https://github.com/dalek-cryptography/curve25519-dalek
     licence text [4] [3]
-darling 0.24.1 — MIT — https://github.com/TedDriggs/darling
+darling — MIT — https://github.com/TedDriggs/darling
     licence text [79]
-darling_core 0.24.1 — MIT — https://github.com/TedDriggs/darling
+darling_core — MIT — https://github.com/TedDriggs/darling
     licence text [79]
-darling_macro 0.24.1 — MIT — https://github.com/TedDriggs/darling
+darling_macro — MIT — https://github.com/TedDriggs/darling
     licence text [79]
-data-encoding 2.11.1 — MIT — https://github.com/ia0/data-encoding
+data-encoding — MIT — https://github.com/ia0/data-encoding
     licence text [80]
-dbus 0.9.12 — Apache-2.0/MIT — https://github.com/diwic/dbus-rs
+dbus — Apache-2.0/MIT — https://github.com/diwic/dbus-rs
     licence text [81] [82]
-der 0.7.10 — Apache-2.0 OR MIT — https://github.com/RustCrypto/formats/tree/master/der
-    licence text [4] [83]
-der 0.8.3 — Apache-2.0 OR MIT — https://github.com/RustCrypto/formats
-    licence text [4] [57]
-deranged 0.5.9 — MIT OR Apache-2.0 — https://github.com/jhpratt/deranged
+der — Apache-2.0 OR MIT — https://github.com/RustCrypto/formats/tree/master/der
+    licence text [4] [83] [58]
+deranged — MIT OR Apache-2.0 — https://github.com/jhpratt/deranged
     licence text [84] [85]
-derive_more 2.1.1 — MIT — https://github.com/JelteF/derive_more
+derive_more — MIT — https://github.com/JelteF/derive_more
     licence text [86]
-derive_more-impl 2.1.1 — MIT — https://github.com/JelteF/derive_more
+derive_more-impl — MIT — https://github.com/JelteF/derive_more
     licence text [86]
-digest 0.10.7 — MIT OR Apache-2.0 — https://github.com/RustCrypto/traits
-    licence text [4] [87]
-digest 0.11.3 — MIT OR Apache-2.0 — https://github.com/RustCrypto/traits
-    licence text [4] [88]
-dirs 6.0.0 — MIT OR Apache-2.0 — https://github.com/soc/dirs-rs
+digest — MIT OR Apache-2.0 — https://github.com/RustCrypto/traits
+    licence text [4] [87] [88]
+dirs — MIT OR Apache-2.0 — https://github.com/soc/dirs-rs
     licence text [89] [90]
-dirs 7.0.0 — MIT OR Apache-2.0 — https://codeberg.org/dirs/dirs-rs
+dirs-sys — MIT OR Apache-2.0 — https://github.com/dirs-dev/dirs-sys-rs
     licence text [89] [90]
-dirs-sys 0.5.0 — MIT OR Apache-2.0 — https://github.com/dirs-dev/dirs-sys-rs
-    licence text [89] [90]
-dispatch2 0.3.1 — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
+dispatch2 — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
     (no licence file in the package; licence as named above)
-displaydoc 0.2.7 — MIT OR Apache-2.0 — https://github.com/yaahc/displaydoc
+displaydoc — MIT OR Apache-2.0 — https://github.com/yaahc/displaydoc
     licence text [4] [3]
-dlopen2 0.8.2 — MIT — https://github.com/OpenByteDev/dlopen2
+dlopen2 — MIT — https://github.com/OpenByteDev/dlopen2
     (no licence file in the package; licence as named above)
-dlopen2_derive 0.4.3 — MIT — https://github.com/OpenByteDev/dlopen2
+dlopen2_derive — MIT — https://github.com/OpenByteDev/dlopen2
     (no licence file in the package; licence as named above)
-dom_query 0.28.0 — MIT — https://github.com/niklak/dom_query
+dom_query — MIT — https://github.com/niklak/dom_query
     licence text [91]
-dom_query 0.29.0 — MIT — https://github.com/niklak/dom_query
-    licence text [91]
-dotenvy 0.15.7 — MIT — https://github.com/allan2/dotenvy
+dotenvy — MIT — https://github.com/allan2/dotenvy
     licence text [92]
-dpi 0.1.2 — Apache-2.0 AND MIT — https://github.com/rust-windowing/winit
+dpi — Apache-2.0 AND MIT — https://github.com/rust-windowing/winit
     licence text [69] [93]
-drag 2.1.1 — Apache-2.0 OR MIT
+drag — Apache-2.0 OR MIT
     licence text [10] [94]
-dtoa 1.0.11 — MIT OR Apache-2.0 — https://github.com/dtolnay/dtoa
+dtoa — MIT OR Apache-2.0 — https://github.com/dtolnay/dtoa
     licence text [10] [3]
-dtoa-short 0.3.5 — MPL-2.0 — https://github.com/upsuper/dtoa-short
+dtoa-short — MPL-2.0 — https://github.com/upsuper/dtoa-short
     licence text [76]
-dunce 1.0.5 — CC0-1.0 OR MIT-0 OR Apache-2.0 — https://gitlab.com/kornelski/dunce
+dunce — CC0-1.0 OR MIT-0 OR Apache-2.0 — https://gitlab.com/kornelski/dunce
     licence text [59]
-dyn-clone 1.0.20 — MIT OR Apache-2.0 — https://github.com/dtolnay/dyn-clone
+dyn-clone — MIT OR Apache-2.0 — https://github.com/dtolnay/dyn-clone
     licence text [10] [3]
-ecdsa 0.17.0 — Apache-2.0 OR MIT — https://github.com/RustCrypto/signatures
+ecdsa — Apache-2.0 OR MIT — https://github.com/RustCrypto/signatures
     licence text [95] [96]
-ed25519 3.0.0 — Apache-2.0 OR MIT — https://github.com/RustCrypto/signatures
+ed25519 — Apache-2.0 OR MIT — https://github.com/RustCrypto/signatures
     licence text [95] [96]
-ed25519-dalek 3.0.0 — BSD-3-Clause — https://github.com/dalek-cryptography/curve25519-dalek/tree/main/ed25519-dalek
+ed25519-dalek — BSD-3-Clause — https://github.com/dalek-cryptography/curve25519-dalek/tree/main/ed25519-dalek
     licence text [97]
-either 1.19.0 — MIT OR Apache-2.0 — https://github.com/rayon-rs/either
+either — MIT OR Apache-2.0 — https://github.com/rayon-rs/either
     licence text [4] [98]
-elliptic-curve 0.14.3 — Apache-2.0 OR MIT — https://github.com/RustCrypto/traits
+elliptic-curve — Apache-2.0 OR MIT — https://github.com/RustCrypto/traits
     licence text [4] [99]
-embed_plist 1.2.2 — MIT OR Apache-2.0 — https://github.com/nvzqz/embed-plist-rs
+embed_plist — MIT OR Apache-2.0 — https://github.com/nvzqz/embed-plist-rs
     licence text [4] [100]
-embed-resource 3.0.12 — MIT — https://github.com/nabijaczleweli/rust-embed-resource
+embed-resource — MIT — https://github.com/nabijaczleweli/rust-embed-resource
     licence text [101]
-encoding_rs 0.8.44 — (Apache-2.0 OR MIT) AND BSD-3-Clause — https://github.com/hsivonen/encoding_rs
+encoding_rs — (Apache-2.0 OR MIT) AND BSD-3-Clause — https://github.com/hsivonen/encoding_rs
     licence text [4] [102] [103]
-endi 1.1.1 — MIT — https://github.com/zeenix/endi
+endi — MIT — https://github.com/zeenix/endi
     licence text [3]
-enumflags2 0.7.12 — MIT OR Apache-2.0 — https://github.com/meithecatte/enumflags2
+enumflags2 — MIT OR Apache-2.0 — https://github.com/meithecatte/enumflags2
     licence text [104] [105]
-enumflags2_derive 0.7.12 — MIT OR Apache-2.0 — https://github.com/meithecatte/enumflags2
+enumflags2_derive — MIT OR Apache-2.0 — https://github.com/meithecatte/enumflags2
     licence text [106] [107]
-equivalent 1.0.3 — Apache-2.0 OR MIT — https://github.com/indexmap-rs/equivalent
+equivalent — Apache-2.0 OR MIT — https://github.com/indexmap-rs/equivalent
     licence text [4] [108]
-erased-serde 0.4.11 — MIT OR Apache-2.0 — https://github.com/dtolnay/erased-serde
+erased-serde — MIT OR Apache-2.0 — https://github.com/dtolnay/erased-serde
     licence text [10] [3]
-errno 0.3.15 — MIT OR Apache-2.0 — https://github.com/lambda-fairy/rust-errno
+errno — MIT OR Apache-2.0 — https://github.com/lambda-fairy/rust-errno
     licence text [4] [109]
-etcetera 0.11.0 — MIT OR Apache-2.0 — https://github.com/lunacookies/etcetera
+etcetera — MIT OR Apache-2.0 — https://github.com/lunacookies/etcetera
     licence text [10] [3]
-event-listener 5.4.2 — Apache-2.0 OR MIT — https://github.com/smol-rs/event-listener
+event-listener — Apache-2.0 OR MIT — https://github.com/smol-rs/event-listener
     licence text [4] [3]
-event-listener-strategy 0.5.4 — Apache-2.0 OR MIT — https://github.com/smol-rs/event-listener-strategy
+event-listener-strategy — Apache-2.0 OR MIT — https://github.com/smol-rs/event-listener-strategy
     licence text [4] [3]
-fastrand 2.5.0 — Apache-2.0 OR MIT — https://github.com/smol-rs/fastrand
+fastrand — Apache-2.0 OR MIT — https://github.com/smol-rs/fastrand
     licence text [4] [3]
-fax 0.2.7 — MIT — https://github.com/pdf-rs/fax
+fax — MIT — https://github.com/pdf-rs/fax
     licence text [110]
-fdeflate 0.3.7 — MIT OR Apache-2.0 — https://github.com/image-rs/fdeflate
+fdeflate — MIT OR Apache-2.0 — https://github.com/image-rs/fdeflate
     licence text [10] [111]
-ff 0.14.0 — MIT/Apache-2.0 — https://github.com/zkcrypto/ff
+ff — MIT/Apache-2.0 — https://github.com/zkcrypto/ff
     licence text [4] [112]
-fiat-crypto 0.3.0 — MIT OR Apache-2.0 OR BSD-1-Clause — https://github.com/mit-plv/fiat-crypto
+fiat-crypto — MIT OR Apache-2.0 OR BSD-1-Clause — https://github.com/mit-plv/fiat-crypto
     licence text [113] [114] [115]
-field-offset 0.3.6 — MIT OR Apache-2.0 — https://github.com/Diggsey/rust-field-offset
+field-offset — MIT OR Apache-2.0 — https://github.com/Diggsey/rust-field-offset
     licence text [10] [116]
-filetime 0.2.30 — MIT/Apache-2.0 — https://github.com/alexcrichton/filetime
+filetime — MIT/Apache-2.0 — https://github.com/alexcrichton/filetime
     licence text [4] [46]
-find-msvc-tools 0.1.15 — MIT OR Apache-2.0 — https://github.com/rust-lang/cc-rs
+find-msvc-tools — MIT OR Apache-2.0 — https://github.com/rust-lang/cc-rs
     licence text [4] [46]
-flate2 1.1.11 — MIT OR Apache-2.0 — https://github.com/rust-lang/flate2-rs
+flate2 — MIT OR Apache-2.0 — https://github.com/rust-lang/flate2-rs
     licence text [4] [117]
-flume 0.12.0 — Apache-2.0/MIT — https://github.com/zesterer/flume
+flume — Apache-2.0/MIT — https://github.com/zesterer/flume
     licence text [4] [3]
-fnv 1.0.7 — Apache-2.0 / MIT — https://github.com/servo/rust-fnv
+fnv — Apache-2.0 / MIT — https://github.com/servo/rust-fnv
     licence text [4] [118]
-foldhash 0.2.0 — Zlib — https://github.com/orlp/foldhash
+foldhash — Zlib — https://github.com/orlp/foldhash
     licence text [119]
-foreign-types 0.5.0 — MIT/Apache-2.0 — https://github.com/sfackler/foreign-types
+foreign-types — MIT/Apache-2.0 — https://github.com/sfackler/foreign-types
     licence text [69] [120]
-foreign-types-macros 0.2.4 — MIT/Apache-2.0 — https://github.com/sfackler/foreign-types
+foreign-types-macros — MIT/Apache-2.0 — https://github.com/sfackler/foreign-types
     licence text [69] [120]
-foreign-types-shared 0.3.1 — MIT/Apache-2.0 — https://github.com/sfackler/foreign-types
+foreign-types-shared — MIT/Apache-2.0 — https://github.com/sfackler/foreign-types
     licence text [69] [120]
-form_urlencoded 1.2.3 — MIT OR Apache-2.0 — https://github.com/servo/rust-url
+form_urlencoded — MIT OR Apache-2.0 — https://github.com/servo/rust-url
     licence text [4] [121]
-fs_extra 1.3.0 — MIT — https://github.com/webdesus/fs_extra
+fs_extra — MIT — https://github.com/webdesus/fs_extra
     licence text [122]
-futures-channel 0.3.34 — MIT OR Apache-2.0 — https://github.com/rust-lang/futures-rs
+futures-channel — MIT OR Apache-2.0 — https://github.com/rust-lang/futures-rs
     licence text [123] [124]
-futures-core 0.3.34 — MIT OR Apache-2.0 — https://github.com/rust-lang/futures-rs
+futures-core — MIT OR Apache-2.0 — https://github.com/rust-lang/futures-rs
     licence text [123] [124]
-futures-executor 0.3.34 — MIT OR Apache-2.0 — https://github.com/rust-lang/futures-rs
+futures-executor — MIT OR Apache-2.0 — https://github.com/rust-lang/futures-rs
     licence text [123] [124]
-futures-intrusive 0.5.0 — MIT OR Apache-2.0 — https://github.com/Matthias247/futures-intrusive
+futures-intrusive — MIT OR Apache-2.0 — https://github.com/Matthias247/futures-intrusive
     licence text [125] [126]
-futures-io 0.3.34 — MIT OR Apache-2.0 — https://github.com/rust-lang/futures-rs
+futures-io — MIT OR Apache-2.0 — https://github.com/rust-lang/futures-rs
     licence text [123] [124]
-futures-lite 2.6.1 — Apache-2.0 OR MIT — https://github.com/smol-rs/futures-lite
+futures-lite — Apache-2.0 OR MIT — https://github.com/smol-rs/futures-lite
     licence text [4] [3] [20]
-futures-macro 0.3.34 — MIT OR Apache-2.0 — https://github.com/rust-lang/futures-rs
+futures-macro — MIT OR Apache-2.0 — https://github.com/rust-lang/futures-rs
     licence text [123] [124]
-futures-sink 0.3.34 — MIT OR Apache-2.0 — https://github.com/rust-lang/futures-rs
+futures-sink — MIT OR Apache-2.0 — https://github.com/rust-lang/futures-rs
     licence text [123] [124]
-futures-task 0.3.34 — MIT OR Apache-2.0 — https://github.com/rust-lang/futures-rs
+futures-task — MIT OR Apache-2.0 — https://github.com/rust-lang/futures-rs
     licence text [123] [124]
-futures-util 0.3.34 — MIT OR Apache-2.0 — https://github.com/rust-lang/futures-rs
+futures-util — MIT OR Apache-2.0 — https://github.com/rust-lang/futures-rs
     licence text [123] [124]
-gdk 0.18.2 — MIT — https://github.com/gtk-rs/gtk3-rs
+gdk — MIT — https://github.com/gtk-rs/gtk3-rs
     licence text [3]
-gdk-pixbuf 0.18.5 — MIT — https://github.com/gtk-rs/gtk-rs-core
+gdk-pixbuf — MIT — https://github.com/gtk-rs/gtk-rs-core
     licence text [3]
-gdk-pixbuf-sys 0.18.0 — MIT — https://github.com/gtk-rs/gtk-rs-core
+gdk-pixbuf-sys — MIT — https://github.com/gtk-rs/gtk-rs-core
     licence text [3]
-gdk-sys 0.18.2 — MIT — https://github.com/gtk-rs/gtk3-rs
+gdk-sys — MIT — https://github.com/gtk-rs/gtk3-rs
     licence text [3]
-gdkwayland-sys 0.18.2 — MIT — https://github.com/gtk-rs/gtk3-rs
+gdkwayland-sys — MIT — https://github.com/gtk-rs/gtk3-rs
     licence text [3]
-gdkx11 0.18.2 — MIT — https://github.com/gtk-rs/gtk3-rs
+gdkx11 — MIT — https://github.com/gtk-rs/gtk3-rs
     licence text [3]
-gdkx11-sys 0.18.2 — MIT — https://github.com/gtk-rs/gtk3-rs
+gdkx11-sys — MIT — https://github.com/gtk-rs/gtk3-rs
     licence text [3]
-generic-array 0.14.7 — MIT — https://github.com/fizyk20/generic-array.git
+generic-array — MIT — https://github.com/fizyk20/generic-array.git
     licence text [127]
-getrandom 0.2.17 — MIT OR Apache-2.0 — https://github.com/rust-random/getrandom
-    licence text [128] [129]
-getrandom 0.3.4 — MIT OR Apache-2.0 — https://github.com/rust-random/getrandom
-    licence text [128] [130]
-getrandom 0.4.3 — MIT OR Apache-2.0 — https://github.com/rust-random/getrandom
-    licence text [128] [131]
-gif 0.14.2 — MIT OR Apache-2.0 — https://github.com/image-rs/image-gif
+getrandom — MIT OR Apache-2.0 — https://github.com/rust-random/getrandom
+    licence text [128] [129] [130] [131]
+gif — MIT OR Apache-2.0 — https://github.com/image-rs/image-gif
     licence text [4] [132]
-gio 0.18.4 — MIT — https://github.com/gtk-rs/gtk-rs-core
+gio — MIT — https://github.com/gtk-rs/gtk-rs-core
     licence text [3]
-gio-sys 0.18.1 — MIT — https://github.com/gtk-rs/gtk-rs-core
+gio-sys — MIT — https://github.com/gtk-rs/gtk-rs-core
     licence text [3]
-glib 0.18.5 — MIT — https://github.com/gtk-rs/gtk-rs-core
+glib — MIT — https://github.com/gtk-rs/gtk-rs-core
     licence text [3]
-glib-macros 0.18.5 — MIT — https://github.com/gtk-rs/gtk-rs-core
+glib-macros — MIT — https://github.com/gtk-rs/gtk-rs-core
     licence text [3]
-glib-sys 0.18.1 — MIT — https://github.com/gtk-rs/gtk-rs-core
+glib-sys — MIT — https://github.com/gtk-rs/gtk-rs-core
     licence text [3]
-glob 0.3.4 — MIT OR Apache-2.0 — https://github.com/rust-lang/glob
+glob — MIT OR Apache-2.0 — https://github.com/rust-lang/glob
     licence text [4] [33]
-gobject-sys 0.18.0 — MIT — https://github.com/gtk-rs/gtk-rs-core
+gobject-sys — MIT — https://github.com/gtk-rs/gtk-rs-core
     licence text [3]
-group 0.14.0 — MIT/Apache-2.0 — https://github.com/zkcrypto/group
+group — MIT/Apache-2.0 — https://github.com/zkcrypto/group
     licence text [4] [3]
-gtk 0.18.2 — MIT — https://github.com/gtk-rs/gtk3-rs
+gtk — MIT — https://github.com/gtk-rs/gtk3-rs
     licence text [3]
-gtk-sys 0.18.2 — MIT — https://github.com/gtk-rs/gtk3-rs
+gtk-sys — MIT — https://github.com/gtk-rs/gtk3-rs
     licence text [3]
-gtk3-macros 0.18.2 — MIT — https://github.com/gtk-rs/gtk3-rs
+gtk3-macros — MIT — https://github.com/gtk-rs/gtk3-rs
     licence text [3]
-h2 0.4.20 — MIT — https://github.com/hyperium/h2
+h2 — MIT — https://github.com/hyperium/h2
     licence text [133]
-half 2.7.1 — MIT OR Apache-2.0 — https://github.com/VoidStarKat/half-rs
+half — MIT OR Apache-2.0 — https://github.com/VoidStarKat/half-rs
     licence text [10] [111]
-hashbrown 0.12.3 — MIT OR Apache-2.0 — https://github.com/rust-lang/hashbrown
+hashbrown — MIT OR Apache-2.0 — https://github.com/rust-lang/hashbrown
     licence text [4] [134]
-hashbrown 0.16.1 — MIT OR Apache-2.0 — https://github.com/rust-lang/hashbrown
-    licence text [4] [134]
-hashbrown 0.17.1 — MIT OR Apache-2.0 — https://github.com/rust-lang/hashbrown
-    licence text [4] [134]
-hashlink 0.11.1 — MIT OR Apache-2.0 — https://github.com/djc/hashlink
+hashlink — MIT OR Apache-2.0 — https://github.com/djc/hashlink
     licence text [4] [135]
-heck 0.4.1 — MIT OR Apache-2.0 — https://github.com/withoutboats/heck
+heck — MIT OR Apache-2.0 — https://github.com/withoutboats/heck
     licence text [4] [136]
-heck 0.5.0 — MIT OR Apache-2.0 — https://github.com/withoutboats/heck
-    licence text [4] [136]
-hermit-abi 0.5.3 — MIT OR Apache-2.0 — https://github.com/hermit-os/hermit-rs
+hermit-abi — MIT OR Apache-2.0 — https://github.com/hermit-os/hermit-rs
     licence text [4] [3]
-hex 0.4.3 — MIT OR Apache-2.0 — https://github.com/KokaKiwi/rust-hex
+hex — MIT OR Apache-2.0 — https://github.com/KokaKiwi/rust-hex
     licence text [69] [137]
-hkdf 0.13.0 — MIT OR Apache-2.0 — https://github.com/RustCrypto/KDFs/
+hkdf — MIT OR Apache-2.0 — https://github.com/RustCrypto/KDFs/
     licence text [4] [138]
-hmac 0.12.1 — MIT OR Apache-2.0 — https://github.com/RustCrypto/MACs
+hmac — MIT OR Apache-2.0 — https://github.com/RustCrypto/MACs
     licence text [4] [87]
-hmac 0.13.0 — MIT OR Apache-2.0 — https://github.com/RustCrypto/MACs
-    licence text [4] [87]
-html5ever 0.39.0 — MIT OR Apache-2.0 — https://github.com/servo/html5ever
+html5ever — MIT OR Apache-2.0 — https://github.com/servo/html5ever
     licence text [4] [139]
-html5ever 0.40.1 — MIT OR Apache-2.0 — https://github.com/servo/html5ever
-    licence text [4] [139]
-http 1.5.0 — MIT OR Apache-2.0 — https://github.com/hyperium/http
+http — MIT OR Apache-2.0 — https://github.com/hyperium/http
     licence text [140] [141]
-http-body 1.1.0 — MIT — https://github.com/hyperium/http-body
+http-body — MIT — https://github.com/hyperium/http-body
     licence text [142]
-http-body-util 0.1.5 — MIT — https://github.com/hyperium/http-body
+http-body-util — MIT — https://github.com/hyperium/http-body
     licence text [142]
-httparse 1.10.1 — MIT OR Apache-2.0 — https://github.com/seanmonstar/httparse
+httparse — MIT OR Apache-2.0 — https://github.com/seanmonstar/httparse
     licence text [4] [143]
-httpdate 1.0.3 — MIT OR Apache-2.0 — https://github.com/pyfisch/httpdate
+httpdate — MIT OR Apache-2.0 — https://github.com/pyfisch/httpdate
     licence text [4] [144]
-hybrid-array 0.4.15 — MIT OR Apache-2.0 — https://github.com/RustCrypto/hybrid-array
+hybrid-array — MIT OR Apache-2.0 — https://github.com/RustCrypto/hybrid-array
     licence text [4] [54]
-hyper 1.12.0 — MIT — https://github.com/hyperium/hyper
+hyper — MIT — https://github.com/hyperium/hyper
     licence text [145]
-hyper-rustls 0.27.10 — Apache-2.0 OR ISC OR MIT — https://github.com/rustls/hyper-rustls
+hyper-rustls — Apache-2.0 OR ISC OR MIT — https://github.com/rustls/hyper-rustls
     licence text [4] [146] [147]
-hyper-util 0.1.21 — MIT — https://github.com/hyperium/hyper-util
+hyper-util — MIT — https://github.com/hyperium/hyper-util
     licence text [148]
-iana-time-zone 0.1.65 — MIT OR Apache-2.0 — https://github.com/strawlab/iana-time-zone
+iana-time-zone — MIT OR Apache-2.0 — https://github.com/strawlab/iana-time-zone
     licence text [149] [150]
-iana-time-zone-haiku 0.1.2 — MIT OR Apache-2.0 — https://github.com/strawlab/iana-time-zone
+iana-time-zone-haiku — MIT OR Apache-2.0 — https://github.com/strawlab/iana-time-zone
     licence text [149] [150]
-ico 0.6.0 — MIT — https://github.com/mdsteele/rust-ico
+ico — MIT — https://github.com/mdsteele/rust-ico
     licence text [151]
-icu_collections 2.4.0 — Unicode-3.0 — https://github.com/unicode-org/icu4x
+icu_collections — Unicode-3.0 — https://github.com/unicode-org/icu4x
     licence text [152]
-icu_locale_core 2.4.0 — Unicode-3.0 — https://github.com/unicode-org/icu4x
+icu_locale_core — Unicode-3.0 — https://github.com/unicode-org/icu4x
     licence text [152]
-icu_normalizer 2.4.0 — Unicode-3.0 — https://github.com/unicode-org/icu4x
+icu_normalizer — Unicode-3.0 — https://github.com/unicode-org/icu4x
     licence text [152]
-icu_normalizer_data 2.4.0 — Unicode-3.0 — https://github.com/unicode-org/icu4x
+icu_normalizer_data — Unicode-3.0 — https://github.com/unicode-org/icu4x
     licence text [152]
-icu_properties 2.4.0 — Unicode-3.0 — https://github.com/unicode-org/icu4x
+icu_properties — Unicode-3.0 — https://github.com/unicode-org/icu4x
     licence text [152]
-icu_properties_data 2.4.0 — Unicode-3.0 — https://github.com/unicode-org/icu4x
+icu_properties_data — Unicode-3.0 — https://github.com/unicode-org/icu4x
     licence text [152]
-icu_provider 2.4.0 — Unicode-3.0 — https://github.com/unicode-org/icu4x
+icu_provider — Unicode-3.0 — https://github.com/unicode-org/icu4x
     licence text [152]
-ident_case 1.0.1 — MIT/Apache-2.0 — https://github.com/TedDriggs/ident_case
+ident_case — MIT/Apache-2.0 — https://github.com/TedDriggs/ident_case
     licence text [111]
-idna 1.1.0 — MIT OR Apache-2.0 — https://github.com/servo/rust-url/
+idna — MIT OR Apache-2.0 — https://github.com/servo/rust-url/
     licence text [4] [153]
-idna_adapter 1.2.2 — Apache-2.0 OR MIT — https://github.com/hsivonen/idna_adapter
+idna_adapter — Apache-2.0 OR MIT — https://github.com/hsivonen/idna_adapter
     licence text [4] [154]
-image 0.25.10 — MIT OR Apache-2.0 — https://github.com/image-rs/image
+image — MIT OR Apache-2.0 — https://github.com/image-rs/image
     licence text [10] [111]
-image-webp 0.2.4 — MIT OR Apache-2.0 — https://github.com/image-rs/image-webp
+image-webp — MIT OR Apache-2.0 — https://github.com/image-rs/image-webp
     licence text [10] [111]
-indexmap 1.9.3 — Apache-2.0 OR MIT — https://github.com/bluss/indexmap
+indexmap — Apache-2.0 OR MIT — https://github.com/bluss/indexmap
     licence text [4] [155]
-indexmap 2.14.2 — Apache-2.0 OR MIT — https://github.com/indexmap-rs/indexmap
-    licence text [4] [155]
-infer 0.22.0 — MIT — https://github.com/bojand/infer
+infer — MIT — https://github.com/bojand/infer
     licence text [156]
-inout 0.2.6 — MIT OR Apache-2.0 — https://github.com/RustCrypto/utils
+inout — MIT OR Apache-2.0 — https://github.com/RustCrypto/utils
     licence text [4] [157]
-ipnet 2.12.2 — MIT OR Apache-2.0 — https://github.com/krisprice/ipnet
+ipnet — MIT OR Apache-2.0 — https://github.com/krisprice/ipnet
     licence text [158] [159]
-itertools 0.14.0 — MIT OR Apache-2.0 — https://github.com/rust-itertools/itertools
+itertools — MIT OR Apache-2.0 — https://github.com/rust-itertools/itertools
     licence text [4] [98]
-itoa 1.0.19 — MIT OR Apache-2.0 — https://github.com/dtolnay/itoa
+itoa — MIT OR Apache-2.0 — https://github.com/dtolnay/itoa
     licence text [10] [3]
-javascriptcore-rs 1.1.2 — MIT — https://github.com/tauri-apps/javascriptcore-rs
+javascriptcore-rs — MIT — https://github.com/tauri-apps/javascriptcore-rs
     licence text [160]
-javascriptcore-rs-sys 1.1.1 — MIT — https://github.com/tauri-apps/javascriptcore-rs
+javascriptcore-rs-sys — MIT — https://github.com/tauri-apps/javascriptcore-rs
     licence text [161]
-jiff 0.2.46 — Unlicense OR MIT — https://github.com/BurntSushi/jiff
+jiff — Unlicense OR MIT — https://github.com/BurntSushi/jiff
     licence text [6] [7] [8]
-jiff-core 0.1.8 — Unlicense OR MIT — https://github.com/BurntSushi/jiff
+jiff-core — Unlicense OR MIT — https://github.com/BurntSushi/jiff
     licence text [6] [7] [8]
-jiff-static 0.2.46 — Unlicense OR MIT — https://github.com/BurntSushi/jiff
+jiff-static — Unlicense OR MIT — https://github.com/BurntSushi/jiff
     licence text [6] [7] [8]
-jiff-tzdb 0.1.10 — Unlicense OR MIT — https://github.com/BurntSushi/jiff
+jiff-tzdb — Unlicense OR MIT — https://github.com/BurntSushi/jiff
     licence text [6] [7] [8]
-jiff-tzdb-platform 0.1.3 — Unlicense OR MIT — https://github.com/BurntSushi/jiff
+jiff-tzdb-platform — Unlicense OR MIT — https://github.com/BurntSushi/jiff
     licence text [6] [7] [8]
-jni 0.21.1 — MIT/Apache-2.0 — https://github.com/jni-rs/jni-rs
+jni — MIT/Apache-2.0 / MIT OR Apache-2.0 — https://github.com/jni-rs/jni-rs
     licence text [4] [162]
-jni 0.22.4 — MIT OR Apache-2.0 — https://github.com/jni-rs/jni-rs
+jni-macros — MIT OR Apache-2.0 — https://github.com/jni-rs/jni-rs
     (no licence file in the package; licence as named above)
-jni-macros 0.22.4 — MIT OR Apache-2.0 — https://github.com/jni-rs/jni-rs
-    (no licence file in the package; licence as named above)
-jni-sys 0.3.1 — MIT OR Apache-2.0 — https://github.com/jni-rs/jni-sys
+jni-sys — MIT OR Apache-2.0 — https://github.com/jni-rs/jni-sys
     licence text [69] [163]
-jni-sys 0.4.1 — MIT OR Apache-2.0 — https://github.com/jni-rs/jni-sys
-    licence text [69] [163]
-jni-sys-macros 0.4.1 — MIT OR Apache-2.0 — https://github.com/jni-rs/jni-sys
+jni-sys-macros — MIT OR Apache-2.0 — https://github.com/jni-rs/jni-sys
     (no licence file in the package; licence as named above)
-jobserver 0.1.35 — MIT OR Apache-2.0 — https://github.com/rust-lang/jobserver-rs
+jobserver — MIT OR Apache-2.0 — https://github.com/rust-lang/jobserver-rs
     licence text [4] [46]
-js-sys 0.3.107 — MIT OR Apache-2.0 — https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/js-sys
+js-sys — MIT OR Apache-2.0 — https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/js-sys
     licence text [4] [46]
-json-patch 4.2.0 — MIT/Apache-2.0 — https://github.com/idubrov/json-patch
+json-patch — MIT/Apache-2.0 — https://github.com/idubrov/json-patch
     licence text [69] [164]
-jsonptr 0.7.1 — MIT OR Apache-2.0 — https://github.com/chanced/jsonptr
+jsonptr — MIT OR Apache-2.0 — https://github.com/chanced/jsonptr
     licence text [165] [166]
-keyboard-types 0.8.3 — MIT OR Apache-2.0 — https://github.com/rust-windowing/keyboard-types
+keyboard-types — MIT OR Apache-2.0 — https://github.com/rust-windowing/keyboard-types
     licence text [4] [167]
-keyring 4.2.0 — MIT OR Apache-2.0 — https://github.com/open-source-cooperative/keyring-rs
+keyring — MIT OR Apache-2.0 — https://github.com/open-source-cooperative/keyring-rs
     licence text [13] [14]
-keyring-core 1.0.1 — MIT OR Apache-2.0 — https://github.com/open-source-cooperative/keyring-core.git
+keyring-core — MIT OR Apache-2.0 — https://github.com/open-source-cooperative/keyring-core.git
     licence text [13] [14]
-lazy_static 1.5.1 — MIT OR Apache-2.0 — https://github.com/rust-lang-nursery/lazy-static.rs
+lazy_static — MIT OR Apache-2.0 — https://github.com/rust-lang-nursery/lazy-static.rs
     licence text [4] [3]
-libappindicator 0.9.0 — Apache-2.0 OR MIT
+libappindicator — Apache-2.0 OR MIT
     licence text [4] [168]
-libappindicator-sys 0.9.0 — Apache-2.0 OR MIT
+libappindicator-sys — Apache-2.0 OR MIT
     (no licence file in the package; licence as named above)
-libc 0.2.191 — MIT OR Apache-2.0 — https://github.com/rust-lang/libc
+libc — MIT OR Apache-2.0 — https://github.com/rust-lang/libc
     licence text [10] [169]
-libdbus-sys 0.2.7 — Apache-2.0/MIT — https://github.com/diwic/dbus-rs
+libdbus-sys — Apache-2.0/MIT — https://github.com/diwic/dbus-rs
     licence text [81] [82]
-libloading 0.7.4 — ISC — https://github.com/nagisa/rust_libloading/
+libloading — ISC — https://github.com/nagisa/rust_libloading/
     licence text [170]
-libm 0.2.16 — MIT — https://github.com/rust-lang/compiler-builtins
+libm — MIT — https://github.com/rust-lang/compiler-builtins
     licence text [171]
-libredox 0.1.25 — MIT — https://gitlab.redox-os.org/redox-os/libredox.git
+libredox — MIT — https://gitlab.redox-os.org/redox-os/libredox.git
     licence text [172]
-libsqlite3-sys 0.40.0 — MIT — https://github.com/rusqlite/rusqlite
+libsqlite3-sys — MIT — https://github.com/rusqlite/rusqlite
     licence text [173]
-libwebp-sys 0.9.6 — MIT — https://github.com/NoXF/libwebp-sys
+libwebp-sys — MIT — https://github.com/NoXF/libwebp-sys
     (no licence file in the package; licence as named above)
-link-section 0.19.4 — Apache-2.0 OR MIT — https://github.com/mmastrac/linktime
+link-section — Apache-2.0 OR MIT — https://github.com/mmastrac/linktime
     licence text [69] [3]
-linux-raw-sys 0.12.1 — Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT — https://github.com/sunfishcode/linux-raw-sys
+linux-raw-sys — Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT — https://github.com/sunfishcode/linux-raw-sys
     licence text [4] [174] [3]
-litemap 0.8.3 — Unicode-3.0 — https://github.com/unicode-org/icu4x
+litemap — Unicode-3.0 — https://github.com/unicode-org/icu4x
     licence text [152]
-lock_api 0.4.14 — MIT OR Apache-2.0 — https://github.com/Amanieu/parking_lot
+lock_api — MIT OR Apache-2.0 — https://github.com/Amanieu/parking_lot
     licence text [4] [175]
-log 0.4.35 — MIT OR Apache-2.0 — https://github.com/rust-lang/log
+log — MIT OR Apache-2.0 — https://github.com/rust-lang/log
     licence text [4] [33]
-lru-slab 0.1.3 — MIT OR Apache-2.0 OR Zlib — https://github.com/Ralith/lru-slab
+lru-slab — MIT OR Apache-2.0 OR Zlib — https://github.com/Ralith/lru-slab
     licence text [4] [176] [177]
-markup5ever 0.39.0 — MIT OR Apache-2.0 — https://github.com/servo/html5ever
+markup5ever — MIT OR Apache-2.0 — https://github.com/servo/html5ever
     licence text [4] [139]
-markup5ever 0.40.0 — MIT OR Apache-2.0 — https://github.com/servo/html5ever
-    licence text [4] [139]
-matchers 0.2.0 — MIT — https://github.com/hawkw/matchers
+matchers — MIT — https://github.com/hawkw/matchers
     licence text [178]
-matchit 0.8.4 — MIT AND BSD-3-Clause — https://github.com/ibraheemdev/matchit
+matchit — MIT AND BSD-3-Clause — https://github.com/ibraheemdev/matchit
     licence text [179] [180]
-md-5 0.11.0 — MIT OR Apache-2.0 — https://github.com/RustCrypto/hashes
+md-5 — MIT OR Apache-2.0 — https://github.com/RustCrypto/hashes
     licence text [4] [181]
-memchr 2.8.3 — Unlicense OR MIT — https://github.com/BurntSushi/memchr
+memchr — Unlicense OR MIT — https://github.com/BurntSushi/memchr
     licence text [6] [7] [8]
-memoffset 0.9.1 — MIT — https://github.com/Gilnaa/memoffset
+memoffset — MIT — https://github.com/Gilnaa/memoffset
     licence text [182]
-mime 0.3.18 — MIT OR Apache-2.0 — https://github.com/hyperium/mime
+mime — MIT OR Apache-2.0 — https://github.com/hyperium/mime
     licence text [4] [183]
-mime_guess 2.0.5 — MIT — https://github.com/abonander/mime_guess
+mime_guess — MIT — https://github.com/abonander/mime_guess
     licence text [184]
-minisign-verify 0.3.0 — MIT — https://github.com/jedisct1/rust-minisign-verify
+minisign-verify — MIT — https://github.com/jedisct1/rust-minisign-verify
     licence text [185]
-miniz_oxide 0.8.9 — MIT OR Zlib OR Apache-2.0 — https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide
+miniz_oxide — MIT OR Zlib OR Apache-2.0 — https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide
     licence text [186] [10] [186] [187]
-miniz_oxide 0.9.1 — MIT OR Zlib OR Apache-2.0 — https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide
-    licence text [186] [10] [186] [187]
-mio 1.2.5 — MIT — https://github.com/tokio-rs/mio
+mio — MIT — https://github.com/tokio-rs/mio
     licence text [188]
-moxcms 0.8.1 — BSD-3-Clause OR Apache-2.0 — https://github.com/awxkee/moxcms.git
+moxcms — BSD-3-Clause OR Apache-2.0 — https://github.com/awxkee/moxcms.git
     licence text [189] [190]
-muda 0.20.0 — Apache-2.0 OR MIT — https://github.com/tauri-apps/muda
+muda — Apache-2.0 OR MIT — https://github.com/tauri-apps/muda
     licence text [4] [191] [192]
-multer 3.1.0 — MIT — https://github.com/rwf2/multer
+multer — MIT — https://github.com/rwf2/multer
     licence text [193]
-multiversion_no_op 1.0.0 — Apache-2.0 OR MIT — https://github.com/hsivonen/multiversion_no_op
+multiversion_no_op — Apache-2.0 OR MIT — https://github.com/hsivonen/multiversion_no_op
     licence text [4] [102]
-ndk 0.9.0 — MIT OR Apache-2.0 — https://github.com/rust-mobile/ndk
+ndk — MIT OR Apache-2.0 — https://github.com/rust-mobile/ndk
     (no licence file in the package; licence as named above)
-ndk-context 0.1.1 — MIT OR Apache-2.0 — https://github.com/rust-windowing/android-ndk-rs
+ndk-context — MIT OR Apache-2.0 — https://github.com/rust-windowing/android-ndk-rs
     (no licence file in the package; licence as named above)
-ndk-sys 0.6.0+11769913 — MIT OR Apache-2.0 — https://github.com/rust-mobile/ndk
+ndk-sys — MIT OR Apache-2.0 — https://github.com/rust-mobile/ndk
     (no licence file in the package; licence as named above)
-new_debug_unreachable 1.0.6 — MIT — https://github.com/mbrubeck/rust-debug-unreachable
+new_debug_unreachable — MIT — https://github.com/mbrubeck/rust-debug-unreachable
     licence text [194]
-nix 0.32.0 — MIT — https://github.com/nix-rust/nix
+nix — MIT — https://github.com/nix-rust/nix
     licence text [195]
-nu-ansi-term 0.50.3 — MIT — https://github.com/nushell/nu-ansi-term
+nu-ansi-term — MIT — https://github.com/nushell/nu-ansi-term
     licence text [196]
-num 0.4.3 — MIT OR Apache-2.0 — https://github.com/rust-num/num
+num — MIT OR Apache-2.0 — https://github.com/rust-num/num
     licence text [4] [33]
-num_enum 0.7.6 — BSD-3-Clause OR MIT OR Apache-2.0 — https://github.com/illicitonion/num_enum
+num_enum — BSD-3-Clause OR MIT OR Apache-2.0 — https://github.com/illicitonion/num_enum
     licence text [10] [197] [3]
-num_enum_derive 0.7.6 — BSD-3-Clause OR MIT OR Apache-2.0 — https://github.com/illicitonion/num_enum
+num_enum_derive — BSD-3-Clause OR MIT OR Apache-2.0 — https://github.com/illicitonion/num_enum
     licence text [10] [197] [3]
-num-bigint 0.4.8 — MIT OR Apache-2.0 — https://github.com/rust-num/num-bigint
+num-bigint — MIT OR Apache-2.0 — https://github.com/rust-num/num-bigint
     licence text [4] [33]
-num-bigint-dig 0.8.6 — MIT/Apache-2.0 — https://github.com/dignifiedquire/num-bigint
+num-bigint-dig — MIT/Apache-2.0 — https://github.com/dignifiedquire/num-bigint
     licence text [4] [33]
-num-complex 0.4.6 — MIT OR Apache-2.0 — https://github.com/rust-num/num-complex
+num-complex — MIT OR Apache-2.0 — https://github.com/rust-num/num-complex
     licence text [4] [33]
-num-conv 0.2.2 — MIT OR Apache-2.0 — https://github.com/jhpratt/num-conv
+num-conv — MIT OR Apache-2.0 — https://github.com/jhpratt/num-conv
     licence text [10] [198]
-num-integer 0.1.47 — MIT OR Apache-2.0 — https://github.com/rust-num/num-integer
+num-integer — MIT OR Apache-2.0 — https://github.com/rust-num/num-integer
     licence text [4] [33]
-num-iter 0.1.46 — MIT OR Apache-2.0 — https://github.com/rust-num/num-iter
+num-iter — MIT OR Apache-2.0 — https://github.com/rust-num/num-iter
     licence text [4] [33]
-num-rational 0.4.2 — MIT OR Apache-2.0 — https://github.com/rust-num/num-rational
+num-rational — MIT OR Apache-2.0 — https://github.com/rust-num/num-rational
     licence text [4] [33]
-num-traits 0.2.19 — MIT OR Apache-2.0 — https://github.com/rust-num/num-traits
+num-traits — MIT OR Apache-2.0 — https://github.com/rust-num/num-traits
     licence text [4] [33]
-oauth2 5.0.0 — MIT OR Apache-2.0 — https://github.com/ramosbugs/oauth2-rs
+oauth2 — MIT OR Apache-2.0 — https://github.com/ramosbugs/oauth2-rs
     licence text [4] [46]
-objc2 0.6.5 — MIT — https://github.com/madsmtm/objc2
+objc2 — MIT — https://github.com/madsmtm/objc2
     (no licence file in the package; licence as named above)
-objc2-app-kit 0.3.2 — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
+objc2-app-kit — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
     (no licence file in the package; licence as named above)
-objc2-cloud-kit 0.3.2 — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
+objc2-cloud-kit — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
     (no licence file in the package; licence as named above)
-objc2-core-data 0.3.2 — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
+objc2-core-data — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
     (no licence file in the package; licence as named above)
-objc2-core-foundation 0.3.2 — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
+objc2-core-foundation — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
     (no licence file in the package; licence as named above)
-objc2-core-graphics 0.3.2 — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
+objc2-core-graphics — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
     (no licence file in the package; licence as named above)
-objc2-core-image 0.3.2 — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
+objc2-core-image — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
     (no licence file in the package; licence as named above)
-objc2-core-location 0.3.2 — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
+objc2-core-location — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
     (no licence file in the package; licence as named above)
-objc2-core-text 0.3.2 — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
+objc2-core-text — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
     (no licence file in the package; licence as named above)
-objc2-core-video 0.3.2 — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
+objc2-core-video — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
     (no licence file in the package; licence as named above)
-objc2-encode 4.1.0 — MIT — https://github.com/madsmtm/objc2
+objc2-encode — MIT — https://github.com/madsmtm/objc2
     (no licence file in the package; licence as named above)
-objc2-exception-helper 0.1.1 — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
+objc2-exception-helper — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
     (no licence file in the package; licence as named above)
-objc2-foundation 0.3.2 — MIT — https://github.com/madsmtm/objc2
+objc2-foundation — MIT — https://github.com/madsmtm/objc2
     (no licence file in the package; licence as named above)
-objc2-io-surface 0.3.2 — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
+objc2-io-surface — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
     (no licence file in the package; licence as named above)
-objc2-osa-kit 0.3.2 — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
+objc2-osa-kit — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
     (no licence file in the package; licence as named above)
-objc2-quartz-core 0.3.2 — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
+objc2-quartz-core — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
     (no licence file in the package; licence as named above)
-objc2-system-configuration 0.3.2 — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
+objc2-system-configuration — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
     (no licence file in the package; licence as named above)
-objc2-ui-kit 0.3.2 — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
+objc2-ui-kit — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
     (no licence file in the package; licence as named above)
-objc2-user-notifications 0.3.2 — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
+objc2-user-notifications — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
     (no licence file in the package; licence as named above)
-objc2-web-kit 0.3.2 — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
+objc2-web-kit — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
     (no licence file in the package; licence as named above)
-once_cell 1.21.4 — MIT OR Apache-2.0 — https://github.com/matklad/once_cell
+once_cell — MIT OR Apache-2.0 — https://github.com/matklad/once_cell
     licence text [4] [3]
-openidconnect 4.1.0 — MIT — https://github.com/ramosbugs/openidconnect-rs
+openidconnect — MIT — https://github.com/ramosbugs/openidconnect-rs
     licence text [199]
-openssl-probe 0.2.2 — MIT OR Apache-2.0 — https://github.com/rustls/openssl-probe
+openssl-probe — MIT OR Apache-2.0 — https://github.com/rustls/openssl-probe
     licence text [4] [46]
-option-ext 0.2.0 — MPL-2.0 — https://github.com/soc/option-ext.git
+option-ext — MPL-2.0 — https://github.com/soc/option-ext.git
     licence text [200]
-ordered-float 2.10.1 — MIT — https://github.com/reem/rust-ordered-float
+ordered-float — MIT — https://github.com/reem/rust-ordered-float
     licence text [194]
-ordered-stream 0.2.0 — MIT OR Apache-2.0 — https://github.com/danieldg/ordered-stream
+ordered-stream — MIT OR Apache-2.0 — https://github.com/danieldg/ordered-stream
     licence text [4] [3]
-osakit 0.3.1 — MIT OR Apache-2.0 — https://github.com/mdevils/rust-osakit
+osakit — MIT OR Apache-2.0 — https://github.com/mdevils/rust-osakit
     licence text [10] [201]
-p256 0.14.0 — Apache-2.0 OR MIT — https://github.com/RustCrypto/elliptic-curves
+p256 — Apache-2.0 OR MIT — https://github.com/RustCrypto/elliptic-curves
     licence text [4] [99]
-p384 0.14.0 — Apache-2.0 OR MIT — https://github.com/RustCrypto/elliptic-curves
+p384 — Apache-2.0 OR MIT — https://github.com/RustCrypto/elliptic-curves
     licence text [4] [202]
-pango 0.18.3 — MIT — https://github.com/gtk-rs/gtk-rs-core
+pango — MIT — https://github.com/gtk-rs/gtk-rs-core
     licence text [3]
-pango-sys 0.18.0 — MIT — https://github.com/gtk-rs/gtk-rs-core
+pango-sys — MIT — https://github.com/gtk-rs/gtk-rs-core
     licence text [3]
-parking 2.2.1 — Apache-2.0 OR MIT — https://github.com/smol-rs/parking
+parking — Apache-2.0 OR MIT — https://github.com/smol-rs/parking
     licence text [4] [3] [203]
-parking_lot 0.12.5 — MIT OR Apache-2.0 — https://github.com/Amanieu/parking_lot
+parking_lot — MIT OR Apache-2.0 — https://github.com/Amanieu/parking_lot
     licence text [4] [175]
-parking_lot_core 0.9.12 — MIT OR Apache-2.0 — https://github.com/Amanieu/parking_lot
+parking_lot_core — MIT OR Apache-2.0 — https://github.com/Amanieu/parking_lot
     licence text [4] [175]
-password-hash 0.6.1 — MIT OR Apache-2.0 — https://github.com/RustCrypto/traits
+password-hash — MIT OR Apache-2.0 — https://github.com/RustCrypto/traits
     licence text [4] [99]
-pem-rfc7468 0.7.0 — Apache-2.0 OR MIT — https://github.com/RustCrypto/formats/tree/master/pem-rfc7468
-    licence text [4] [204]
-pem-rfc7468 1.0.0 — Apache-2.0 OR MIT — https://github.com/RustCrypto/formats
-    licence text [4] [205]
-percent-encoding 2.3.2 — MIT OR Apache-2.0 — https://github.com/servo/rust-url/
+pem-rfc7468 — Apache-2.0 OR MIT — https://github.com/RustCrypto/formats/tree/master/pem-rfc7468
+    licence text [4] [204] [205]
+percent-encoding — MIT OR Apache-2.0 — https://github.com/servo/rust-url/
     licence text [4] [153]
-phc 0.6.1 — Apache-2.0 OR MIT — https://github.com/RustCrypto/formats
+phc — Apache-2.0 OR MIT — https://github.com/RustCrypto/formats
     licence text [4] [15]
-phf 0.13.1 — MIT — https://github.com/rust-phf/rust-phf
+phf — MIT — https://github.com/rust-phf/rust-phf
     licence text [206]
-phf 0.14.0 — MIT — https://github.com/rust-phf/rust-phf
+phf_codegen — MIT — https://github.com/rust-phf/rust-phf
     licence text [206]
-phf_codegen 0.13.1 — MIT — https://github.com/rust-phf/rust-phf
+phf_generator — MIT — https://github.com/rust-phf/rust-phf
     licence text [206]
-phf_codegen 0.14.0 — MIT — https://github.com/rust-phf/rust-phf
+phf_macros — MIT — https://github.com/rust-phf/rust-phf
     licence text [206]
-phf_generator 0.13.1 — MIT — https://github.com/rust-phf/rust-phf
+phf_shared — MIT — https://github.com/rust-phf/rust-phf
     licence text [206]
-phf_generator 0.14.0 — MIT — https://github.com/rust-phf/rust-phf
-    licence text [206]
-phf_macros 0.13.1 — MIT — https://github.com/rust-phf/rust-phf
-    licence text [206]
-phf_macros 0.14.0 — MIT — https://github.com/rust-phf/rust-phf
-    licence text [206]
-phf_shared 0.13.1 — MIT — https://github.com/rust-phf/rust-phf
-    licence text [206]
-phf_shared 0.14.0 — MIT — https://github.com/rust-phf/rust-phf
-    licence text [206]
-pin-project-lite 0.2.17 — Apache-2.0 OR MIT — https://github.com/taiki-e/pin-project-lite
+pin-project-lite — Apache-2.0 OR MIT — https://github.com/taiki-e/pin-project-lite
     licence text [10] [3]
-piper 0.2.5 — MIT OR Apache-2.0 — https://github.com/smol-rs/piper
+piper — MIT OR Apache-2.0 — https://github.com/smol-rs/piper
     licence text [4] [3]
-pkcs1 0.7.5 — Apache-2.0 OR MIT — https://github.com/RustCrypto/formats/tree/master/pkcs1
+pkcs1 — Apache-2.0 OR MIT — https://github.com/RustCrypto/formats/tree/master/pkcs1
     licence text [4] [207]
-pkcs8 0.10.2 — Apache-2.0 OR MIT — https://github.com/RustCrypto/formats/tree/master/pkcs8
-    licence text [4] [83]
-pkcs8 0.11.0 — Apache-2.0 OR MIT — https://github.com/RustCrypto/formats
-    licence text [4] [57]
-pkg-config 0.3.34 — MIT OR Apache-2.0 — https://github.com/rust-lang/pkg-config-rs
+pkcs8 — Apache-2.0 OR MIT — https://github.com/RustCrypto/formats/tree/master/pkcs8
+    licence text [4] [83] [58]
+pkg-config — MIT OR Apache-2.0 — https://github.com/rust-lang/pkg-config-rs
     licence text [4] [46]
-plist 1.10.4 — MIT — https://github.com/ebarnard/rust-plist/
+plist — MIT — https://github.com/ebarnard/rust-plist/
     licence text [208]
-png 0.18.1 — MIT OR Apache-2.0 — https://github.com/image-rs/image-png
+png — MIT OR Apache-2.0 — https://github.com/image-rs/image-png
     licence text [4] [209]
-polling 3.11.0 — Apache-2.0 OR MIT — https://github.com/smol-rs/polling
+polling — Apache-2.0 OR MIT — https://github.com/smol-rs/polling
     licence text [4] [3]
-portable-atomic 1.15.0 — Apache-2.0 OR MIT — https://github.com/taiki-e/portable-atomic
+portable-atomic — Apache-2.0 OR MIT — https://github.com/taiki-e/portable-atomic
     licence text [10] [3]
-portable-atomic-util 0.2.8 — Apache-2.0 OR MIT — https://github.com/taiki-e/portable-atomic-util
+portable-atomic-util — Apache-2.0 OR MIT — https://github.com/taiki-e/portable-atomic-util
     licence text [10] [3]
-potential_utf 0.1.6 — Unicode-3.0 — https://github.com/unicode-org/icu4x
+potential_utf — Unicode-3.0 — https://github.com/unicode-org/icu4x
     licence text [152]
-powerfmt 0.2.1 — MIT OR Apache-2.0 — https://github.com/jhpratt/powerfmt
+powerfmt — MIT OR Apache-2.0 — https://github.com/jhpratt/powerfmt
     licence text [210] [211]
-ppv-lite86 0.2.21 — MIT OR Apache-2.0 — https://github.com/cryptocorrosion/cryptocorrosion
+ppv-lite86 — MIT OR Apache-2.0 — https://github.com/cryptocorrosion/cryptocorrosion
     licence text [212] [213]
-precomputed-hash 0.1.1 — MIT — https://github.com/emilio/precomputed-hash
+precomputed-hash — MIT — https://github.com/emilio/precomputed-hash
     licence text [214]
-primefield 0.14.0 — Apache-2.0 OR MIT — https://github.com/RustCrypto/elliptic-curves
+primefield — Apache-2.0 OR MIT — https://github.com/RustCrypto/elliptic-curves
     licence text [4] [215]
-primeorder 0.14.0 — Apache-2.0 OR MIT — https://github.com/RustCrypto/elliptic-curves
+primeorder — Apache-2.0 OR MIT — https://github.com/RustCrypto/elliptic-curves
     licence text [4] [216]
-proc-macro-crate 1.3.1 — MIT OR Apache-2.0 — https://github.com/bkchr/proc-macro-crate
+proc-macro-crate — MIT OR Apache-2.0 — https://github.com/bkchr/proc-macro-crate
     licence text [2] [3]
-proc-macro-crate 2.0.2 — MIT OR Apache-2.0 — https://github.com/bkchr/proc-macro-crate
-    licence text [2] [3]
-proc-macro-crate 3.5.0 — MIT OR Apache-2.0 — https://github.com/bkchr/proc-macro-crate
-    licence text [2] [3]
-proc-macro-error 1.0.4 — MIT OR Apache-2.0 — https://gitlab.com/CreepySkeleton/proc-macro-error
+proc-macro-error — MIT OR Apache-2.0 — https://gitlab.com/CreepySkeleton/proc-macro-error
     licence text [217] [218]
-proc-macro-error-attr 1.0.4 — MIT OR Apache-2.0 — https://gitlab.com/CreepySkeleton/proc-macro-error
+proc-macro-error-attr — MIT OR Apache-2.0 — https://gitlab.com/CreepySkeleton/proc-macro-error
     licence text [217] [218]
-proc-macro2 1.0.107 — MIT OR Apache-2.0 — https://github.com/dtolnay/proc-macro2
+proc-macro2 — MIT OR Apache-2.0 — https://github.com/dtolnay/proc-macro2
     licence text [10] [3]
-pxfm 0.1.30 — BSD-3-Clause OR Apache-2.0 — https://github.com/awxkee/pxfm
+pxfm — BSD-3-Clause OR Apache-2.0 — https://github.com/awxkee/pxfm
     licence text [189] [190]
-quick-error 2.0.1 — MIT/Apache-2.0 — http://github.com/tailhook/quick-error
+quick-error — MIT/Apache-2.0 — http://github.com/tailhook/quick-error
     licence text [69] [219]
-quick-xml 0.42.0 — MIT — https://github.com/tafia/quick-xml
+quick-xml — MIT — https://github.com/tafia/quick-xml
     licence text [220]
-quinn 0.11.12 — MIT OR Apache-2.0 — https://github.com/quinn-rs/quinn
+quinn — MIT OR Apache-2.0 — https://github.com/quinn-rs/quinn
     licence text [4] [221]
-quinn-proto 0.11.19 — MIT OR Apache-2.0 — https://github.com/quinn-rs/quinn
+quinn-proto — MIT OR Apache-2.0 — https://github.com/quinn-rs/quinn
     licence text [4] [221]
-quinn-udp 0.5.16 — MIT OR Apache-2.0 — https://github.com/quinn-rs/quinn
+quinn-udp — MIT OR Apache-2.0 — https://github.com/quinn-rs/quinn
     licence text [4] [221]
-quote 1.0.47 — MIT OR Apache-2.0 — https://github.com/dtolnay/quote
+quote — MIT OR Apache-2.0 — https://github.com/dtolnay/quote
     licence text [10] [3]
-r-efi 5.3.0 — MIT OR Apache-2.0 OR LGPL-2.1-or-later — https://github.com/r-efi/r-efi
+r-efi — MIT OR Apache-2.0 OR LGPL-2.1-or-later — https://github.com/r-efi/r-efi
     (no licence file in the package; licence as named above)
-r-efi 6.0.0 — MIT OR Apache-2.0 OR LGPL-2.1-or-later — https://github.com/r-efi/r-efi
-    (no licence file in the package; licence as named above)
-rand 0.10.4 — MIT OR Apache-2.0 — https://github.com/rust-random/rand
+rand — MIT OR Apache-2.0 — https://github.com/rust-random/rand
     licence text [222] [223]
-rand 0.8.8 — MIT OR Apache-2.0 — https://github.com/rust-random/rand
-    licence text [222] [223]
-rand 0.9.5 — MIT OR Apache-2.0 — https://github.com/rust-random/rand
-    licence text [222] [223]
-rand_chacha 0.3.1 — MIT OR Apache-2.0 — https://github.com/rust-random/rand
-    licence text [128] [223]
-rand_chacha 0.9.0 — MIT OR Apache-2.0 — https://github.com/rust-random/rand
-    licence text [222] [223]
-rand_core 0.10.1 — MIT OR Apache-2.0 — https://github.com/rust-random/rand_core
-    licence text [224] [225]
-rand_core 0.6.4 — MIT OR Apache-2.0 — https://github.com/rust-random/rand
-    licence text [224] [223]
-rand_core 0.9.5 — MIT OR Apache-2.0 — https://github.com/rust-random/rand
-    licence text [224] [223]
-rand_pcg 0.10.2 — MIT OR Apache-2.0 — https://github.com/rust-random/rngs
+rand_chacha — MIT OR Apache-2.0 — https://github.com/rust-random/rand
+    licence text [128] [223] [222]
+rand_core — MIT OR Apache-2.0 — https://github.com/rust-random/rand
+    licence text [224] [223] [225]
+rand_pcg — MIT OR Apache-2.0 — https://github.com/rust-random/rngs
     licence text [224] [226]
-raw-window-handle 0.6.2 — MIT OR Apache-2.0 OR Zlib — https://github.com/rust-windowing/raw-window-handle
+raw-window-handle — MIT OR Apache-2.0 OR Zlib — https://github.com/rust-windowing/raw-window-handle
     licence text [10] [227] [228]
-redox_syscall 0.5.18 — MIT — https://gitlab.redox-os.org/redox-os/syscall
+redox_syscall — MIT — https://gitlab.redox-os.org/redox-os/syscall
     licence text [229]
-redox_users 0.5.3 — MIT — https://gitlab.redox-os.org/redox-os/users
+redox_users — MIT — https://gitlab.redox-os.org/redox-os/users
     licence text [230]
-ref-cast 1.0.27 — MIT OR Apache-2.0 — https://github.com/dtolnay/ref-cast
+ref-cast — MIT OR Apache-2.0 — https://github.com/dtolnay/ref-cast
     licence text [10] [3]
-ref-cast-impl 1.0.27 — MIT OR Apache-2.0 — https://github.com/dtolnay/ref-cast
+ref-cast-impl — MIT OR Apache-2.0 — https://github.com/dtolnay/ref-cast
     licence text [10] [3]
-regex 1.13.2 — MIT OR Apache-2.0 — https://github.com/rust-lang/regex
+regex — MIT OR Apache-2.0 — https://github.com/rust-lang/regex
     licence text [4] [33]
-regex-automata 0.4.19 — MIT OR Apache-2.0 — https://github.com/rust-lang/regex
+regex-automata — MIT OR Apache-2.0 — https://github.com/rust-lang/regex
     licence text [4] [33]
-regex-syntax 0.8.12 — MIT OR Apache-2.0 — https://github.com/rust-lang/regex
+regex-syntax — MIT OR Apache-2.0 — https://github.com/rust-lang/regex
     licence text [4] [33]
-reqwest 0.13.5 — MIT OR Apache-2.0 — https://github.com/seanmonstar/reqwest
+reqwest — MIT OR Apache-2.0 — https://github.com/seanmonstar/reqwest
     licence text [231] [232]
-rfc6979 0.6.0 — Apache-2.0 OR MIT — https://github.com/RustCrypto/signatures
+rfc6979 — Apache-2.0 OR MIT — https://github.com/RustCrypto/signatures
     licence text [95] [96]
-ring 0.17.14 — Apache-2.0 AND ISC — https://github.com/briansmith/ring
+ring — Apache-2.0 AND ISC — https://github.com/briansmith/ring
     licence text [233] [234] [235]
-rsa 0.9.10 — MIT OR Apache-2.0 — https://github.com/RustCrypto/RSA
+rsa — MIT OR Apache-2.0 — https://github.com/RustCrypto/RSA
     licence text [4] [3]
-rust-embed 8.14.0 — MIT — https://pyrossh.dev/repos/rust-embed
+rust-embed — MIT — https://pyrossh.dev/repos/rust-embed
     licence text [236]
-rust-embed-impl 8.14.0 — MIT — https://pyrossh.dev/repos/rust-embed
+rust-embed-impl — MIT — https://pyrossh.dev/repos/rust-embed
     licence text [236]
-rust-embed-utils 8.14.0 — MIT — https://pyrossh.dev/repos/rust-embed
+rust-embed-utils — MIT — https://pyrossh.dev/repos/rust-embed
     licence text [236]
-rustc_version 0.4.1 — MIT OR Apache-2.0 — https://github.com/djc/rustc-version-rs
+rustc_version — MIT OR Apache-2.0 — https://github.com/djc/rustc-version-rs
     licence text [4] [175]
-rustc-hash 2.1.3 — Apache-2.0 OR MIT — https://github.com/rust-lang/rustc-hash
+rustc-hash — Apache-2.0 OR MIT — https://github.com/rust-lang/rustc-hash
     licence text [10] [3]
-rustix 1.1.6 — Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT — https://github.com/bytecodealliance/rustix
+rustix — Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT — https://github.com/bytecodealliance/rustix
     licence text [4] [174] [3]
-rustls 0.23.46 — Apache-2.0 OR ISC OR MIT — https://github.com/rustls/rustls
+rustls — Apache-2.0 OR ISC OR MIT — https://github.com/rustls/rustls
     licence text [4] [146] [147]
-rustls-native-certs 0.8.5 — Apache-2.0 OR ISC OR MIT — https://github.com/rustls/rustls-native-certs
+rustls-native-certs — Apache-2.0 OR ISC OR MIT — https://github.com/rustls/rustls-native-certs
     licence text [237] [4] [146] [147]
-rustls-pki-types 1.16.0 — MIT OR Apache-2.0 — https://github.com/rustls/pki-types
+rustls-pki-types — MIT OR Apache-2.0 — https://github.com/rustls/pki-types
     licence text [238] [239]
-rustls-platform-verifier 0.7.1 — MIT OR Apache-2.0 — https://github.com/rustls/rustls-platform-verifier
+rustls-platform-verifier — MIT OR Apache-2.0 — https://github.com/rustls/rustls-platform-verifier
     licence text [4] [240]
-rustls-platform-verifier-android 0.2.0 — MIT OR Apache-2.0 — https://github.com/rustls/rustls-platform-verifier
+rustls-platform-verifier-android — MIT OR Apache-2.0 — https://github.com/rustls/rustls-platform-verifier
     (no licence file in the package; licence as named above)
-rustls-webpki 0.103.17 — ISC — https://github.com/rustls/webpki
+rustls-webpki — ISC — https://github.com/rustls/webpki
     licence text [241]
-rustversion 1.0.23 — MIT OR Apache-2.0 — https://github.com/dtolnay/rustversion
+rustversion — MIT OR Apache-2.0 — https://github.com/dtolnay/rustversion
     licence text [10] [3]
-ryu 1.0.23 — Apache-2.0 OR BSL-1.0 — https://github.com/dtolnay/ryu
+ryu — Apache-2.0 OR BSL-1.0 — https://github.com/dtolnay/ryu
     licence text [10] [242]
-same-file 1.0.6 — Unlicense/MIT — https://github.com/BurntSushi/same-file
+same-file — Unlicense/MIT — https://github.com/BurntSushi/same-file
     licence text [6] [243] [8]
-schannel 0.1.30 — MIT — https://github.com/steffengy/schannel-rs
+schannel — MIT — https://github.com/steffengy/schannel-rs
     licence text [244]
-schemars 0.8.22 — MIT — https://github.com/GREsau/schemars
+schemars — MIT — https://github.com/GREsau/schemars
     licence text [245]
-schemars 0.9.0 — MIT — https://github.com/GREsau/schemars
+schemars_derive — MIT — https://github.com/GREsau/schemars
     licence text [245]
-schemars 1.2.3 — MIT — https://github.com/GREsau/schemars
-    licence text [245]
-schemars_derive 0.8.22 — MIT — https://github.com/GREsau/schemars
-    licence text [245]
-scopeguard 1.2.0 — MIT OR Apache-2.0 — https://github.com/bluss/scopeguard
+scopeguard — MIT OR Apache-2.0 — https://github.com/bluss/scopeguard
     licence text [4] [246]
-sec1 0.8.1 — Apache-2.0 OR MIT — https://github.com/RustCrypto/formats
+sec1 — Apache-2.0 OR MIT — https://github.com/RustCrypto/formats
     licence text [4] [15]
-secret-service 5.2.0 — MIT OR Apache-2.0 — https://github.com/hwchen/secret-service-rs.git
+secret-service — MIT OR Apache-2.0 — https://github.com/hwchen/secret-service-rs.git
     licence text [4] [247]
-security-framework 3.7.0 — MIT OR Apache-2.0 — https://github.com/kornelski/rust-security-framework
+security-framework — MIT OR Apache-2.0 — https://github.com/kornelski/rust-security-framework
     licence text [4] [248]
-security-framework-sys 2.17.0 — MIT OR Apache-2.0 — https://github.com/kornelski/rust-security-framework
+security-framework-sys — MIT OR Apache-2.0 — https://github.com/kornelski/rust-security-framework
     licence text [4] [248]
-selectors 0.38.0 — MPL-2.0 — https://github.com/servo/stylo
+selectors — MPL-2.0 — https://github.com/servo/stylo
     (no licence file in the package; licence as named above)
-selectors 0.41.0 — MPL-2.0 — https://github.com/servo/stylo
-    (no licence file in the package; licence as named above)
-semver 1.0.28 — MIT OR Apache-2.0 — https://github.com/dtolnay/semver
+semver — MIT OR Apache-2.0 — https://github.com/dtolnay/semver
     licence text [10] [3]
-serde 1.0.229 — MIT OR Apache-2.0 — https://github.com/serde-rs/serde
+serde — MIT OR Apache-2.0 — https://github.com/serde-rs/serde
     licence text [10] [3]
-serde_core 1.0.229 — MIT OR Apache-2.0 — https://github.com/serde-rs/serde
+serde_core — MIT OR Apache-2.0 — https://github.com/serde-rs/serde
     licence text [10] [3]
-serde_derive 1.0.229 — MIT OR Apache-2.0 — https://github.com/serde-rs/serde
+serde_derive — MIT OR Apache-2.0 — https://github.com/serde-rs/serde
     licence text [10] [3]
-serde_derive_internals 0.29.1 — MIT OR Apache-2.0 — https://github.com/serde-rs/serde
+serde_derive_internals — MIT OR Apache-2.0 — https://github.com/serde-rs/serde
     licence text [10] [3]
-serde_json 1.0.154 — MIT OR Apache-2.0 — https://github.com/serde-rs/json
+serde_json — MIT OR Apache-2.0 — https://github.com/serde-rs/json
     licence text [10] [3]
-serde_path_to_error 0.1.20 — MIT OR Apache-2.0 — https://github.com/dtolnay/path-to-error
+serde_path_to_error — MIT OR Apache-2.0 — https://github.com/dtolnay/path-to-error
     licence text [10] [3]
-serde_plain 1.0.2 — MIT/Apache-2.0 — https://github.com/mitsuhiko/serde-plain
+serde_plain — MIT/Apache-2.0 — https://github.com/mitsuhiko/serde-plain
     licence text [4] [33]
-serde_repr 0.1.21 — MIT OR Apache-2.0 — https://github.com/dtolnay/serde-repr
+serde_repr — MIT OR Apache-2.0 — https://github.com/dtolnay/serde-repr
     licence text [10] [3]
-serde_spanned 0.6.9 — MIT OR Apache-2.0 — https://github.com/toml-rs/toml
-    licence text [69] [249]
-serde_spanned 1.1.3 — MIT OR Apache-2.0 — https://github.com/toml-rs/toml
-    licence text [250] [249]
-serde_urlencoded 0.7.1 — MIT/Apache-2.0 — https://github.com/nox/serde_urlencoded
+serde_spanned — MIT OR Apache-2.0 — https://github.com/toml-rs/toml
+    licence text [69] [249] [250]
+serde_urlencoded — MIT/Apache-2.0 — https://github.com/nox/serde_urlencoded
     licence text [10] [251]
-serde_with 3.24.0 — MIT OR Apache-2.0 — https://github.com/jonasbb/serde_with/
+serde_with — MIT OR Apache-2.0 — https://github.com/jonasbb/serde_with/
     licence text [4] [98]
-serde_with_macros 3.24.0 — MIT OR Apache-2.0 — https://github.com/jonasbb/serde_with/
+serde_with_macros — MIT OR Apache-2.0 — https://github.com/jonasbb/serde_with/
     licence text [4] [98]
-serde-untagged 0.1.9 — MIT OR Apache-2.0 — https://github.com/dtolnay/serde-untagged
+serde-untagged — MIT OR Apache-2.0 — https://github.com/dtolnay/serde-untagged
     licence text [10] [3]
-serde-value 0.7.0 — MIT — https://github.com/arcnmx/serde-value
+serde-value — MIT — https://github.com/arcnmx/serde-value
     licence text [252]
-serdect 0.4.3 — Apache-2.0 OR MIT — https://github.com/RustCrypto/formats
+serdect — Apache-2.0 OR MIT — https://github.com/RustCrypto/formats
     licence text [4] [253]
-serialize-to-javascript 0.1.2 — MIT OR Apache-2.0 — https://github.com/chippers/serialize-to-javascript
+serialize-to-javascript — MIT OR Apache-2.0 — https://github.com/chippers/serialize-to-javascript
     licence text [4] [254]
-serialize-to-javascript-impl 0.1.2 — MIT OR Apache-2.0 — https://github.com/chippers/serialize-to-javascript
+serialize-to-javascript-impl — MIT OR Apache-2.0 — https://github.com/chippers/serialize-to-javascript
     licence text [4] [254]
-servo_arc 0.4.3 — MIT OR Apache-2.0 — https://github.com/servo/stylo
+servo_arc — MIT OR Apache-2.0 — https://github.com/servo/stylo
     licence text [4] [3]
-servo_arc 0.5.0 — MIT OR Apache-2.0 — https://github.com/servo/stylo
-    licence text [4] [3]
-sha1 0.10.7 — MIT OR Apache-2.0 — https://github.com/RustCrypto/hashes
-    licence text [4] [255]
-sha1 0.11.0 — MIT OR Apache-2.0 — https://github.com/RustCrypto/hashes
-    licence text [4] [181]
-sha1_smol 1.0.1 — BSD-3-Clause — https://github.com/mitsuhiko/sha1-smol
+sha1 — MIT OR Apache-2.0 — https://github.com/RustCrypto/hashes
+    licence text [4] [255] [181]
+sha1_smol — BSD-3-Clause — https://github.com/mitsuhiko/sha1-smol
     licence text [256]
-sha2 0.10.9 — MIT OR Apache-2.0 — https://github.com/RustCrypto/hashes
-    licence text [4] [255]
-sha2 0.11.1 — MIT OR Apache-2.0 — https://github.com/RustCrypto/hashes
-    licence text [4] [181]
-sharded-slab 0.1.7 — MIT — https://github.com/hawkw/sharded-slab
+sha2 — MIT OR Apache-2.0 — https://github.com/RustCrypto/hashes
+    licence text [4] [255] [181]
+sharded-slab — MIT — https://github.com/hawkw/sharded-slab
     licence text [178]
-shellexpand 3.1.2 — MIT/Apache-2.0 — https://gitlab.com/ijackson/rust-shellexpand
+shellexpand — MIT/Apache-2.0 — https://gitlab.com/ijackson/rust-shellexpand
     licence text [4] [257]
-shlex 2.0.1 — MIT OR Apache-2.0 — https://github.com/comex/rust-shlex
+shlex — MIT OR Apache-2.0 — https://github.com/comex/rust-shlex
     licence text [258] [259]
-signal-hook-registry 1.4.8 — MIT OR Apache-2.0 — https://github.com/vorner/signal-hook
+signal-hook-registry — MIT OR Apache-2.0 — https://github.com/vorner/signal-hook
     licence text [4] [260]
-signature 2.2.0 — Apache-2.0 OR MIT — https://github.com/RustCrypto/traits/tree/master/signature
-    licence text [4] [261]
-signature 3.0.0 — Apache-2.0 OR MIT — https://github.com/RustCrypto/traits
-    licence text [4] [96]
-simd_cesu8 1.2.0 — Apache-2.0 OR MIT — https://github.com/seancroach/simd_cesu8
+signature — Apache-2.0 OR MIT — https://github.com/RustCrypto/traits/tree/master/signature
+    licence text [4] [261] [96]
+simd_cesu8 — Apache-2.0 OR MIT — https://github.com/seancroach/simd_cesu8
     licence text [4] [3]
-simd-adler32 0.3.10 — MIT — https://github.com/mcountryman/simd-adler32
+simd-adler32 — MIT — https://github.com/mcountryman/simd-adler32
     licence text [262]
-simdutf8 0.1.5 — MIT OR Apache-2.0 — https://github.com/rusticstuff/simdutf8
+simdutf8 — MIT OR Apache-2.0 — https://github.com/rusticstuff/simdutf8
     licence text [10] [111]
-siphasher 1.0.4 — MIT OR Apache-2.0 — https://github.com/jedisct1/rust-siphash
+siphasher — MIT OR Apache-2.0 — https://github.com/jedisct1/rust-siphash
     licence text [263] [4] [3]
-slab 0.4.12 — MIT — https://github.com/tokio-rs/slab
+slab — MIT — https://github.com/tokio-rs/slab
     licence text [264]
-smallvec 1.16.6 — MIT OR Apache-2.0 — https://github.com/smallvec/smallvec
+smallvec — MIT OR Apache-2.0 — https://github.com/smallvec/smallvec
     licence text [4] [265]
-socket2 0.6.5 — MIT OR Apache-2.0 — https://github.com/rust-lang/socket2
+socket2 — MIT OR Apache-2.0 — https://github.com/rust-lang/socket2
     licence text [4] [46]
-softbuffer 0.4.8 — MIT OR Apache-2.0 — https://github.com/rust-windowing/softbuffer
+softbuffer — MIT OR Apache-2.0 — https://github.com/rust-windowing/softbuffer
     licence text [266] [267]
-soup3 0.5.0 — MIT — https://gitlab.gnome.org/World/Rust/soup3-rs
+soup3 — MIT — https://gitlab.gnome.org/World/Rust/soup3-rs
     licence text [161]
-soup3-sys 0.5.0 — MIT — https://gitlab.gnome.org/World/Rust/soup3-rs
+soup3-sys — MIT — https://gitlab.gnome.org/World/Rust/soup3-rs
     licence text [161]
-spin 0.9.9 — MIT — https://github.com/mvdnes/spin-rs.git
+spin — MIT — https://github.com/mvdnes/spin-rs.git
     licence text [268]
-spki 0.7.3 — Apache-2.0 OR MIT — https://github.com/RustCrypto/formats/tree/master/spki
-    licence text [4] [207]
-spki 0.8.1 — Apache-2.0 OR MIT — https://github.com/RustCrypto/formats
-    licence text [4] [15]
-sqlx 0.9.1 — MIT OR Apache-2.0 — https://github.com/launchbadge/sqlx
+spki — Apache-2.0 OR MIT — https://github.com/RustCrypto/formats/tree/master/spki
+    licence text [4] [207] [15]
+sqlx — MIT OR Apache-2.0 — https://github.com/launchbadge/sqlx
     licence text [269] [270]
-sqlx-core 0.9.1 — MIT OR Apache-2.0 — https://github.com/launchbadge/sqlx
+sqlx-core — MIT OR Apache-2.0 — https://github.com/launchbadge/sqlx
     licence text [269] [270]
-sqlx-macros 0.9.1 — MIT OR Apache-2.0 — https://github.com/launchbadge/sqlx
+sqlx-macros — MIT OR Apache-2.0 — https://github.com/launchbadge/sqlx
     licence text [269] [270]
-sqlx-macros-core 0.9.1 — MIT OR Apache-2.0 — https://github.com/launchbadge/sqlx
+sqlx-macros-core — MIT OR Apache-2.0 — https://github.com/launchbadge/sqlx
     licence text [269] [270]
-sqlx-mysql 0.9.1 — MIT OR Apache-2.0 — https://github.com/launchbadge/sqlx
+sqlx-mysql — MIT OR Apache-2.0 — https://github.com/launchbadge/sqlx
     licence text [269] [270]
-sqlx-postgres 0.9.1 — MIT OR Apache-2.0 — https://github.com/launchbadge/sqlx
+sqlx-postgres — MIT OR Apache-2.0 — https://github.com/launchbadge/sqlx
     licence text [269] [270]
-sqlx-sqlite 0.9.1 — MIT OR Apache-2.0 — https://github.com/launchbadge/sqlx
+sqlx-sqlite — MIT OR Apache-2.0 — https://github.com/launchbadge/sqlx
     licence text [269] [270]
-stable_deref_trait 1.2.1 — MIT OR Apache-2.0 — https://github.com/storyyeller/stable_deref_trait
+stable_deref_trait — MIT OR Apache-2.0 — https://github.com/storyyeller/stable_deref_trait
     licence text [4] [271]
-static_vcruntime 3.0.0 — MIT OR Apache-2.0 OR Zlib — https://github.com/ChrisDenton/static_vcruntime
+static_vcruntime — MIT OR Apache-2.0 OR Zlib — https://github.com/ChrisDenton/static_vcruntime
     licence text [272] [4] [273] [274]
-string_cache 0.11.0 — MIT OR Apache-2.0 — https://github.com/servo/string-cache
+string_cache — MIT OR Apache-2.0 — https://github.com/servo/string-cache
     licence text [4] [64]
-string_cache 0.9.0 — MIT OR Apache-2.0 — https://github.com/servo/string-cache
+string_cache_codegen — MIT OR Apache-2.0 — https://github.com/servo/string-cache
     licence text [4] [64]
-string_cache_codegen 0.11.2 — MIT OR Apache-2.0 — https://github.com/servo/string-cache
-    licence text [4] [64]
-string_cache_codegen 0.6.1 — MIT OR Apache-2.0 — https://github.com/servo/string-cache
-    licence text [4] [64]
-stringprep 0.1.5 — MIT/Apache-2.0 — https://github.com/sfackler/rust-stringprep
+stringprep — MIT/Apache-2.0 — https://github.com/sfackler/rust-stringprep
     licence text [69] [275]
-strsim 0.11.1 — MIT — https://github.com/rapidfuzz/strsim-rs
+strsim — MIT — https://github.com/rapidfuzz/strsim-rs
     licence text [276]
-subtle 2.6.1 — BSD-3-Clause — https://github.com/dalek-cryptography/subtle
+subtle — BSD-3-Clause — https://github.com/dalek-cryptography/subtle
     licence text [277]
-swift-rs 1.0.9 — MIT OR Apache-2.0 — https://github.com/Brendonovich/swift-rs
+swift-rs — MIT OR Apache-2.0 — https://github.com/Brendonovich/swift-rs
     licence text [278] [279]
-symlink 0.1.0 — MIT/Apache-2.0 — https://gitlab.com/chris-morgan/symlink
+symlink — MIT/Apache-2.0 — https://gitlab.com/chris-morgan/symlink
     licence text [4] [280]
-syn 1.0.109 — MIT OR Apache-2.0 — https://github.com/dtolnay/syn
-    licence text [4] [3]
-syn 2.0.119 — MIT OR Apache-2.0 — https://github.com/dtolnay/syn
-    licence text [10] [3]
-syn 3.0.10 — MIT OR Apache-2.0 — https://github.com/dtolnay/syn
-    licence text [10] [3]
-sync_wrapper 1.0.2 — Apache-2.0 — https://github.com/Actyx/sync_wrapper
+syn — MIT OR Apache-2.0 — https://github.com/dtolnay/syn
+    licence text [4] [3] [10]
+sync_wrapper — Apache-2.0 — https://github.com/Actyx/sync_wrapper
     licence text [10]
-synstructure 0.14.0 — MIT — https://github.com/mystor/synstructure
+synstructure — MIT — https://github.com/mystor/synstructure
     licence text [281]
-system-configuration 0.7.0 — MIT OR Apache-2.0 — https://github.com/mullvad/system-configuration-rs
+system-configuration — MIT OR Apache-2.0 — https://github.com/mullvad/system-configuration-rs
     licence text [4] [282]
-system-configuration-sys 0.6.0 — MIT OR Apache-2.0 — https://github.com/mullvad/system-configuration-rs
+system-configuration-sys — MIT OR Apache-2.0 — https://github.com/mullvad/system-configuration-rs
     licence text [4] [282]
-system-deps 6.2.2 — MIT OR Apache-2.0 — https://github.com/gdesmott/system-deps
+system-deps — MIT OR Apache-2.0 — https://github.com/gdesmott/system-deps
     licence text [4] [3]
-tao 0.37.2 — Apache-2.0 — https://github.com/tauri-apps/tao
+tao — Apache-2.0 — https://github.com/tauri-apps/tao
     licence text [69] [283]
-tao-macros 0.1.4 — MIT OR Apache-2.0 — https://github.com/tauri-apps/tao
+tao-macros — MIT OR Apache-2.0 — https://github.com/tauri-apps/tao
     licence text [4] [284] [285]
-tar 0.4.46 — MIT OR Apache-2.0 — https://github.com/composefs/tar-rs
+tar — MIT OR Apache-2.0 — https://github.com/composefs/tar-rs
     licence text [4] [286]
-target-lexicon 0.12.16 — Apache-2.0 WITH LLVM-exception — https://github.com/bytecodealliance/target-lexicon
+target-lexicon — Apache-2.0 WITH LLVM-exception — https://github.com/bytecodealliance/target-lexicon
     licence text [174]
-tauri 2.12.6 — Apache-2.0 OR MIT — https://github.com/tauri-apps/tauri
+tauri — Apache-2.0 OR MIT — https://github.com/tauri-apps/tauri
     licence text [10] [287]
-tauri-build 2.7.5 — Apache-2.0 OR MIT — https://github.com/tauri-apps/tauri
+tauri-build — Apache-2.0 OR MIT — https://github.com/tauri-apps/tauri
     licence text [10] [287]
-tauri-codegen 2.7.5 — Apache-2.0 OR MIT — https://github.com/tauri-apps/tauri
+tauri-codegen — Apache-2.0 OR MIT — https://github.com/tauri-apps/tauri
     licence text [10] [287]
-tauri-macros 2.7.5 — Apache-2.0 OR MIT — https://github.com/tauri-apps/tauri
+tauri-macros — Apache-2.0 OR MIT — https://github.com/tauri-apps/tauri
     licence text [10] [287]
-tauri-plugin 2.7.4 — Apache-2.0 OR MIT — https://github.com/tauri-apps/tauri
+tauri-plugin — Apache-2.0 OR MIT — https://github.com/tauri-apps/tauri
     (no licence file in the package; licence as named above)
-tauri-plugin-updater 2.14.1 — Apache-2.0 OR MIT — https://github.com/tauri-apps/plugins-workspace
+tauri-plugin-updater — Apache-2.0 OR MIT — https://github.com/tauri-apps/plugins-workspace
     licence text [10] [287] [288]
-tauri-runtime 2.12.3 — Apache-2.0 OR MIT — https://github.com/tauri-apps/tauri
+tauri-runtime — Apache-2.0 OR MIT — https://github.com/tauri-apps/tauri
     licence text [10] [287]
-tauri-runtime-wry 2.12.4 — Apache-2.0 OR MIT — https://github.com/tauri-apps/tauri
+tauri-runtime-wry — Apache-2.0 OR MIT — https://github.com/tauri-apps/tauri
     licence text [10] [287]
-tauri-utils 2.10.4 — Apache-2.0 OR MIT — https://github.com/tauri-apps/tauri
+tauri-utils — Apache-2.0 OR MIT — https://github.com/tauri-apps/tauri
     licence text [10] [287]
-tauri-winres 0.3.7 — MIT — https://github.com/tauri-apps/winres
+tauri-winres — MIT — https://github.com/tauri-apps/winres
     licence text [289]
-tempfile 3.27.0 — MIT OR Apache-2.0 — https://github.com/Stebalien/tempfile
+tempfile — MIT OR Apache-2.0 — https://github.com/Stebalien/tempfile
     licence text [4] [290]
-tendril 0.5.1 — MIT OR Apache-2.0 — https://github.com/servo/html5ever
+tendril — MIT OR Apache-2.0 — https://github.com/servo/html5ever
     licence text [4] [291]
-thiserror 1.0.69 — MIT OR Apache-2.0 — https://github.com/dtolnay/thiserror
+thiserror — MIT OR Apache-2.0 — https://github.com/dtolnay/thiserror
     licence text [10] [3]
-thiserror 2.0.21 — MIT OR Apache-2.0 — https://github.com/dtolnay/thiserror
+thiserror-impl — MIT OR Apache-2.0 — https://github.com/dtolnay/thiserror
     licence text [10] [3]
-thiserror-impl 1.0.69 — MIT OR Apache-2.0 — https://github.com/dtolnay/thiserror
-    licence text [10] [3]
-thiserror-impl 2.0.21 — MIT OR Apache-2.0 — https://github.com/dtolnay/thiserror
-    licence text [10] [3]
-thread_local 1.1.10 — MIT OR Apache-2.0 — https://github.com/Amanieu/thread_local-rs
+thread_local — MIT OR Apache-2.0 — https://github.com/Amanieu/thread_local-rs
     licence text [4] [175]
-tiff 0.11.3 — MIT — https://github.com/image-rs/image-tiff
+tiff — MIT — https://github.com/image-rs/image-tiff
     licence text [292]
-time 0.3.55 — MIT OR Apache-2.0 — https://github.com/time-rs/time
+time — MIT OR Apache-2.0 — https://github.com/time-rs/time
     licence text [10] [293]
-time-core 0.1.9 — MIT OR Apache-2.0 — https://github.com/time-rs/time
+time-core — MIT OR Apache-2.0 — https://github.com/time-rs/time
     licence text [10] [293]
-time-macros 0.2.32 — MIT OR Apache-2.0 — https://github.com/time-rs/time
+time-macros — MIT OR Apache-2.0 — https://github.com/time-rs/time
     licence text [10] [293]
-tinystr 0.8.5 — Unicode-3.0 — https://github.com/unicode-org/icu4x
+tinystr — Unicode-3.0 — https://github.com/unicode-org/icu4x
     licence text [152]
-tinyvec 1.13.3 — Zlib OR Apache-2.0 OR MIT — https://github.com/Lokathor/tinyvec
+tinyvec — Zlib OR Apache-2.0 OR MIT — https://github.com/Lokathor/tinyvec
     licence text [4] [3] [42]
-tokio 1.54.1 — MIT — https://github.com/tokio-rs/tokio
+tokio — MIT — https://github.com/tokio-rs/tokio
     licence text [294]
-tokio-macros 2.7.2 — MIT — https://github.com/tokio-rs/tokio
+tokio-macros — MIT — https://github.com/tokio-rs/tokio
     licence text [295]
-tokio-rustls 0.26.6 — MIT OR Apache-2.0 — https://github.com/rustls/tokio-rustls
+tokio-rustls — MIT OR Apache-2.0 — https://github.com/rustls/tokio-rustls
     licence text [296] [297]
-tokio-stream 0.1.19 — MIT — https://github.com/tokio-rs/tokio
+tokio-stream — MIT — https://github.com/tokio-rs/tokio
     licence text [294]
-tokio-tungstenite 0.29.0 — MIT — https://github.com/snapview/tokio-tungstenite
+tokio-tungstenite — MIT — https://github.com/snapview/tokio-tungstenite
     licence text [298]
-tokio-util 0.7.20 — MIT — https://github.com/tokio-rs/tokio
+tokio-util — MIT — https://github.com/tokio-rs/tokio
     licence text [294]
-toml 0.8.2 — MIT OR Apache-2.0 — https://github.com/toml-rs/toml
-    licence text [69] [249]
-toml 1.2.1+spec-1.1.0 — MIT OR Apache-2.0 — https://github.com/toml-rs/toml
+toml — MIT OR Apache-2.0 — https://github.com/toml-rs/toml
+    licence text [69] [249] [250]
+toml_datetime — MIT OR Apache-2.0 — https://github.com/toml-rs/toml
+    licence text [4] [46] [250] [249]
+toml_edit — MIT OR Apache-2.0 — https://github.com/toml-rs/toml
+    licence text [69] [249] [250]
+toml_parser — MIT OR Apache-2.0 — https://github.com/toml-rs/toml
     licence text [250] [249]
-toml_datetime 0.6.3 — MIT OR Apache-2.0 — https://github.com/toml-rs/toml
-    licence text [4] [46]
-toml_datetime 1.1.3+spec-1.1.0 — MIT OR Apache-2.0 — https://github.com/toml-rs/toml
+toml_writer — MIT OR Apache-2.0 — https://github.com/toml-rs/toml
     licence text [250] [249]
-toml_edit 0.19.15 — MIT OR Apache-2.0 — https://github.com/toml-rs/toml
-    licence text [69] [249]
-toml_edit 0.20.2 — MIT OR Apache-2.0 — https://github.com/toml-rs/toml
-    licence text [69] [249]
-toml_edit 0.25.19+spec-1.1.0 — MIT OR Apache-2.0 — https://github.com/toml-rs/toml
-    licence text [250] [249]
-toml_parser 1.1.5+spec-1.1.0 — MIT OR Apache-2.0 — https://github.com/toml-rs/toml
-    licence text [250] [249]
-toml_writer 1.2.0+spec-1.1.0 — MIT OR Apache-2.0 — https://github.com/toml-rs/toml
-    licence text [250] [249]
-tower 0.5.3 — MIT — https://github.com/tower-rs/tower
+tower — MIT — https://github.com/tower-rs/tower
     licence text [299]
-tower-http 0.6.11 — MIT — https://github.com/tower-rs/tower-http
+tower-http — MIT — https://github.com/tower-rs/tower-http
     licence text [300]
-tower-http 0.7.1 — MIT — https://github.com/tower-rs/tower-http
-    licence text [300]
-tower-layer 0.3.3 — MIT — https://github.com/tower-rs/tower
+tower-layer — MIT — https://github.com/tower-rs/tower
     licence text [299]
-tower-service 0.3.3 — MIT — https://github.com/tower-rs/tower
+tower-service — MIT — https://github.com/tower-rs/tower
     licence text [299]
-tracing 0.1.44 — MIT — https://github.com/tokio-rs/tracing
+tracing — MIT — https://github.com/tokio-rs/tracing
     licence text [301]
-tracing-appender 0.2.5 — MIT — https://github.com/tokio-rs/tracing
+tracing-appender — MIT — https://github.com/tokio-rs/tracing
     licence text [301]
-tracing-attributes 0.1.31 — MIT — https://github.com/tokio-rs/tracing
+tracing-attributes — MIT — https://github.com/tokio-rs/tracing
     licence text [301]
-tracing-core 0.1.36 — MIT — https://github.com/tokio-rs/tracing
+tracing-core — MIT — https://github.com/tokio-rs/tracing
     licence text [301]
-tracing-log 0.2.0 — MIT — https://github.com/tokio-rs/tracing
+tracing-log — MIT — https://github.com/tokio-rs/tracing
     licence text [301]
-tracing-serde 0.2.0 — MIT — https://github.com/tokio-rs/tracing
+tracing-serde — MIT — https://github.com/tokio-rs/tracing
     licence text [301]
-tracing-subscriber 0.3.23 — MIT — https://github.com/tokio-rs/tracing
+tracing-subscriber — MIT — https://github.com/tokio-rs/tracing
     licence text [301]
-tray-icon 0.25.1 — MIT OR Apache-2.0 — https://github.com/tauri-apps/tray-icon
+tray-icon — MIT OR Apache-2.0 — https://github.com/tauri-apps/tray-icon
     licence text [4] [191] [302]
-try-lock 0.2.5 — MIT — https://github.com/seanmonstar/try-lock
+try-lock — MIT — https://github.com/seanmonstar/try-lock
     licence text [303]
-tungstenite 0.29.0 — MIT OR Apache-2.0 — https://github.com/snapview/tungstenite-rs
+tungstenite — MIT OR Apache-2.0 — https://github.com/snapview/tungstenite-rs
     licence text [4] [304]
-typed-path 0.13.0 — MIT OR Apache-2.0 — https://github.com/chipsenkbeil/typed-path
+typed-path — MIT OR Apache-2.0 — https://github.com/chipsenkbeil/typed-path
     licence text [10] [3]
-typeid 1.0.3 — MIT OR Apache-2.0 — https://github.com/dtolnay/typeid
+typeid — MIT OR Apache-2.0 — https://github.com/dtolnay/typeid
     licence text [10] [3]
-typenum 1.20.1 — MIT OR Apache-2.0 — https://github.com/paholg/typenum
+typenum — MIT OR Apache-2.0 — https://github.com/paholg/typenum
     licence text [305] [306] [307]
-uds_windows 1.2.1 — MIT — https://github.com/haraldh/rust_uds_windows
+uds_windows — MIT — https://github.com/haraldh/rust_uds_windows
     licence text [308]
-unicase 2.10.0 — MIT OR Apache-2.0 — https://github.com/seanmonstar/unicase
+unicase — MIT OR Apache-2.0 — https://github.com/seanmonstar/unicase
     licence text [4] [145]
-unicode-bidi 0.3.18 — MIT OR Apache-2.0 — https://github.com/servo/unicode-bidi
+unicode-bidi — MIT OR Apache-2.0 — https://github.com/servo/unicode-bidi
     licence text [4] [136]
-unicode-ident 1.0.27 — (MIT OR Apache-2.0) AND Unicode-3.0 — https://github.com/dtolnay/unicode-ident
+unicode-ident — (MIT OR Apache-2.0) AND Unicode-3.0 — https://github.com/dtolnay/unicode-ident
     licence text [10] [3] [309]
-unicode-normalization 0.1.26 — (MIT OR Apache-2.0) AND Unicode-3.0 — https://github.com/unicode-rs/unicode-normalization
+unicode-normalization — (MIT OR Apache-2.0) AND Unicode-3.0 — https://github.com/unicode-rs/unicode-normalization
     licence text [4] [136] [309]
-unicode-properties 0.1.5 — (MIT OR Apache-2.0) AND Unicode-3.0 — https://github.com/unicode-rs/unicode-properties
+unicode-properties — (MIT OR Apache-2.0) AND Unicode-3.0 — https://github.com/unicode-rs/unicode-properties
     licence text [4] [136] [310]
-unicode-segmentation 1.13.3 — MIT OR Apache-2.0 — https://github.com/unicode-rs/unicode-segmentation
+unicode-segmentation — MIT OR Apache-2.0 — https://github.com/unicode-rs/unicode-segmentation
     licence text [4] [136]
-untrusted 0.9.0 — ISC — https://github.com/briansmith/untrusted
+untrusted — ISC — https://github.com/briansmith/untrusted
     licence text [311]
-url 2.5.9 — MIT OR Apache-2.0 — https://github.com/servo/rust-url
+url — MIT OR Apache-2.0 — https://github.com/servo/rust-url
     licence text [4] [153]
-urlpattern 0.6.0 — MIT — https://github.com/denoland/rust-urlpattern
+urlpattern — MIT — https://github.com/denoland/rust-urlpattern
     licence text [312]
-utf_types 1.0.0 — Apache-2.0 OR MIT — https://github.com/hsivonen/utf_types
+utf_types — Apache-2.0 OR MIT — https://github.com/hsivonen/utf_types
     licence text [4] [102]
-utf8_iter 1.1.0 — Apache-2.0 OR MIT — https://github.com/hsivonen/utf8_iter
+utf8_iter — Apache-2.0 OR MIT — https://github.com/hsivonen/utf8_iter
     licence text [4] [102]
-uuid 1.29.3 — Apache-2.0 OR MIT — https://github.com/uuid-rs/uuid
+uuid — Apache-2.0 OR MIT — https://github.com/uuid-rs/uuid
     licence text [4] [313]
-valuable 0.1.1 — MIT — https://github.com/tokio-rs/valuable
+valuable — MIT — https://github.com/tokio-rs/valuable
     (no licence file in the package; licence as named above)
-vcpkg 0.2.15 — MIT/Apache-2.0 — https://github.com/mcgoo/vcpkg-rs
+vcpkg — MIT/Apache-2.0 — https://github.com/mcgoo/vcpkg-rs
     licence text [4] [314]
-version_check 0.9.5 — MIT/Apache-2.0 — https://github.com/SergioBenitez/version_check
+version_check — MIT/Apache-2.0 — https://github.com/SergioBenitez/version_check
     licence text [4] [315]
-version-compare 0.2.1 — MIT — https://gitlab.com/timvisee/version-compare
+version-compare — MIT — https://gitlab.com/timvisee/version-compare
     licence text [316]
-vswhom 0.1.0 — MIT — https://github.com/nabijaczleweli/vswhom.rs
+vswhom — MIT — https://github.com/nabijaczleweli/vswhom.rs
     licence text [317]
-vswhom-sys 0.1.3 — MIT — https://github.com/nabijaczleweli/vswhom-sys.rs
+vswhom-sys — MIT — https://github.com/nabijaczleweli/vswhom-sys.rs
     licence text [317]
-walkdir 2.5.0 — Unlicense/MIT — https://github.com/BurntSushi/walkdir
+walkdir — Unlicense/MIT — https://github.com/BurntSushi/walkdir
     licence text [6] [7] [8]
-want 0.3.2 — MIT — https://github.com/seanmonstar/want
+want — MIT — https://github.com/seanmonstar/want
     licence text [318]
-wasi 0.11.1+wasi-snapshot-preview1 — Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT — https://github.com/bytecodealliance/wasi
+wasi — Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT — https://github.com/bytecodealliance/wasi
     licence text [4] [174] [3]
-wasip2 1.0.4+wasi-0.2.12 — Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT — https://github.com/bytecodealliance/wasi-rs
+wasip2 — Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT — https://github.com/bytecodealliance/wasi-rs
     licence text [4] [174] [3]
-wasm-bindgen 0.2.130 — MIT OR Apache-2.0 — https://github.com/wasm-bindgen/wasm-bindgen
+wasm-bindgen — MIT OR Apache-2.0 — https://github.com/wasm-bindgen/wasm-bindgen
     licence text [4] [46]
-wasm-bindgen-futures 0.4.80 — MIT OR Apache-2.0 — https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/futures
+wasm-bindgen-futures — MIT OR Apache-2.0 — https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/futures
     licence text [4] [46]
-wasm-bindgen-macro 0.2.130 — MIT OR Apache-2.0 — https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro
+wasm-bindgen-macro — MIT OR Apache-2.0 — https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro
     licence text [4] [46]
-wasm-bindgen-macro-support 0.2.130 — MIT OR Apache-2.0 — https://github.com/wasm-bindgen/wasm-bindgen/tree/main/crates/macro-support
+wasm-bindgen-macro-support — MIT OR Apache-2.0 — https://github.com/wasm-bindgen/wasm-bindgen/tree/main/crates/macro-support
     licence text [4] [46]
-wasm-bindgen-shared 0.2.130 — MIT OR Apache-2.0 — https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared
+wasm-bindgen-shared — MIT OR Apache-2.0 — https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared
     licence text [4] [46]
-wasm-streams 0.5.0 — MIT OR Apache-2.0 — https://github.com/MattiasBuelens/wasm-streams/
+wasm-streams — MIT OR Apache-2.0 — https://github.com/MattiasBuelens/wasm-streams/
     licence text [10] [3]
-web_atoms 0.2.6 — MIT OR Apache-2.0 — https://github.com/servo/html5ever
+web_atoms — MIT OR Apache-2.0 — https://github.com/servo/html5ever
     licence text [4] [139]
-web_atoms 0.3.0 — MIT OR Apache-2.0 — https://github.com/servo/html5ever
-    licence text [4] [139]
-web-sys 0.3.107 — MIT OR Apache-2.0 — https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/web-sys
+web-sys — MIT OR Apache-2.0 — https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/web-sys
     licence text [4] [46]
-web-time 1.1.0 — MIT OR Apache-2.0 — https://github.com/daxpedda/web-time
+web-time — MIT OR Apache-2.0 — https://github.com/daxpedda/web-time
     licence text [319] [320]
-webkit2gtk 2.0.2 — MIT — https://github.com/tauri-apps/webkit2gtk-rs
+webkit2gtk — MIT — https://github.com/tauri-apps/webkit2gtk-rs
     licence text [321]
-webkit2gtk-sys 2.0.2 — MIT — https://github.com/tauri-apps/webkit2gtk-rs
+webkit2gtk-sys — MIT — https://github.com/tauri-apps/webkit2gtk-rs
     licence text [322]
-webp 0.3.1 — MIT OR Apache-2.0 — https://github.com/jaredforth/webp.git
+webp — MIT OR Apache-2.0 — https://github.com/jaredforth/webp.git
     licence text [4] [323]
-webpki-root-certs 1.0.12 — CDLA-Permissive-2.0 — https://github.com/rustls/webpki-roots
+webpki-root-certs — CDLA-Permissive-2.0 — https://github.com/rustls/webpki-roots
     licence text [324]
-webview2-com 0.39.1 — MIT — https://github.com/wravery/webview2-rs
+webview2-com — MIT — https://github.com/wravery/webview2-rs
     (no licence file in the package; licence as named above)
-webview2-com-macros 0.8.1 — MIT — https://github.com/wravery/webview2-rs
+webview2-com-macros — MIT — https://github.com/wravery/webview2-rs
     (no licence file in the package; licence as named above)
-webview2-com-sys 0.39.1 — MIT — https://github.com/wravery/webview2-rs
+webview2-com-sys — MIT — https://github.com/wravery/webview2-rs
     (no licence file in the package; licence as named above)
-weezl 0.1.12 — MIT OR Apache-2.0 — https://github.com/image-rs/weezl
+weezl — MIT OR Apache-2.0 — https://github.com/image-rs/weezl
     licence text [4] [325]
-whoami 2.1.3 — Apache-2.0 OR BSL-1.0 OR MIT — https://github.com/ardaku/whoami
+whoami — Apache-2.0 OR BSL-1.0 OR MIT — https://github.com/ardaku/whoami
     licence text [10] [242] [111]
-winapi 0.3.9 — MIT/Apache-2.0 — https://github.com/retep998/winapi-rs
+winapi — MIT/Apache-2.0 — https://github.com/retep998/winapi-rs
     licence text [69] [326]
-winapi-i686-pc-windows-gnu 0.4.0 — MIT/Apache-2.0 — https://github.com/retep998/winapi-rs
+winapi-i686-pc-windows-gnu — MIT/Apache-2.0 — https://github.com/retep998/winapi-rs
     (no licence file in the package; licence as named above)
-winapi-util 0.1.11 — Unlicense OR MIT — https://github.com/BurntSushi/winapi-util
+winapi-util — Unlicense OR MIT — https://github.com/BurntSushi/winapi-util
     licence text [6] [243] [8]
-winapi-x86_64-pc-windows-gnu 0.4.0 — MIT/Apache-2.0 — https://github.com/retep998/winapi-rs
+winapi-x86_64-pc-windows-gnu — MIT/Apache-2.0 — https://github.com/retep998/winapi-rs
     (no licence file in the package; licence as named above)
-window-vibrancy 0.8.1 — Apache-2.0 OR MIT — https://github.com/tauri-apps/tauri-plugin-vibrancy
+window-vibrancy — Apache-2.0 OR MIT — https://github.com/tauri-apps/tauri-plugin-vibrancy
     licence text [4] [327] [328]
-windows 0.52.0 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
+windows — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
     licence text [329] [330]
-windows 0.62.2 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
+windows_aarch64_gnullvm — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
     licence text [329] [330]
-windows_aarch64_gnullvm 0.42.2 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
+windows_aarch64_msvc — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
     licence text [329] [330]
-windows_aarch64_gnullvm 0.52.6 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
+windows_i686_gnu — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
     licence text [329] [330]
-windows_aarch64_msvc 0.42.2 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
+windows_i686_gnullvm — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
     licence text [329] [330]
-windows_aarch64_msvc 0.52.6 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
+windows_i686_msvc — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
     licence text [329] [330]
-windows_i686_gnu 0.42.2 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
+windows_x86_64_gnu — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
     licence text [329] [330]
-windows_i686_gnu 0.52.6 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
+windows_x86_64_gnullvm — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
     licence text [329] [330]
-windows_i686_gnullvm 0.52.6 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
+windows_x86_64_msvc — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
     licence text [329] [330]
-windows_i686_msvc 0.42.2 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
+windows-collections — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
     licence text [329] [330]
-windows_i686_msvc 0.52.6 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
+windows-core — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
     licence text [329] [330]
-windows_x86_64_gnu 0.42.2 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
+windows-future — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
     licence text [329] [330]
-windows_x86_64_gnu 0.52.6 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
+windows-implement — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
     licence text [329] [330]
-windows_x86_64_gnullvm 0.42.2 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
+windows-interface — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
     licence text [329] [330]
-windows_x86_64_gnullvm 0.52.6 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
+windows-link — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
     licence text [329] [330]
-windows_x86_64_msvc 0.42.2 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
-    licence text [329] [330]
-windows_x86_64_msvc 0.52.6 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
-    licence text [329] [330]
-windows-collections 0.3.2 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
-    licence text [329] [330]
-windows-core 0.52.0 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
-    licence text [329] [330]
-windows-core 0.58.0 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
-    licence text [329] [330]
-windows-core 0.62.2 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
-    licence text [329] [330]
-windows-future 0.3.2 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
-    licence text [329] [330]
-windows-implement 0.52.0 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
-    licence text [329] [330]
-windows-implement 0.58.0 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
-    licence text [329] [330]
-windows-implement 0.60.2 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
-    licence text [329] [330]
-windows-interface 0.52.0 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
-    licence text [329] [330]
-windows-interface 0.58.0 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
-    licence text [329] [330]
-windows-interface 0.59.3 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
-    licence text [329] [330]
-windows-link 0.2.1 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
-    licence text [329] [330]
-windows-native-keyring-store 1.1.0 — MIT OR Apache-2.0 — https://github.com/open-source-cooperative/windows-native-keyring-store.git
+windows-native-keyring-store — MIT OR Apache-2.0 — https://github.com/open-source-cooperative/windows-native-keyring-store.git
     licence text [13] [14]
-windows-numerics 0.3.1 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
+windows-numerics — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
     licence text [329] [330]
-windows-registry 0.6.1 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
+windows-registry — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
     licence text [329] [330]
-windows-result 0.2.0 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
+windows-result — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
     licence text [329] [330]
-windows-result 0.4.1 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
+windows-strings — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
     licence text [329] [330]
-windows-strings 0.1.0 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
+windows-sys — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
     licence text [329] [330]
-windows-strings 0.5.1 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
+windows-targets — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
     licence text [329] [330]
-windows-sys 0.45.0 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
+windows-threading — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
     licence text [329] [330]
-windows-sys 0.52.0 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
+windows-version — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
     licence text [329] [330]
-windows-sys 0.61.2 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
-    licence text [329] [330]
-windows-targets 0.42.2 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
-    licence text [329] [330]
-windows-targets 0.52.6 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
-    licence text [329] [330]
-windows-threading 0.2.1 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
-    licence text [329] [330]
-windows-version 0.1.7 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
-    licence text [329] [330]
-winnow 0.5.40 — MIT — https://github.com/winnow-rs/winnow
+winnow — MIT — https://github.com/winnow-rs/winnow
     licence text [3]
-winnow 1.0.5 — MIT — https://github.com/winnow-rs/winnow
-    licence text [3]
-winreg 0.56.0 — MIT — https://github.com/gentoo90/winreg-rs
+winreg — MIT — https://github.com/gentoo90/winreg-rs
     licence text [331]
-wit-bindgen 0.57.1 — Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT — https://github.com/bytecodealliance/wit-bindgen
+wit-bindgen — Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT — https://github.com/bytecodealliance/wit-bindgen
     licence text [4] [174] [3]
-wnaf 0.14.1 — Apache-2.0 OR MIT — https://github.com/RustCrypto/elliptic-curves
+wnaf — Apache-2.0 OR MIT — https://github.com/RustCrypto/elliptic-curves
     licence text [4] [332]
-writeable 0.6.4 — Unicode-3.0 — https://github.com/unicode-org/icu4x
+writeable — Unicode-3.0 — https://github.com/unicode-org/icu4x
     licence text [152]
-wry 0.57.2 — Apache-2.0 OR MIT — https://github.com/tauri-apps/wry
+wry — Apache-2.0 OR MIT — https://github.com/tauri-apps/wry
     licence text [4] [333] [334]
-x11 2.21.0 — MIT — https://github.com/AltF02/x11-rs.git
+x11 — MIT — https://github.com/AltF02/x11-rs.git
     licence text [3]
-x11-dl 2.21.0 — MIT — https://github.com/AltF02/x11-rs.git
+x11-dl — MIT — https://github.com/AltF02/x11-rs.git
     licence text [3]
-xattr 1.7.0 — MIT OR Apache-2.0 — https://github.com/Stebalien/xattr
+xattr — MIT OR Apache-2.0 — https://github.com/Stebalien/xattr
     licence text [4] [290]
-yoke 0.8.4 — Unicode-3.0 — https://github.com/unicode-org/icu4x
+yoke — Unicode-3.0 — https://github.com/unicode-org/icu4x
     licence text [152]
-yoke-derive 0.8.4 — Unicode-3.0 — https://github.com/unicode-org/icu4x
+yoke-derive — Unicode-3.0 — https://github.com/unicode-org/icu4x
     licence text [152]
-zbus 5.19.0 — MIT — https://github.com/z-galaxy/zbus/
+zbus — MIT — https://github.com/z-galaxy/zbus/
     licence text [335]
-zbus_macros 5.19.0 — MIT — https://github.com/z-galaxy/zbus/
+zbus_macros — MIT — https://github.com/z-galaxy/zbus/
     licence text [335]
-zbus_names 4.3.5 — MIT — https://github.com/z-galaxy/zbus/
+zbus_names — MIT — https://github.com/z-galaxy/zbus/
     licence text [335]
-zbus-secret-service-keyring-store 1.0.1 — MIT OR Apache-2.0 — https://github.com/open-source-cooperative/zbus-secret-service-keyring-store.git
+zbus-secret-service-keyring-store — MIT OR Apache-2.0 — https://github.com/open-source-cooperative/zbus-secret-service-keyring-store.git
     licence text [13] [14]
-zcheapstr 1.2.0 — MIT — https://github.com/z-galaxy/zcheapstr/
+zcheapstr — MIT — https://github.com/z-galaxy/zcheapstr/
     licence text [336]
-zerocopy 0.8.63 — BSD-2-Clause OR Apache-2.0 OR MIT — https://github.com/google/zerocopy
+zerocopy — BSD-2-Clause OR Apache-2.0 OR MIT — https://github.com/google/zerocopy
     licence text [337] [338] [339]
-zerocopy-derive 0.8.63 — BSD-2-Clause OR Apache-2.0 OR MIT — https://github.com/google/zerocopy
+zerocopy-derive — BSD-2-Clause OR Apache-2.0 OR MIT — https://github.com/google/zerocopy
     licence text [337] [338] [339]
-zerofrom 0.1.8 — Unicode-3.0 — https://github.com/unicode-org/icu4x
+zerofrom — Unicode-3.0 — https://github.com/unicode-org/icu4x
     licence text [152]
-zerofrom-derive 0.1.8 — Unicode-3.0 — https://github.com/unicode-org/icu4x
+zerofrom-derive — Unicode-3.0 — https://github.com/unicode-org/icu4x
     licence text [152]
-zeroize 1.9.2 — Apache-2.0 OR MIT — https://github.com/RustCrypto/utils
+zeroize — Apache-2.0 OR MIT — https://github.com/RustCrypto/utils
     licence text [4] [340]
-zeroize_derive 1.5.0 — Apache-2.0 OR MIT — https://github.com/RustCrypto/utils
+zeroize_derive — Apache-2.0 OR MIT — https://github.com/RustCrypto/utils
     licence text [4] [51]
-zerotrie 0.2.5 — Unicode-3.0 — https://github.com/unicode-org/icu4x
+zerotrie — Unicode-3.0 — https://github.com/unicode-org/icu4x
     licence text [152]
-zerovec 0.11.9 — Unicode-3.0 — https://github.com/unicode-org/icu4x
+zerovec — Unicode-3.0 — https://github.com/unicode-org/icu4x
     licence text [152]
-zerovec-derive 0.11.7 — Unicode-3.0 — https://github.com/unicode-org/icu4x
+zerovec-derive — Unicode-3.0 — https://github.com/unicode-org/icu4x
     licence text [152]
-zip 9.8.1 — MIT — https://github.com/zip-rs/zip2
+zip — MIT — https://github.com/zip-rs/zip2
     licence text [268]
-zlib-rs 0.6.8 — Zlib — https://github.com/trifectatechfoundation/zlib-rs
+zlib-rs — Zlib — https://github.com/trifectatechfoundation/zlib-rs
     licence text [341]
-zmij 1.0.23 — MIT — https://github.com/dtolnay/zmij
+zmij — MIT — https://github.com/dtolnay/zmij
     licence text [3]
-zune-core 0.5.3 — MIT OR Apache-2.0 OR Zlib — https://github.com/etemesi254/zune-image
+zune-core — MIT OR Apache-2.0 OR Zlib — https://github.com/etemesi254/zune-image
     licence text [4] [342] [343]
-zune-jpeg 0.5.15 — MIT OR Apache-2.0 OR Zlib — https://github.com/etemesi254/zune-image/tree/dev/crates/zune-jpeg
+zune-jpeg — MIT OR Apache-2.0 OR Zlib — https://github.com/etemesi254/zune-image/tree/dev/crates/zune-jpeg
     licence text [4] [342] [343]
-zvariant 5.15.1 — MIT — https://github.com/z-galaxy/zbus/
+zvariant — MIT — https://github.com/z-galaxy/zbus/
     licence text [335]
-zvariant_derive 5.15.1 — MIT — https://github.com/z-galaxy/zbus/
+zvariant_derive — MIT — https://github.com/z-galaxy/zbus/
     licence text [335]
-zvariant_utils 4.2.0 — MIT — https://github.com/z-galaxy/zbus/
+zvariant_utils — MIT — https://github.com/z-galaxy/zbus/
     licence text [3]
 ==============================================================================
 npm packages (web app)
 ==============================================================================
 
-@antfu/install-pkg 2.1.0 — MIT — https://github.com/antfu-collective/install-pkg#readme
+@antfu/install-pkg — MIT — https://github.com/antfu-collective/install-pkg#readme
     licence text [344]
-@braintree/sanitize-url 7.1.2 — MIT — https://github.com/braintree/sanitize-url#readme
+@braintree/sanitize-url — MIT — https://github.com/braintree/sanitize-url#readme
     licence text [345]
-@chevrotain/cst-dts-gen 13.2.0 — Apache-2.0 — https://github.com/Chevrotain/chevrotain#readme
+@chevrotain/cst-dts-gen — Apache-2.0 — https://github.com/Chevrotain/chevrotain#readme
     licence text [4]
-@chevrotain/gast 13.2.0 — Apache-2.0 — https://github.com/Chevrotain/chevrotain#readme
+@chevrotain/gast — Apache-2.0 — https://github.com/Chevrotain/chevrotain#readme
     licence text [4]
-@chevrotain/regexp-to-ast 13.2.0 — Apache-2.0 — https://github.com/Chevrotain/chevrotain#readme
+@chevrotain/regexp-to-ast — Apache-2.0 — https://github.com/Chevrotain/chevrotain#readme
     licence text [4]
-@chevrotain/types 13.2.0 — Apache-2.0 — https://chevrotain.io/documentation/
+@chevrotain/types — Apache-2.0 — https://chevrotain.io/documentation/
     licence text [4]
-@chevrotain/utils 13.2.0 — Apache-2.0 — https://github.com/Chevrotain/chevrotain#readme
+@chevrotain/utils — Apache-2.0 — https://github.com/Chevrotain/chevrotain#readme
     licence text [4]
-@floating-ui/core 1.8.0 — MIT — https://floating-ui.com
+@floating-ui/core — MIT — https://floating-ui.com
     licence text [346]
-@floating-ui/dom 1.8.0 — MIT — https://floating-ui.com
+@floating-ui/dom — MIT — https://floating-ui.com
     licence text [346]
-@floating-ui/react-dom 2.1.9 — MIT — https://floating-ui.com/docs/react-dom
+@floating-ui/react-dom — MIT — https://floating-ui.com/docs/react-dom
     licence text [346]
-@floating-ui/utils 0.2.12 — MIT — https://floating-ui.com
+@floating-ui/utils — MIT — https://floating-ui.com
     licence text [346]
-@iconify/types 2.0.0 — MIT — https://github.com/iconify/iconify
+@iconify/types — MIT — https://github.com/iconify/iconify
     licence text [347]
-@iconify/utils 3.1.7 — MIT — https://iconify.design/docs/libraries/utils/
+@iconify/utils — MIT — https://iconify.design/docs/libraries/utils/
     licence text [348]
-@mermaid-js/parser 2.0.1 — MIT — https://github.com/mermaid-js/mermaid/tree/develop/packages/mermaid/parser/#readme
+@mermaid-js/parser — MIT — https://github.com/mermaid-js/mermaid/tree/develop/packages/mermaid/parser/#readme
     licence text [349]
-@plantuml/core 1.2026.9 — MIT — https://plantuml.com/
+@plantuml/core — MIT — https://plantuml.com/
     licence text [350]
-@radix-ui/number 1.1.3 — MIT — https://radix-ui.com/primitives
+@radix-ui/number — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/primitive 1.2.0 — MIT — https://radix-ui.com/primitives
+@radix-ui/primitive — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-accessible-icon 1.2.0 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-accessible-icon — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-accordion 1.3.1 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-accordion — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-alert-dialog 1.2.1 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-alert-dialog — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-arrow 1.1.17 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-arrow — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-aspect-ratio 1.2.0 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-aspect-ratio — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-avatar 1.3.1 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-avatar — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-checkbox 1.4.1 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-checkbox — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-collapsible 1.2.1 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-collapsible — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-collection 1.2.0 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-collection — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-compose-refs 1.1.5 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-compose-refs — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-context 1.3.0 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-context — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-context-menu 2.4.1 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-context-menu — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-dialog 1.3.1 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-dialog — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-direction 1.2.0 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-direction — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-dismissable-layer 1.2.1 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-dismissable-layer — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-dropdown-menu 2.2.1 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-dropdown-menu — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-focus-guards 1.2.0 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-focus-guards — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-focus-scope 1.3.1 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-focus-scope — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-form 0.3.0 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-form — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-hover-card 1.2.1 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-hover-card — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-id 1.1.4 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-id — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-label 2.1.17 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-label — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-menu 2.2.1 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-menu — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-menubar 1.2.1 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-menubar — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-navigation-menu 1.4.1 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-navigation-menu — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-one-time-password-field 0.2.1 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-one-time-password-field — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-password-toggle-field 0.2.1 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-password-toggle-field — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-popover 1.3.1 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-popover — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-popper 1.4.0 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-popper — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-portal 1.2.0 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-portal — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-presence 1.1.11 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-presence — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-primitive 2.2.0 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-primitive — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-progress 1.2.1 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-progress — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-radio-group 1.5.1 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-radio-group — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-roving-focus 1.2.1 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-roving-focus — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-scroll-area 1.4.0 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-scroll-area — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-select 2.4.1 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-select — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-separator 1.2.0 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-separator — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-slider 1.6.1 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-slider — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-slot 1.5.0 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-slot — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-switch 1.4.1 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-switch — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-tabs 1.2.1 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-tabs — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-toast 1.3.1 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-toast — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-toggle 1.2.1 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-toggle — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-toggle-group 1.2.1 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-toggle-group — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-toolbar 1.2.1 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-toolbar — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-tooltip 1.4.1 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-tooltip — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-use-callback-ref 1.1.5 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-use-callback-ref — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-use-controllable-state 1.3.0 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-use-controllable-state — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-use-effect-event 0.0.5 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-use-effect-event — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-use-escape-keydown 1.1.6 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-use-escape-keydown — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-use-is-hydrated 0.1.3 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-use-is-hydrated — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-use-layout-effect 1.1.4 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-use-layout-effect — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-use-previous 1.1.4 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-use-previous — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-use-rect 1.1.4 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-use-rect — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-use-size 1.1.5 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-use-size — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/react-visually-hidden 1.2.13 — MIT — https://radix-ui.com/primitives
+@radix-ui/react-visually-hidden — MIT — https://radix-ui.com/primitives
     licence text [351]
-@radix-ui/rect 1.1.3 — MIT — https://radix-ui.com/primitives
+@radix-ui/rect — MIT — https://radix-ui.com/primitives
     licence text [351]
-@tanstack/history 1.162.5 — MIT — https://tanstack.com/router
+@tanstack/history — MIT — https://tanstack.com/router
     licence text [352]
-@tanstack/query-core 5.107.2 — MIT — https://tanstack.com/query
+@tanstack/query-core — MIT — https://tanstack.com/query
     licence text [352]
-@tanstack/react-query 5.107.2 — MIT — https://tanstack.com/query
+@tanstack/react-query — MIT — https://tanstack.com/query
     licence text [352]
-@tanstack/react-router 1.170.46 — MIT — https://tanstack.com/router
+@tanstack/react-router — MIT — https://tanstack.com/router
     licence text [352]
-@tanstack/react-store 0.11.2 — MIT — https://tanstack.com/store
+@tanstack/react-store — MIT — https://tanstack.com/store
     licence text [353]
-@tanstack/router-core 1.171.39 — MIT — https://tanstack.com/router
+@tanstack/router-core — MIT — https://tanstack.com/router
     licence text [352]
-@tanstack/store 0.11.2 — MIT — https://tanstack.com/store
+@tanstack/store — MIT — https://tanstack.com/store
     licence text [353]
-@types/d3 7.4.3 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3
+@types/d3 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3
     licence text [330]
-@types/d3-array 3.2.2 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-array
+@types/d3-array — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-array
     licence text [330]
-@types/d3-axis 3.0.6 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-axis
+@types/d3-axis — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-axis
     licence text [330]
-@types/d3-brush 3.0.6 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-brush
+@types/d3-brush — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-brush
     licence text [330]
-@types/d3-chord 3.0.6 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-chord
+@types/d3-chord — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-chord
     licence text [330]
-@types/d3-color 3.1.3 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-color
+@types/d3-color — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-color
     licence text [330]
-@types/d3-contour 3.0.6 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-contour
+@types/d3-contour — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-contour
     licence text [330]
-@types/d3-delaunay 6.0.4 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-delaunay
+@types/d3-delaunay — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-delaunay
     licence text [330]
-@types/d3-dispatch 3.0.7 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-dispatch
+@types/d3-dispatch — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-dispatch
     licence text [330]
-@types/d3-drag 3.0.7 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-drag
+@types/d3-drag — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-drag
     licence text [330]
-@types/d3-dsv 3.0.7 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-dsv
+@types/d3-dsv — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-dsv
     licence text [330]
-@types/d3-ease 3.0.2 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-ease
+@types/d3-ease — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-ease
     licence text [330]
-@types/d3-fetch 3.0.7 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-fetch
+@types/d3-fetch — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-fetch
     licence text [330]
-@types/d3-force 3.0.10 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-force
+@types/d3-force — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-force
     licence text [330]
-@types/d3-format 3.0.4 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-format
+@types/d3-format — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-format
     licence text [330]
-@types/d3-geo 3.1.1 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-geo
+@types/d3-geo — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-geo
     licence text [330]
-@types/d3-hierarchy 3.1.7 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-hierarchy
+@types/d3-hierarchy — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-hierarchy
     licence text [330]
-@types/d3-interpolate 3.0.4 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-interpolate
+@types/d3-interpolate — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-interpolate
     licence text [330]
-@types/d3-path 3.1.1 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-path
+@types/d3-path — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-path
     licence text [330]
-@types/d3-polygon 3.0.2 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-polygon
+@types/d3-polygon — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-polygon
     licence text [330]
-@types/d3-quadtree 3.0.6 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-quadtree
+@types/d3-quadtree — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-quadtree
     licence text [330]
-@types/d3-random 3.0.4 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-random
+@types/d3-random — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-random
     licence text [330]
-@types/d3-scale 4.0.9 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-scale
+@types/d3-scale — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-scale
     licence text [330]
-@types/d3-scale-chromatic 3.1.0 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-scale-chromatic
+@types/d3-scale-chromatic — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-scale-chromatic
     licence text [330]
-@types/d3-selection 3.0.12 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-selection
+@types/d3-selection — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-selection
     licence text [330]
-@types/d3-shape 3.2.0 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-shape
+@types/d3-shape — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-shape
     licence text [330]
-@types/d3-time 3.0.4 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-time
+@types/d3-time — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-time
     licence text [330]
-@types/d3-time-format 4.0.3 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-time-format
+@types/d3-time-format — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-time-format
     licence text [330]
-@types/d3-timer 3.0.2 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-timer
+@types/d3-timer — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-timer
     licence text [330]
-@types/d3-transition 3.0.9 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-transition
+@types/d3-transition — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-transition
     licence text [330]
-@types/d3-zoom 3.0.9 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-zoom
+@types/d3-zoom — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-zoom
     licence text [330]
-@types/geojson 7946.0.16 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/geojson
+@types/geojson — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/geojson
     licence text [330]
-@types/react 19.3.0 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/react
+@types/react — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/react
     licence text [330]
-@types/react-reconciler 0.28.9 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/react-reconciler
+@types/react-reconciler — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/react-reconciler
     licence text [330]
-@types/react-reconciler 0.34.0 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/react-reconciler
+@types/trusted-types — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/trusted-types
     licence text [330]
-@types/trusted-types 2.0.7 — MIT — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/trusted-types
-    licence text [330]
-@upsetjs/venn.js 2.0.0 — MIT — https://github.com/upsetjs/venn.js
+@upsetjs/venn.js — MIT — https://github.com/upsetjs/venn.js
     licence text [354]
-aria-hidden 1.2.6 — MIT — https://github.com/theKashey/aria-hidden#readme
+aria-hidden — MIT — https://github.com/theKashey/aria-hidden#readme
     licence text [355]
-chevrotain 13.2.0 — Apache-2.0 — https://chevrotain.io/docs/
+chevrotain — Apache-2.0 — https://chevrotain.io/docs/
     licence text [4]
-commander 15.1.0 — MIT — https://github.com/tj/commander.js#readme
+commander — MIT — https://github.com/tj/commander.js#readme
     licence text [356]
-commander 7.2.0 — MIT — https://github.com/tj/commander.js#readme
-    licence text [356]
-cookie-es 3.1.1 — MIT — https://github.com/unjs/cookie-es#readme
+cookie-es — MIT — https://github.com/unjs/cookie-es#readme
     licence text [357]
-cose-base 1.0.3 — MIT — https://github.com/iVis-at-Bilkent/cose-base#readme
+cose-base — MIT — https://github.com/iVis-at-Bilkent/cose-base#readme
     licence text [358]
-cose-base 2.2.0 — MIT — https://github.com/iVis-at-Bilkent/cose-base#readme
-    licence text [358]
-csstype 3.2.4 — MIT — https://github.com/frenic/csstype#readme
+csstype — MIT — https://github.com/frenic/csstype#readme
     licence text [359]
-cytoscape 3.35.0 — MIT — http://js.cytoscape.org
+cytoscape — MIT — http://js.cytoscape.org
     licence text [360] [361]
-cytoscape-cose-bilkent 4.1.0 — MIT — https://github.com/cytoscape/cytoscape.js-cose-bilkent
+cytoscape-cose-bilkent — MIT — https://github.com/cytoscape/cytoscape.js-cose-bilkent
     licence text [362]
-cytoscape-fcose 2.2.0 — MIT — https://github.com/iVis-at-Bilkent/cytoscape.js-fcose
+cytoscape-fcose — MIT — https://github.com/iVis-at-Bilkent/cytoscape.js-fcose
     licence text [363]
-d3 7.9.2 — ISC — https://d3js.org
+d3 — ISC — https://d3js.org
     licence text [364]
-d3-array 2.12.1 — BSD-3-Clause — https://d3js.org/d3-array/
-    licence text [365]
-d3-array 3.2.5 — ISC — https://d3js.org/d3-array/
+d3-array — ISC / BSD-3-Clause — https://d3js.org/d3-array/
+    licence text [364] [365]
+d3-axis — ISC — https://d3js.org/d3-axis/
     licence text [364]
-d3-axis 3.0.1 — ISC — https://d3js.org/d3-axis/
+d3-brush — ISC — https://d3js.org/d3-brush/
     licence text [364]
-d3-brush 3.0.1 — ISC — https://d3js.org/d3-brush/
+d3-chord — ISC — https://d3js.org/d3-chord/
     licence text [364]
-d3-chord 3.0.2 — ISC — https://d3js.org/d3-chord/
+d3-color — ISC — https://d3js.org/d3-color/
     licence text [364]
-d3-color 3.1.1 — ISC — https://d3js.org/d3-color/
-    licence text [364]
-d3-contour 4.0.3 — ISC — https://d3js.org/d3-contour/
+d3-contour — ISC — https://d3js.org/d3-contour/
     licence text [366]
-d3-delaunay 6.0.6 — ISC — https://github.com/d3/d3-delaunay
+d3-delaunay — ISC — https://github.com/d3/d3-delaunay
     licence text [367]
-d3-dispatch 3.0.2 — ISC — https://d3js.org/d3-dispatch/
+d3-dispatch — ISC — https://d3js.org/d3-dispatch/
     licence text [364]
-d3-drag 3.0.1 — ISC — https://d3js.org/d3-drag/
+d3-drag — ISC — https://d3js.org/d3-drag/
     licence text [364]
-d3-dsv 3.0.2 — ISC — https://d3js.org/d3-dsv/
+d3-dsv — ISC — https://d3js.org/d3-dsv/
     licence text [368]
-d3-ease 3.0.2 — BSD-3-Clause — https://d3js.org/d3-ease/
+d3-ease — BSD-3-Clause — https://d3js.org/d3-ease/
     licence text [369]
-d3-fetch 3.0.2 — ISC — https://d3js.org/d3-fetch/
+d3-fetch — ISC — https://d3js.org/d3-fetch/
     licence text [370]
-d3-force 3.0.1 — ISC — https://d3js.org/d3-force/
+d3-force — ISC — https://d3js.org/d3-force/
     licence text [364]
-d3-format 3.1.3 — ISC — https://d3js.org/d3-format/
+d3-format — ISC — https://d3js.org/d3-format/
     licence text [364]
-d3-geo 3.1.2 — ISC — https://d3js.org/d3-geo/
+d3-geo — ISC — https://d3js.org/d3-geo/
     licence text [371]
-d3-hierarchy 3.1.3 — ISC — https://d3js.org/d3-hierarchy/
+d3-hierarchy — ISC — https://d3js.org/d3-hierarchy/
     licence text [364]
-d3-interpolate 3.0.2 — ISC — https://d3js.org/d3-interpolate/
+d3-interpolate — ISC — https://d3js.org/d3-interpolate/
     licence text [364]
-d3-path 1.0.9 — BSD-3-Clause — https://d3js.org/d3-path/
-    licence text [372]
-d3-path 3.1.1 — ISC — https://d3js.org/d3-path/
-    licence text [373]
-d3-polygon 3.0.2 — ISC — https://d3js.org/d3-polygon/
+d3-path — ISC / BSD-3-Clause — https://d3js.org/d3-path/
+    licence text [372] [373]
+d3-polygon — ISC — https://d3js.org/d3-polygon/
     licence text [364]
-d3-quadtree 3.0.2 — ISC — https://d3js.org/d3-quadtree/
+d3-quadtree — ISC — https://d3js.org/d3-quadtree/
     licence text [364]
-d3-random 3.0.2 — ISC — https://d3js.org/d3-random/
+d3-random — ISC — https://d3js.org/d3-random/
     licence text [364]
-d3-sankey 0.12.3 — BSD-3-Clause — https://github.com/d3/d3-sankey
+d3-sankey — BSD-3-Clause — https://github.com/d3/d3-sankey
     licence text [374]
-d3-scale 4.0.3 — ISC — https://d3js.org/d3-scale/
+d3-scale — ISC — https://d3js.org/d3-scale/
     licence text [364]
-d3-scale-chromatic 3.1.1 — ISC — https://d3js.org/d3-scale-chromatic/
+d3-scale-chromatic — ISC — https://d3js.org/d3-scale-chromatic/
     licence text [375]
-d3-selection 3.0.1 — ISC — https://d3js.org/d3-selection/
+d3-selection — ISC — https://d3js.org/d3-selection/
     licence text [364]
-d3-shape 1.3.7 — BSD-3-Clause — https://d3js.org/d3-shape/
-    licence text [376]
-d3-shape 3.2.1 — ISC — https://d3js.org/d3-shape/
+d3-shape — ISC / BSD-3-Clause — https://d3js.org/d3-shape/
+    licence text [364] [376]
+d3-time — ISC — https://d3js.org/d3-time/
     licence text [364]
-d3-time 3.1.1 — ISC — https://d3js.org/d3-time/
+d3-time-format — ISC — https://d3js.org/d3-time-format/
     licence text [364]
-d3-time-format 4.1.1 — ISC — https://d3js.org/d3-time-format/
+d3-timer — ISC — https://d3js.org/d3-timer/
     licence text [364]
-d3-timer 3.0.2 — ISC — https://d3js.org/d3-timer/
+d3-transition — ISC — https://d3js.org/d3-transition/
     licence text [364]
-d3-transition 3.0.2 — ISC — https://d3js.org/d3-transition/
+d3-zoom — ISC — https://d3js.org/d3-zoom/
     licence text [364]
-d3-zoom 3.0.1 — ISC — https://d3js.org/d3-zoom/
-    licence text [364]
-dagre-d3-es 7.0.14 — MIT — https://github.com/tbo47/dagre-es#readme
+dagre-d3-es — MIT — https://github.com/tbo47/dagre-es#readme
     licence text [377]
-dayjs 1.11.23 — MIT — https://day.js.org
+dayjs — MIT — https://day.js.org
     licence text [378]
-delaunator 5.1.0 — ISC — https://github.com/mapbox/delaunator#readme
+delaunator — ISC — https://github.com/mapbox/delaunator#readme
     licence text [379]
-detect-node-es 1.1.0 — MIT — https://github.com/thekashey/detect-node
+detect-node-es — MIT — https://github.com/thekashey/detect-node
     licence text [380]
-dompurify 3.4.17 — (MPL-2.0 OR Apache-2.0) — https://github.com/cure53/DOMPurify
+dompurify — (MPL-2.0 OR Apache-2.0) — https://github.com/cure53/DOMPurify
     licence text [4] [76]
-elkjs 0.12.1 — EPL-2.0 OR GPL-3.0-or-later — https://github.com/kieler/elkjs#readme
+elkjs — EPL-2.0 OR GPL-3.0-or-later — https://github.com/kieler/elkjs#readme
     licence text [381]
-es-toolkit 1.53.2 — MIT — https://es-toolkit.dev
+es-toolkit — MIT — https://es-toolkit.dev
     licence text [382] [383]
-get-nonce 1.0.1 — MIT — https://github.com/theKashey/get-nonce
+get-nonce — MIT — https://github.com/theKashey/get-nonce
     licence text [384]
-hachure-fill 0.5.2 — MIT — https://github.com/pshihn/hachure-fill#readme
+hachure-fill — MIT — https://github.com/pshihn/hachure-fill#readme
     licence text [385]
-iconv-lite 0.6.3 — MIT — https://github.com/ashtuchkin/iconv-lite
+iconv-lite — MIT — https://github.com/ashtuchkin/iconv-lite
     licence text [386]
-import-meta-resolve 4.2.0 — MIT — https://github.com/wooorm/import-meta-resolve#readme
+import-meta-resolve — MIT — https://github.com/wooorm/import-meta-resolve#readme
     licence text [387]
-internmap 1.0.1 — ISC — https://github.com/mbostock/internmap/
+internmap — ISC — https://github.com/mbostock/internmap/
     licence text [388]
-internmap 2.0.3 — ISC — https://github.com/mbostock/internmap/
-    licence text [388]
-isbot 5.2.3 — Unlicense — https://isbot.js.org
+isbot — Unlicense — https://isbot.js.org
     licence text [389]
-its-fine 2.1.1 — MIT — https://github.com/pmndrs/its-fine
+its-fine — MIT — https://github.com/pmndrs/its-fine
     licence text [390]
-katex 0.18.10 — MIT — https://katex.org
+katex — MIT — https://katex.org
     licence text [391]
-khroma 2.1.0 — Unknown — https://github.com/fabiospampinato/khroma#readme
+khroma — Unknown — https://github.com/fabiospampinato/khroma#readme
     licence text [392]
-konva 10.9.1 — MIT — https://konvajs.org/
+konva — MIT — https://konvajs.org/
     licence text [393]
-layout-base 1.0.2 — MIT — https://github.com/iVis-at-Bilkent/layout-base#readme
+layout-base — MIT — https://github.com/iVis-at-Bilkent/layout-base#readme
     licence text [394]
-layout-base 2.0.1 — MIT — https://github.com/iVis-at-Bilkent/layout-base#readme
-    licence text [394]
-lodash-es 4.18.1 — MIT — https://lodash.com/custom-builds
+lodash-es — MIT — https://lodash.com/custom-builds
     licence text [395]
-marked 16.4.2 — MIT — https://marked.js.org
+marked — MIT — https://marked.js.org
     licence text [396]
-marked 18.1.3 — MIT — https://marked.js.org
-    licence text [396]
-mermaid 12.3.0 — MIT — https://github.com/mermaid-js/mermaid#readme
+mermaid — MIT — https://github.com/mermaid-js/mermaid#readme
     licence text [397]
-package-manager-detector 1.9.0 — MIT — https://github.com/antfu-collective/package-manager-detector#readme
+package-manager-detector — MIT — https://github.com/antfu-collective/package-manager-detector#readme
     licence text [398]
-path-data-parser 0.1.0 — MIT — https://github.com/pshihn/path-data-parser#readme
+path-data-parser — MIT — https://github.com/pshihn/path-data-parser#readme
     licence text [399]
-points-on-curve 0.2.0 — MIT — https://github.com/pshihn/bezier-points#readme
+points-on-curve — MIT — https://github.com/pshihn/bezier-points#readme
     licence text [399]
-points-on-path 0.2.1 — MIT — https://github.com/pshihn/points-on-path#readme
+points-on-path — MIT — https://github.com/pshihn/points-on-path#readme
     licence text [400]
-radix-ui 1.8.1 — MIT — https://radix-ui.com/primitives
+radix-ui — MIT — https://radix-ui.com/primitives
     licence text [351]
-react 19.3.1 — MIT — https://react.dev/
+react — MIT — https://react.dev/
     licence text [401]
-react-dom 19.3.1 — MIT — https://react.dev/
+react-dom — MIT — https://react.dev/
     licence text [401]
-react-konva 19.3.2 — MIT — https://konvajs.org/docs/react/index.html
+react-konva — MIT — https://konvajs.org/docs/react/index.html
     licence text [402]
-react-reconciler 0.34.0 — MIT — https://react.dev/
+react-reconciler — MIT — https://react.dev/
     licence text [401]
-react-remove-scroll 2.7.2 — MIT — https://github.com/theKashey/react-remove-scroll#readme
+react-remove-scroll — MIT — https://github.com/theKashey/react-remove-scroll#readme
     licence text [355]
-react-remove-scroll-bar 2.3.8 — MIT — https://github.com/theKashey/react-remove-scroll-bar#readme
+react-remove-scroll-bar — MIT — https://github.com/theKashey/react-remove-scroll-bar#readme
     (no licence file in the package; licence as named above)
-react-style-singleton 2.2.3 — MIT — https://github.com/theKashey/react-style-singleton#readme
+react-style-singleton — MIT — https://github.com/theKashey/react-style-singleton#readme
     licence text [355]
-robust-predicates 3.0.3 — Unlicense — https://github.com/mourner/robust-predicates#readme
+robust-predicates — Unlicense — https://github.com/mourner/robust-predicates#readme
     licence text [403]
-roughjs 4.6.6 — MIT — https://roughjs.com
+roughjs — MIT — https://roughjs.com
     licence text [404]
-rw 1.3.3 — BSD-3-Clause — https://github.com/mbostock/rw
+rw — BSD-3-Clause — https://github.com/mbostock/rw
     licence text [405]
-safer-buffer 2.1.2 — MIT — https://github.com/ChALkeR/safer-buffer#readme
+safer-buffer — MIT — https://github.com/ChALkeR/safer-buffer#readme
     licence text [406]
-scheduler 0.28.0 — MIT — https://react.dev/
+scheduler — MIT — https://react.dev/
     licence text [401]
-seroval 1.8.1 — MIT — https://seroval.vercel.app
+seroval — MIT — https://seroval.vercel.app
     licence text [407]
-seroval-plugins 1.8.0 — MIT — https://seroval.vercel.app/docs/using-plugins
+seroval-plugins — MIT — https://seroval.vercel.app/docs/using-plugins
     licence text [407]
-stylis 4.4.0 — MIT — https://github.com/thysultan/stylis.js
+stylis — MIT — https://github.com/thysultan/stylis.js
     licence text [408]
-tinyexec 1.3.1 — MIT — https://github.com/tinylibs/tinyexec#readme
+tinyexec — MIT — https://github.com/tinylibs/tinyexec#readme
     licence text [409]
-ts-dedent 2.3.0 — MIT — https://github.com/tamino-martinius/node-ts-dedent#readme
+ts-dedent — MIT — https://github.com/tamino-martinius/node-ts-dedent#readme
     licence text [410]
-tslib 2.9.1 — 0BSD — https://www.typescriptlang.org/
+tslib — 0BSD — https://www.typescriptlang.org/
     licence text [411]
-use-callback-ref 1.3.3 — MIT — https://github.com/theKashey/use-callback-ref#readme
+use-callback-ref — MIT — https://github.com/theKashey/use-callback-ref#readme
     licence text [355]
-use-sidecar 1.1.3 — MIT — https://github.com/theKashey/use-sidecar
+use-sidecar — MIT — https://github.com/theKashey/use-sidecar
     licence text [355]
-use-sync-external-store 1.7.0 — MIT — https://github.com/react/react#readme
+use-sync-external-store — MIT — https://github.com/react/react#readme
     licence text [401]
-zustand 5.1.0 — MIT — https://github.com/pmndrs/zustand
+zustand — MIT — https://github.com/pmndrs/zustand
     licence text [412]
 ==============================================================================
 Fonts
@@ -5657,7 +5471,7 @@ THE SOFTWARE.
 
 [57]
 
-Copyright (c) 2020-2026 The RustCrypto Project Developers
+Copyright (c) 2020-2022 The RustCrypto Project Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -5685,7 +5499,7 @@ DEALINGS IN THE SOFTWARE.
 
 [58]
 
-Copyright (c) 2020-2022 The RustCrypto Project Developers
+Copyright (c) 2020-2026 The RustCrypto Project Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -21240,6 +21054,22 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 [372]
 
+Copyright 2015-2026 Mike Bostock
+
+Permission to use, copy, modify, and/or distribute this software for any purpose
+with or without fee is hereby granted, provided that the above copyright notice
+and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS
+OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
+THIS SOFTWARE.
+
+[373]
+
 Copyright 2015-2016 Mike Bostock
 All rights reserved.
 
@@ -21267,22 +21097,6 @@ LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
 ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-[373]
-
-Copyright 2015-2026 Mike Bostock
-
-Permission to use, copy, modify, and/or distribute this software for any purpose
-with or without fee is hereby granted, provided that the above copyright notice
-and this permission notice appear in all copies.
-
-THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
-REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
-FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
-INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS
-OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
-TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
-THIS SOFTWARE.
 
 [374]
 
