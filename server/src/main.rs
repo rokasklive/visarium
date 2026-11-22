@@ -44,6 +44,21 @@ fn env(name: &str, default: &str) -> String {
         .unwrap_or_else(|| default.into())
 }
 
+/// Ctrl-C everywhere, plus SIGTERM where the platform has one.
+async fn shutdown_signal() {
+    let ctrl_c = tokio::signal::ctrl_c();
+    #[cfg(unix)]
+    {
+        let mut term =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).unwrap();
+        tokio::select! { _ = ctrl_c => {}, _ = term.recv() => {} }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = ctrl_c.await;
+    }
+}
+
 #[tokio::main]
 async fn main() -> visarium::anyhow_lite::Result<()> {
     let level = env("VISARIUM_LOG_LEVEL", "info");
@@ -108,12 +123,7 @@ async fn main() -> visarium::anyhow_lite::Result<()> {
     tracing::info!(address = %listener.local_addr()?, "listening");
 
     axum::serve(listener, visarium::router(state))
-        .with_graceful_shutdown(async {
-            let ctrl_c = tokio::signal::ctrl_c();
-            let mut term =
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).unwrap();
-            tokio::select! { _ = ctrl_c => {}, _ = term.recv() => {} }
-        })
+        .with_graceful_shutdown(shutdown_signal())
         .await?;
     tracing::info!("shut down");
     Ok(())
@@ -155,12 +165,7 @@ async fn demo(
         listener,
         visarium::demo::router(gateway).into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(async {
-        let ctrl_c = tokio::signal::ctrl_c();
-        let mut term =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).unwrap();
-        tokio::select! { _ = ctrl_c => {}, _ = term.recv() => {} }
-    })
+    .with_graceful_shutdown(shutdown_signal())
     .await?;
     Ok(())
 }
