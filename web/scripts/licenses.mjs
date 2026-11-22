@@ -49,7 +49,7 @@ function crates() {
   return meta.packages
     .filter((p) => seen.has(p.id) && !meta.workspace_members.includes(p.id))
     .map((p) => ({
-      name: `${p.name} ${p.version}`,
+      name: p.name,
       license: p.license ?? (p.license_file ? 'see licence text' : 'unspecified'),
       url: p.repository ?? p.homepage ?? '',
       texts: texts(join(p.manifest_path, '..')),
@@ -65,11 +65,11 @@ function packages() {
     .flat()
     .filter((p) => !p.name.startsWith('@visarium/'))
     .flatMap((p) =>
-      p.versions.map((version, i) => ({
-        name: `${p.name} ${version}`,
+      p.paths.map((path) => ({
+        name: p.name,
         license: p.license,
         url: p.homepage ?? '',
-        texts: texts(p.paths[i]),
+        texts: texts(path),
       })),
     );
 }
@@ -99,8 +99,26 @@ const ref = (text) => {
   return `[${distinct.get(key).n}]`;
 };
 
+/**
+ * One entry per package, whatever versions of it ship: a notice needs the
+ * work, its licence and its text, not the version, and leaving versions out
+ * keeps a dependency bump from making this file stale.
+ */
+function byName(works) {
+  const merged = new Map();
+  for (const w of works) {
+    const m = merged.get(w.name);
+    if (!m) merged.set(w.name, { ...w, texts: [...w.texts] });
+    else {
+      if (!m.license.split(' / ').includes(w.license)) m.license += ` / ${w.license}`;
+      for (const t of w.texts) if (!m.texts.includes(t)) m.texts.push(t);
+    }
+  }
+  return [...merged.values()];
+}
+
 function section(title, works) {
-  const sorted = works.sort((a, b) => a.name.localeCompare(b.name));
+  const sorted = byName(works).sort((a, b) => a.name.localeCompare(b.name));
   const lines = [rule, title, rule, ''];
   for (const w of sorted) {
     lines.push(`${w.name} — ${w.license}${w.url ? ` — ${w.url}` : ''}`);
