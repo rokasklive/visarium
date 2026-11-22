@@ -3,12 +3,11 @@ import { useBlocker } from '@tanstack/react-router';
 import { codenameFor, fetchServerInfo } from '@visarium/api-client';
 import { type ComponentType, useState } from 'react';
 import { checkForUpdates, collectDiagnostics, installUpdate, localPort } from '~/api/desktop';
+import { SOURCE } from '~/app/source';
 import changelog from '../../../../CHANGELOG.md?raw';
 
 declare const __VISARIUM_BUILD__: string;
 
-/** Where this program's source is offered. A fork that changes it must change this too. */
-const SOURCE = 'https://github.com/rokasklive/visarium';
 const link = 'underline underline-offset-2 hover:text-ink';
 
 type UpdateView =

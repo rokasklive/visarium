@@ -213,6 +213,28 @@ async fn a_visitor_starts_a_sandbox_of_their_own() {
     ] {
         assert_eq!(ada.get(path).await.status, StatusCode::NOT_FOUND, "{path}");
     }
+
+    // Nor are settings. The visitor is the sandbox's admin, so these would
+    // otherwise lift the storage limit or aim the vision model anywhere.
+    let unlimited = ada
+        .json(
+            "PUT",
+            "/api/instance/storage",
+            json!({ "limitBytes": null }),
+        )
+        .await;
+    assert_eq!(unlimited.status, StatusCode::NOT_FOUND);
+    let vision = ada
+        .json(
+            "POST",
+            "/api/instance/vision/test",
+            json!({ "endpoint": "http://10.0.0.9/" }),
+        )
+        .await;
+    assert_eq!(vision.status, StatusCode::NOT_FOUND);
+    for path in ["/api/agent-tokens", "/api/sessions", "/api/accounts"] {
+        assert_eq!(ada.get(path).await.status, StatusCode::NOT_FOUND, "{path}");
+    }
     let _ = std::fs::remove_dir_all(root);
 }
 
