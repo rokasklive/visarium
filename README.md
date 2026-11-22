@@ -89,14 +89,13 @@ One container serves the web app, the API, live updates and the MCP endpoint. Yo
 
 3. **Pick the image.** To run a release, open `compose.yml`, set `image: ghcr.io/rokasklive/visarium:0.1` and delete the `build:` block. Tags are `X.Y.Z`, `X.Y` and `latest`, and `edge` follows `master`. Leave it as it is to build from source.
 
-4. **Start it.** The app joins a `proxy` network so a reverse proxy can reach it.
+4. **Start it.**
 
    ```sh
-   docker network create proxy
    docker compose up -d
    ```
 
-5. **Claim it straight away.** Open <http://localhost:8080> and create the admin account: on a fresh instance, the first person to open it gets admin. Only then point your reverse proxy at it. The app listens on loopback only and ships no TLS, so the proxy provides it.
+5. **Claim it straight away.** Open <http://localhost:8080> and create the admin account: on a fresh instance, the first person to open it gets admin. Only then point your reverse proxy at it. The app listens on loopback only and ships no TLS, so the proxy provides it. If the proxy runs in another container, the top of `compose.yml` shows how to join its network.
 
 **Your data.** `DATABASE_HOST_PATH` holds the SQLite database: keep it on a local disk, never a network mount. `ASSETS_HOST_PATH` holds the original files, and a NAS mount is fine for it. Back both up. `DERIVATIVES_HOST_PATH` is a cache that can be rebuilt.
 
