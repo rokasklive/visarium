@@ -14,10 +14,12 @@
 pub mod blocks;
 pub mod board;
 pub mod boards;
+pub mod confirm;
 pub mod diagram;
 pub mod import;
 pub mod place;
 pub mod read;
+pub mod status;
 pub mod write;
 
 use std::collections::HashMap;
@@ -70,6 +72,16 @@ pub struct Caller {
 }
 
 impl Caller {
+    /// The person, as an agent is told about them: their name, or "your
+    /// person" for single-user mode's unnamed account ("You"), so a message
+    /// never reads "needs You's confirmation".
+    pub fn person(&self) -> String {
+        match self.user.display_name.as_str() {
+            "You" | "" => "your person".into(),
+            name => name.into(),
+        }
+    }
+
     pub fn actor(&self) -> Actor {
         Actor {
             user_id: self.user.id.clone(),
@@ -671,7 +683,11 @@ async fn run_tool(app: &AppState, caller: &Caller, params: &Value) -> Value {
         "changes" => read::changes(app, &args).await,
         "item_view" => read::item_view(app, &args).await,
         "item_create" | "item_edit" | "tasks" | "link" | "unlink" | "arrange" | "group_create"
-        | "item_delete" => write::run(app, caller, name, &args).await,
+        | "item_delete" => match write::run(app, caller, name, params).await {
+            Ok(boards::Step::Ask(result)) => return result,
+            Ok(boards::Step::Done(out)) => Ok(out),
+            Err(e) => Err(e),
+        },
         _ => Err(format!(
             "There is no tool '{name}'. The tools: {}.",
             TOOL_NAMES.join(", ")
@@ -738,6 +754,8 @@ Read in layers: desk lists boards; board_read gives a board's overview; item_rea
 Refs: every item has a short ref on its board — n (note), d (diagram), c (checklist), i (image), g (group or frame) and a number, e.g. d2. An element inside a diagram is d2#Server (the node, participant or class name). A task is c1/t3, and a link can end at one.
 
 Links have a type and a direction. A link from A to B of type `describes` means A describes B; `comments` means A comments on B; `implements` means A implements B; `depends-on` means A depends on B. Point a note at what it explains, a checklist at what it builds.
+
+Decisions and questions: a note whose source has a `Status:` line just under its title, or `status:` in frontmatter, is a decision (proposed, accepted, rejected, deprecated, superseded) or a question (open, answered). Reads show it as [decision · accepted]. Agents propose; your person decides: write a new decision as proposed and leave a question open. Changing or deleting an accepted decision, or settling any status, needs your person's confirmation.
 
 Writing: say where, never coordinates — item_create(near: \"d1\") or (in: \"g2\"), and the server places it. Edit source with item_edit, passing the base_rev you read; it refuses a stale edit. Every write tells you what it changed, including links it broke. Pass request_id on writes so a retry after a timeout does not apply twice. Your changes are credited to you and your person, and everyone on the board sees them as they land.
 
@@ -839,10 +857,10 @@ fn tools(manage_boards: bool) -> Value {
           "description": "A board as a table of contents in Markdown: frames and groups as sections, one line per item (ref, kind, title, size, links in and out), checklist progress, broken links, the revision and the last change. No source; read items with item_read. Pass focus: \"g3\" to list one frame in full when the overview says it was cut short.",
           "inputSchema": { "type": "object", "properties": { "board": board, "focus": r("Optional: a group ref to list in full.") }, "required": ["board"] }, "annotations": read_only },
         { "name": "item_read", "title": "Read one item",
-          "description": "One item in full: a note's or diagram's numbered source (100 lines at a time; pass offset for more), a diagram's elements, edges and the links on each element, a checklist's tasks with their state and who changed them, an image's text description and visible text when the server has a vision model, and the item's revision (pass it to item_edit as base_rev).",
+          "description": "One item in full: a note's or diagram's numbered source (100 lines at a time; pass offset for more), a diagram's elements, edges and the links on each element, a checklist's tasks with their state and who changed them, an image's text description and visible text when the server has a vision model, and the item's revision (pass it to item_edit as base_rev). A note's status (decision or question) is on the first line; an accepted decision ends with how to treat it.",
           "inputSchema": { "type": "object", "properties": { "board": board, "ref": r("e.g. d2, n4, c1."), "offset": { "type": "integer", "description": "First line to show, 0-based." } }, "required": ["board", "ref"] }, "annotations": read_only },
         { "name": "trace", "title": "Follow an item or element",
-          "description": "Everything around one thing. For a diagram element (d1#OpQueue): its edges in the diagram, what links to it, and name matches elsewhere (the same name in another diagram, a note or a task — matches, not links). For an item: every link in and out, with the item at the other end.",
+          "description": "Everything around one thing. For a diagram element (d1#OpQueue): its edges in the diagram, what links to it, and name matches elsewhere (the same name in another diagram, a note or a task — matches, not links). For an item: every link in and out, with the item at the other end. Linked decisions and open questions come first, with their status.",
           "inputSchema": { "type": "object", "properties": { "board": board, "ref": r("An item ref (c1) or element ref (d1#OpQueue).") }, "required": ["board", "ref"] }, "annotations": read_only },
         { "name": "search", "title": "Search text",
           "description": "Finds words in notes, diagram sources (so element names), checklist titles and task texts, across every board or one. Returns refs with a snippet. Plain words, all of which must match.",
@@ -857,7 +875,7 @@ fn tools(manage_boards: bool) -> Value {
           "description": "Adds an item, placed by the server next to (near, below, right_of) or inside (in) something you name, optionally with a link from it, all in one step. Example: a note that explains a node — kind \"note\", source \"…\", near \"d1\", link { type \"describes\", to \"d1#OpQueue\" }. Returns the new ref.",
           "inputSchema": create, "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false } },
         { "name": "item_edit", "title": "Edit a note's or diagram's source",
-          "description": "Changes source, either by replacing one exact passage (old → new; old must occur exactly once) or with the whole new source. base_rev is the revision you read; if someone changed the item since, the edit is refused and you are told what changed. For diagrams the result lists elements added and removed and links broken or repaired.",
+          "description": "Changes source, either by replacing one exact passage (old → new; old must occur exactly once) or with the whole new source. base_rev is the revision you read; if someone changed the item since, the edit is refused and you are told what changed. For diagrams the result lists elements added and removed and links broken or repaired. Changing an accepted decision, or moving a note's status anywhere but proposed or open, waits for your person's confirmation; when they cannot be asked, write a proposed decision that supersedes it instead.",
           "inputSchema": { "type": "object", "properties": {
               "board": board, "ref": r("A note or diagram ref."), "base_rev": { "type": "integer", "description": "The item revision item_read showed." },
               "old": r("An exact passage of the current source, occurring once."),

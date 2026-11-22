@@ -36,10 +36,10 @@ interface Op {
   [k: string]: unknown;
 }
 
-async function stubBoard(page: Page, links: unknown[] = []) {
+async function stubBoard(page: Page, links: unknown[] = [], on: unknown[] = items()) {
   const posted: Op[] = [];
   await page.route(`**/api/boards/${BOARD}/snapshot`, (route) =>
-    route.fulfill({ json: { revision: 1, items: items(), groups: [], links, people: {} } }),
+    route.fulfill({ json: { revision: 1, items: on, groups: [], links, people: {} } }),
   );
   await page.route(`**/api/boards/${BOARD}/operations`, async (route) => {
     const body = route.request().postDataJSON() as { operations: { body: Op }[] };
@@ -60,6 +60,8 @@ type Hook = {
   links(): {
     id: string;
     linkType: string;
+    count: number;
+    faded: boolean;
     broken: boolean;
     from: { x: number; y: number };
     to: { x: number; y: number };
@@ -434,4 +436,105 @@ test('a link to a passage that is gone is broken, and heals when it comes back',
     [NOTE],
   );
   await expect.poll(async () => (await links(page))[0]?.broken, { timeout: 10_000 }).toBe(false);
+});
+
+// --- many links between two items (canvas/links) ------------------------------------
+
+const NODES = ['Ingest', 'Signing', 'Worker', 'Outbox', 'Admin'];
+const five = () => [
+  at(NOTE, -220, -150, 200, { kind: 'note', source: '### ADR-2\n\nSign at send time.' }),
+  at(FLOW, 150, -150, 320, {
+    kind: 'diagram',
+    lang: 'mermaid',
+    source: 'flowchart LR\n  Ingest --> Signing --> Worker --> Outbox\n  Admin --> Worker',
+  }),
+  at(LIST, -220, 120, 200, {
+    kind: 'checklist',
+    title: 'Build',
+    tasks: [{ id: 't1', text: 'Keys', state: 'todo' }],
+  }),
+];
+const fiveLinks = () => [
+  ...NODES.map((n, i) => ({
+    id: `01a01640-6b72-7d60-968b-88be186f71${10 + i}`,
+    from: { itemId: NOTE, element: null },
+    to: { itemId: FLOW, element: n },
+    linkType: 'describes',
+  })),
+  {
+    id: '01a01640-6b72-7d60-968b-88be186f7120',
+    from: { itemId: LIST, element: null },
+    to: { itemId: FLOW, element: null },
+    linkType: 'implements',
+  },
+];
+
+test('five links from a note to one diagram are one line until the note is selected', async ({
+  page,
+}) => {
+  const posted = await stubBoard(page, fiveLinks(), five());
+  const c = await open(page);
+  await expect.poll(async () => (await links(page)).length).toBe(2);
+  const grouped = (await links(page)).find((l) => l.count === 5);
+  expect(grouped, 'one line marked ×5').toBeDefined();
+
+  // Clicking the grouped line selects its note, which fans it out, and the other link fades.
+  if (!grouped) throw new Error('no grouped line');
+  const m = mid(grouped, c);
+  await page.mouse.click(m.x, m.y);
+  await expect
+    .poll(async () => (await links(page)).filter((l) => l.count === 1 && !l.faded).length)
+    .toBe(5);
+  expect((await links(page)).find((l) => l.linkType === 'implements')?.faded).toBe(true);
+
+  // One of the five, clicked and deleted, goes alone.
+  const [one] = (await links(page)).filter((l) => l.linkType === 'describes');
+  if (!one) throw new Error('no fanned link');
+  const p = mid(one, c);
+  await page.mouse.click(p.x, p.y);
+  await expect.poll(async () => (await ui(page)).selected).toBe(one.id);
+  await page.keyboard.press('Delete');
+  await expect.poll(() => ofType(posted, 'link.delete').length).toBe(1);
+  expect(ofType(posted, 'link.delete')[0]).toMatchObject({ linkId: one.id });
+
+  // At rest again, the line reads ×4.
+  await page.keyboard.press('Escape');
+  await page.mouse.move(c.x + 400, c.y + 300);
+  await expect
+    .poll(async () => (await links(page)).find((l) => l.linkType === 'describes')?.count)
+    .toBe(4);
+});
+
+test('links on focus: none drawn at rest, a hovered note draws its own, kept across reloads, never sent', async ({
+  page,
+}) => {
+  const posted = await stubBoard(page, fiveLinks(), five());
+  const c = await open(page);
+  await expect.poll(async () => (await links(page)).length).toBe(2);
+  await page.getByRole('button', { name: 'Links on focus' }).click();
+  await expect(page.getByRole('button', { name: 'Links on focus' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await page.mouse.move(c.x + 400, c.y + 300);
+  await expect.poll(async () => (await links(page)).length).toBe(0);
+
+  // Hovering the note draws its five links, fanned out, and nothing else.
+  await page.mouse.move(c.x - 260, c.y - 185, { steps: 5 });
+  await expect
+    .poll(async () => (await links(page)).map((l) => `${l.linkType}×${l.count}`))
+    .toEqual(Array(5).fill('describes×1'));
+
+  await page.reload();
+  await open(page);
+  await expect(page.getByRole('button', { name: 'Links on focus' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await page.mouse.move(c.x + 400, c.y + 300);
+  await expect.poll(async () => (await links(page)).length).toBe(0);
+  // The shortcut turns it back off.
+  await page.keyboard.press('l');
+  await expect.poll(async () => (await links(page)).length).toBe(2);
+  expect(posted, 'a view setting is never a board operation').toEqual([]);
 });

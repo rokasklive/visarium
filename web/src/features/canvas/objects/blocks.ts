@@ -12,6 +12,8 @@
  * in the drawing finds its lines in the source.
  */
 
+import { frontmatterLines } from './status';
+
 const MARKER = /[ \t]\^([A-Za-z0-9-]+)[ \t]*$/;
 const HEADING = /^ {0,3}(#{1,6})[ \t]+(.*?)[ \t#]*$/;
 const ITEM = /^[ \t]*(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?/;
@@ -69,7 +71,10 @@ export function sourceBlocks(source: string): SourceBlock[] {
     });
     open = undefined;
   };
+  // Frontmatter is not drawn, so it holds no passages (canvas/note-status).
+  const skip = frontmatterLines(source);
   lines.forEach((raw, n) => {
+    if (n < skip) return;
     if (FENCE.test(raw)) {
       close();
       fenced = !fenced;

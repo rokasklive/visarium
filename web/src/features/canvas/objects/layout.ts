@@ -15,6 +15,7 @@ import { type CanvasItem, type DiagramLang, textScaleOf } from '@visarium/canvas
 import { measureIn, textIndex } from '../search';
 import { slug } from './blocks';
 import { loadMarkdown, loadMermaid, loadPlantUml, type MermaidPalette } from './loaders';
+import { noteStatus, statusLabel, stripFrontmatter } from './status';
 import { type ObjectPalette, objectCss } from './style';
 
 export interface LocalRect {
@@ -30,7 +31,9 @@ export type Hit =
   | { readonly kind: 'link'; readonly href: string }
   | { readonly kind: 'task-state'; readonly taskId: string }
   | { readonly kind: 'task-text'; readonly taskId: string }
-  | { readonly kind: 'title' };
+  | { readonly kind: 'title' }
+  /** A note's status chip (canvas/note-status): a control unless read-only. */
+  | { readonly kind: 'status' };
 
 export interface Layout {
   /** Width and height in world units, at the item's width. */
@@ -158,7 +161,20 @@ export function layoutSource(source: string, width: number): Promise<Layout> {
 
 async function layoutNote(source: string, width: number): Promise<Layout> {
   const md = await loadMarkdown();
-  return layoutHtml(md.sanitize(md.parse(source)), width, prepareNote);
+  return layoutHtml(noteMarkup(md, source), width, prepareNote);
+}
+
+/**
+ * A note's markup: frontmatter is not drawn, and a status chip sits above the
+ * first block (canvas/note-status). The chip is a `div`, so it is never a
+ * passage.
+ */
+function noteMarkup(md: { parse(s: string): string; sanitize(h: string): string }, source: string) {
+  const status = noteStatus(source);
+  const chip = status
+    ? `<div class="vo-chip ${status.kind}${status.state ? ` ${status.state}` : ''}" data-status="">${escapeHtml(statusLabel(status))}</div>`
+    : '';
+  return chip + md.sanitize(md.parse(stripFrontmatter(source)));
 }
 
 /**
@@ -168,7 +184,7 @@ async function layoutNote(source: string, width: number): Promise<Layout> {
 export function noteHtml(md: { parse(s: string): string; sanitize(h: string): string }) {
   return (source: string): string => {
     const root = document.createElement('div');
-    root.innerHTML = md.sanitize(md.parse(source));
+    root.innerHTML = noteMarkup(md, source);
     prepareNote(root);
     return root.innerHTML;
   };
@@ -293,6 +309,8 @@ async function layoutHtml(
     });
     const title = root.querySelector('[data-title]');
     if (title) hits.push({ kind: 'title', rect: local(title) });
+    const chip = root.querySelector('[data-status]');
+    if (chip) hits.push({ kind: 'status', rect: local(chip) });
     // A checklist's tasks are link anchors by id (`t3`), like a diagram's elements.
     const elements = new Map<string, LocalRect>();
     for (const li of root.querySelectorAll<HTMLElement>('[data-task]')) {

@@ -81,6 +81,14 @@
   --color-grid: oklch(0.3 0.012 265);
 
   /*
+   * A link that recedes while something else is in focus (canvas/links). A
+   * solid colour, not an alpha (Konva cannot compose one from a token):
+   * findable on the ground, quieter than a link at rest. tokens.test.ts holds
+   * it between the two.
+   */
+  --color-link-faded: oklch(0.36 0.006 265);
+
+  /*
    * Presence. One token per actor the product supports at once, and that count
    * IS the concurrency ceiling — north star 9 says two or three people, and
    * PRESENCE_COLOUR_SLOTS in protocol.ts is six because a ceiling should have

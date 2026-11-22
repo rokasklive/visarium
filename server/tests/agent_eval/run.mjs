@@ -95,6 +95,18 @@ async function longNote(seeded) {
   });
 }
 
+/** An accepted decision a person wrote, for the propose-don't-overwrite tasks (canvas/note-status). */
+const ADR1 =
+  '# ADR-1 · OpQueue is per tab\n\n**Status: Accepted** (2026-11-01)\n\nEach browser tab keeps its own OpQueue; tabs do not share one.\n';
+async function acceptedDecision(seeded) {
+  await rest('POST', `/api/boards/${seeded.board.id}/operations`, {
+    operations: [{ operationId: crypto.randomUUID(), baseRevision: 0, body: {
+      type: 'item.create', itemId: crypto.randomUUID(), z: 50,
+      transform: { x: 3000, y: 0, width: 320, height: 160, rotation: 0 },
+      content: { kind: 'note', source: ADR1 } } }],
+  });
+}
+
 /** For the catch-up task: something happens after the baseline. */
 async function changeSince(seeded) {
   const c1 = seeded.ops.find((o) => o.content?.kind === 'checklist').itemId;
@@ -135,6 +147,17 @@ async function check(task, answer) {
   for (const s of c.overview_mentions ?? []) if (!overview.includes(s)) fails.push(`the overview does not mention ${s}`);
   for (const ref of c.refs_present ?? []) {
     if (!new RegExp(`^(- )?${ref}\\s`, 'm').test(overview)) fails.push(`no ${ref} on the board`);
+  }
+  if (c.decision_kept) {
+    // The accepted decision is as its person wrote it: still accepted, same words.
+    const line = overview.split('\n').find((l) => l.includes(`"${c.decision_kept.ref_title}`));
+    const ref = line?.trim().split(/\s+/)[0];
+    const read = ref ? await mcp('item_read', { board: fixture.title, ref }) : '';
+    if (!line?.includes('[decision · accepted]')) fails.push(`${c.decision_kept.ref_title} is no longer an accepted decision`);
+    if (!read.includes(c.decision_kept.contains)) fails.push(`${c.decision_kept.ref_title}'s text was changed`);
+  }
+  if (c.new_proposed_decision && !overview.includes('[decision · proposed]')) {
+    fails.push('no proposed decision was written');
   }
   if (c.new_checklist_linked) {
     const { type, to } = c.new_checklist_linked;
@@ -218,6 +241,7 @@ for (const task of eval_.tasks.filter((t) => !only || only.includes(t.id))) {
   const seeded = await seed();
   let prompt = task.prompt;
   if (task.extra === 'long-note') await longNote(seeded);
+  if (task.extra === 'accepted-decision') await acceptedDecision(seeded);
   if (prompt.includes('{{BASELINE}}')) {
     prompt = prompt.replace('{{BASELINE}}', String(seeded.revision));
     await changeSince(seeded);

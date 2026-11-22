@@ -23,6 +23,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { keys: ['Space', 'drag'], label: 'Pan', handles: 'spaceHeld.current = true' },
   { keys: ['F'], label: 'Frame selection or board', handles: 'frameView()' },
   { keys: ['P'], label: 'Pause GIFs', handles: "key.toLowerCase() === 'p'" },
+  { keys: ['L'], label: 'Links on focus', handles: "key.toLowerCase() === 'l'" },
   { keys: ['Mod', 'Z'], label: 'Undo', needsEdit: true, handles: "key.toLowerCase() === 'z'" },
   { keys: ['Mod', 'A'], label: 'Select all', handles: "key.toLowerCase() === 'a'" },
   { keys: ['Esc'], label: 'Deselect', handles: "key === 'Escape'" },

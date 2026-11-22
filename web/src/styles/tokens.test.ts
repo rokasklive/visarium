@@ -249,3 +249,14 @@ describe('presence colours', () => {
     });
   }
 });
+
+describe('link-faded (canvas/links)', () => {
+  it('can still be found on the canvas ground', () => {
+    expect(contrast('link-faded', 'surface-sunken')).toBeGreaterThan(1.3);
+  });
+  it('recedes below a link at rest', () => {
+    expect(contrast('link-faded', 'surface-sunken')).toBeLessThan(
+      contrast('ink-dim', 'surface-sunken') / 2,
+    );
+  });
+});

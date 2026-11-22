@@ -510,7 +510,7 @@ impl BoardData {
         };
         match item.kind.as_str() {
             "note" => {
-                let body = item.body.as_deref().unwrap_or("");
+                let body = crate::agent::status::body(item.body.as_deref().unwrap_or(""));
                 let line = body
                     .lines()
                     .map(str::trim)
@@ -530,6 +530,20 @@ impl BoardData {
                 .map_or_else(|| "image".into(), |f| clip(f)),
             other => other.to_string(),
         }
+    }
+
+    /// A note's status (canvas/note-status), read from its source.
+    pub fn status_of(&self, item: &ItemRow) -> Option<crate::agent::status::Status> {
+        (item.kind == "note")
+            .then(|| crate::agent::status::status_of(item.body.as_deref().unwrap_or("")))
+            .flatten()
+    }
+
+    /// `[decision · accepted]` with a leading space, or nothing.
+    pub fn status_tag(&self, item: &ItemRow) -> String {
+        self.status_of(item)
+            .map(|s| format!(" [{}]", s.label()))
+            .unwrap_or_default()
     }
 
     /// What kind of thing an item is, in a few words: `plantuml sequence`.

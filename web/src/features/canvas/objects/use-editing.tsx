@@ -27,7 +27,7 @@ import {
 import { type ReactNode, useCallback, useRef, useState } from 'react';
 import { personName } from '~/api/boards';
 import type { BoardRealtime } from '../realtime';
-import { FieldEditor, type Placement, SourceEditor } from './editor';
+import { FieldEditor, type Placement, SourceEditor, StatusMenu } from './editor';
 import {
   createObject,
   hitAt,
@@ -40,6 +40,7 @@ import {
   worldToLocal,
 } from './interact';
 import { type LocalRect, laidWidth } from './layout';
+import { noteStatus, STATES, statusLabel, withStatus } from './status';
 import type { ObjectLayouts } from './store';
 
 /** How long typing pauses before the source is saved: a closed tab loses less than this. */
@@ -52,7 +53,8 @@ type Editing =
   | { readonly kind: 'new-note'; readonly at: Vec2 }
   | { readonly kind: 'task'; readonly itemId: ItemId; readonly taskId: string }
   | { readonly kind: 'task-new'; readonly itemId: ItemId; readonly index: number }
-  | { readonly kind: 'title'; readonly itemId: ItemId };
+  | { readonly kind: 'title'; readonly itemId: ItemId }
+  | { readonly kind: 'status'; readonly itemId: ItemId };
 
 export interface EditingDeps {
   readonly doc: CanvasDocument;
@@ -286,6 +288,8 @@ export function useObjectEditing(d: EditingDeps) {
       setEditing({ kind: 'task', itemId: item.id, taskId: hit.taskId });
     } else if (hit.kind === 'title') {
       setEditing({ kind: 'title', itemId: item.id });
+    } else if (hit.kind === 'status' && c.kind === 'note') {
+      setEditing({ kind: 'status', itemId: item.id });
     }
     return true;
   };
@@ -344,12 +348,12 @@ export function useObjectEditing(d: EditingDeps) {
 
   const rectOf = (
     item: CanvasItem,
-    kind: 'task-text' | 'title',
+    kind: 'task-text' | 'title' | 'status',
     taskId?: string,
   ): LocalRect | undefined => {
     const view = d.objects.view(item);
     const hit = view?.layout.hits.find(
-      (h) => h.kind === kind && (kind === 'title' || ('taskId' in h && h.taskId === taskId)),
+      (h) => h.kind === kind && (kind !== 'task-text' || ('taskId' in h && h.taskId === taskId)),
     );
     if (!hit || !view) return undefined;
     return scaleRect(hit.rect, item.transform.width / view.layout.width);
@@ -479,6 +483,37 @@ export function useObjectEditing(d: EditingDeps) {
         }}
       />
     );
+  }
+
+  if (e?.kind === 'status' && item?.content.kind === 'note') {
+    const source = item.content.source;
+    const status = noteStatus(source);
+    const chip = rectOf(item, 'status');
+    if (status && status.kind !== 'none') {
+      const kind = status.kind;
+      overlay = (
+        <StatusMenu
+          key={`status-${item.id}`}
+          placement={fieldFor(item, chip, (chip?.height ?? 0) + 4)}
+          states={STATES[kind]
+            .filter((s) => s !== status.state)
+            .map((state) => ({ state, label: statusLabel({ kind, state, raw: state }) }))}
+          onPick={(state) => {
+            const next = withStatus(source, state);
+            // One ordinary source change: undone in one step, refused if stale.
+            if (next !== undefined && next !== source)
+              d.commit({
+                type: 'item.source',
+                itemId: item.id,
+                source: next,
+                ...(item.revision !== undefined ? { baseRevision: item.revision } : {}),
+              });
+            setEditing(null);
+          }}
+          onDone={() => setEditing(null)}
+        />
+      );
+    }
   }
 
   const tooltip = tip ? (

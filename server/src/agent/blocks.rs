@@ -18,7 +18,8 @@ pub fn block_names(source: &str) -> Vec<String> {
         }
         *open = false;
     };
-    for raw in source.lines() {
+    // Frontmatter is not drawn, so it holds no passages (canvas/note-status).
+    for raw in crate::agent::status::body(source).lines() {
         let fence = raw.trim_start();
         if fence.starts_with("```") || fence.starts_with("~~~") {
             flush(&mut open, &last_line, &mut names);
@@ -91,7 +92,7 @@ fn marker(line: &str) -> Option<&str> {
 }
 
 /// An ATX heading's text, without its `#`s.
-fn heading(line: &str) -> Option<&str> {
+pub(crate) fn heading(line: &str) -> Option<&str> {
     let t = line
         .strip_prefix("   ")
         .or_else(|| line.strip_prefix("  "))

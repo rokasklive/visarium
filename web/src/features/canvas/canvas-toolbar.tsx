@@ -1,11 +1,11 @@
 import type { CanvasDocument, CanvasHistory } from '@visarium/canvas-core';
-import type { ReactNode } from 'react';
+import { type ReactNode, useState } from 'react';
 import { useUiStore } from '~/app/ui-store';
 
 /**
  * The canvas' own chrome: what does NOT depend on what is selected.
  *
- * The tool, a new checklist, undo and redo, and framing — and that list is the rule. Front,
+ * The tool, a new checklist, undo and redo, framing, and how links are shown — and that list is the rule. Front,
  * back, group and ungroup left in M08 for the selection toolbar, which is
  * anchored to the thing they act on; two ways to press Front is the seam that
  * milestone closed, and nothing that operates on a selection comes back here.
@@ -17,6 +17,8 @@ export function CanvasToolbar({
   onHistory,
   onFrame,
   onChecklist,
+  linksOnFocus,
+  onLinksOnFocus,
 }: {
   history: CanvasHistory;
   onHistory: () => void;
@@ -24,6 +26,9 @@ export function CanvasToolbar({
   onFrame: () => void;
   /** Makes an empty checklist mid-view, its title open: the one object type a person could not otherwise discover how to make. */
   onChecklist: () => void;
+  /** Links drawn only for what is hovered or selected (canvas/links): a view setting, never a commit. */
+  linksOnFocus: boolean;
+  onLinksOnFocus: (on: boolean) => void;
 }) {
   const selectionSize = useUiStore((s) => s.selectedItemIds.size);
   const tool = useUiStore((s) => s.tool);
@@ -67,8 +72,40 @@ export function CanvasToolbar({
       <Button onClick={onFrame} title={selectionSize > 0 ? 'Fit selection (F)' : 'Fit board (F)'}>
         Fit
       </Button>
+      <Button
+        onClick={() => onLinksOnFocus(!linksOnFocus)}
+        pressed={linksOnFocus}
+        title={linksOnFocus ? 'Links on focus only (L)' : 'All links shown (L)'}
+      >
+        Links on focus
+      </Button>
     </div>
   );
+}
+
+const LINKS_KEY = 'visarium.linksOnFocus';
+
+/**
+ * Whether links are drawn only on focus, on this device (canvas/links). Never
+ * a board operation, so nobody else's board changes.
+ */
+export function useLinksOnFocus(): [boolean, (on: boolean) => void] {
+  const [on, setOn] = useState(() => {
+    try {
+      return localStorage.getItem(LINKS_KEY) === 'on';
+    } catch {
+      return false;
+    }
+  });
+  const set = (next: boolean) => {
+    setOn(next);
+    try {
+      localStorage.setItem(LINKS_KEY, next ? 'on' : 'off');
+    } catch {
+      // Storage refused (private window): it still applies until reload.
+    }
+  };
+  return [on, set];
 }
 
 /**

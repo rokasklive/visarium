@@ -567,3 +567,68 @@ test('a share link shows the board’s links and their hover, and offers no way 
   expect(await links()).toHaveLength(1);
   expect(writes.filter((p) => p !== '/api/shared/session')).toEqual([]);
 });
+
+test('a share-link viewer sees a status chip and cannot change it', async ({ page }) => {
+  const NOTE = '01a01640-6b72-7d60-968b-88be186f7111';
+  await page.route('**/api/shared/session', (route) =>
+    route.fulfill({
+      json: { member: false, boardId: BOARD, title: 'Refs', sharedBy: 'Ada Lovelace' },
+    }),
+  );
+  await page.route('**/api/shared/board', (route) =>
+    route.fulfill({
+      json: {
+        revision: 1,
+        items: [
+          {
+            id: NOTE,
+            transform: { x: 0, y: 0, width: 320, height: 120, rotation: 0 },
+            z: 1,
+            revision: 0,
+            content: { kind: 'note', source: '# ADR-6\n\nStatus: Proposed' },
+          },
+        ],
+        groups: [],
+        links: [],
+        id: BOARD,
+        title: 'Refs',
+        sharedBy: 'Ada Lovelace',
+        expiresAt: null,
+      },
+    }),
+  );
+  const writes: string[] = [];
+  page.on('request', (r) => {
+    if (r.method() !== 'GET') writes.push(new URL(r.url()).pathname);
+  });
+  await page.goto('/s#share-token');
+  await expect(page.getByText('Shared by Ada Lovelace · view only')).toBeVisible();
+  type Rect = { x: number; y: number; width: number; height: number };
+  type Hook = {
+    layout(id: string): unknown;
+    search(id: string, q: string): { text: string } | undefined;
+  };
+  const layout = (await (
+    await page.waitForFunction(
+      (i) => (window as unknown as { __objects?: Hook }).__objects?.layout(i),
+      NOTE,
+    )
+  ).jsonValue()) as { hits: { kind: string; rect: Rect }[] };
+  const drawnText = await page.evaluate(
+    (i) => (window as unknown as { __objects: Hook }).__objects.search(i, 'D')?.text,
+    NOTE,
+  );
+  expect(drawnText).toContain('Decision · Proposed');
+  const chip = layout.hits.find((h) => h.kind === 'status');
+  if (!chip) throw new Error('no chip');
+  const canvas = await page.locator('canvas').first().boundingBox();
+  if (!canvas) throw new Error('no canvas');
+  await page.waitForTimeout(300);
+  await page.mouse.click(
+    canvas.x + canvas.width / 2 - 160 + chip.rect.x + chip.rect.width / 2,
+    canvas.y + canvas.height / 2 - 60 + chip.rect.y + chip.rect.height / 2,
+  );
+  await page.waitForTimeout(300);
+  await expect(page.getByRole('menu', { name: 'Change status' })).toHaveCount(0);
+  expect(writes.filter((p) => p !== '/api/shared/session')).toEqual([]);
+});

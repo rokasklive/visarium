@@ -37,6 +37,8 @@ export interface CanvasTheme {
   readonly grid: string;
   /** The canvas ground itself — the label halo's colour, so text can interrupt a line. */
   readonly ground: string;
+  /** A link that is not in focus while something else is (canvas/links): it recedes. */
+  readonly linkFaded: string;
   /** Selection, marquee stroke, focus. The only saturated colour chrome draws. */
   readonly accent: string;
   /** The marquee's interior: the accent at 15%. */
@@ -77,6 +79,7 @@ export function canvasTheme(): CanvasTheme {
     frame: token('line-strong'),
     grid: token('grid'),
     ground: token('surface-sunken'),
+    linkFaded: token('link-faded'),
     accent: token('accent'),
     accentWash: token('accent-wash'),
     surface: token('surface'),

@@ -306,7 +306,7 @@ async fn the_fixture_board_loads_whole() {
 fn the_eval_set_is_well_formed() {
     let eval: Value = serde_json::from_str(EVAL).unwrap();
     let tasks = eval["tasks"].as_array().unwrap();
-    assert!((6..=10).contains(&tasks.len()));
+    assert!((6..=12).contains(&tasks.len()));
     for t in tasks {
         assert!(t["id"].as_str().is_some_and(|s| !s.is_empty()), "{t}");
         assert!(t["prompt"].as_str().is_some_and(|s| s.len() > 20), "{t}");
@@ -564,6 +564,26 @@ async fn the_agent_is_told_how_to_work() {
         instructions.contains("whole interface")
             && instructions.contains("which capability is missing")
     );
+    assert!(
+        instructions.contains("Agents propose; your person decides")
+            && instructions.contains("[decision · accepted]"),
+        "what a status is, and who settles it"
+    );
+    let described = |tools: &Value, name: &str| -> String {
+        tools["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == name)
+            .unwrap()["description"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let tools = w.rpc("tools/list", json!({})).await;
+    assert!(described(&tools, "item_read").contains("accepted decision"));
+    assert!(described(&tools, "trace").contains("decisions and open questions come first"));
+    assert!(described(&tools, "item_edit").contains("proposed decision that supersedes"));
     let listed = w.rpc("resources/list", json!({})).await;
     assert_eq!(listed["resources"][0]["uri"], "visarium://guide");
     let guide = w
@@ -2603,4 +2623,342 @@ async fn the_instructions_mention_descriptions_only_while_they_are_on() {
             && instructions.contains("item_view shows the actual pixels")
     );
     let _ = std::fs::remove_dir_all(dir);
+}
+
+// --- decisions and questions (canvas/note-status) ------------------------------------
+
+const ADR2: &str = "# ADR-2 · Sign at send time\n\n**Status: Accepted** (2026-10-14)\n\nWe sign each webhook when it is sent.";
+
+/// A small board like the trial's: a flowchart, a component note, an accepted
+/// decision on five of its nodes, a proposal and three open questions.
+/// Refs: d1; n1 component, n2 ADR-2, n3 ADR-3 proposed, n4–n6 questions.
+async fn decisions_board(w: &World) -> String {
+    let board = uuid::Uuid::now_v7();
+    sqlx::query("INSERT INTO canvas (id, title, owner_id) VALUES (?, 'Relayd', ?)")
+        .bind(board.to_string())
+        .bind(&w.user)
+        .execute(&w.app.db)
+        .await
+        .unwrap();
+    let d1 = uuid::Uuid::now_v7();
+    let notes: Vec<uuid::Uuid> = (0..6).map(|_| uuid::Uuid::now_v7()).collect();
+    let mut ops = vec![json!({ "type": "item.create", "itemId": d1, "z": 1.0,
+        "transform": { "x": 0.0, "y": 0.0, "width": 400.0, "height": 300.0 },
+        "content": { "kind": "diagram", "lang": "mermaid",
+            "source": "flowchart LR\n  Ingest --> Signing\n  Signing --> Worker\n  Worker --> Outbox\n  Admin --> Worker" } })];
+    let sources = [
+        "# Signing component\n\nSigns payloads.",
+        ADR2,
+        "# ADR-3 · Outbox table\n\nStatus: Proposed\n",
+        "---\nstatus: open\n---\n# Q-1 · Retention",
+        "# Q-2 · Redriving dead letters for a paused tenant after the outage window\n\n**Status: Open question. Not decided.**",
+        "# Q-3 · Key rotation\n\nStatus: open",
+    ];
+    for (n, (id, source)) in notes.iter().zip(sources).enumerate() {
+        ops.push(note_op(*id, 500.0, n as f64 * 150.0, source, None));
+    }
+    let link = |from: uuid::Uuid, el: &str| {
+        json!({ "type": "link.add", "linkId": uuid::Uuid::now_v7(), "from": { "itemId": from },
+            "to": { "itemId": d1, "element": el }, "linkType": "describes" })
+    };
+    ops.push(link(notes[0], "Signing"));
+    for el in ["Signing", "Worker", "Outbox", "Admin", "Ingest"] {
+        ops.push(link(notes[1], el));
+    }
+    let ops: Vec<Op> = serde_json::from_value(Value::Array(ops)).unwrap();
+    apply_as(&w.app, &board.to_string(), &w.user, ops).await;
+    board.to_string()
+}
+
+#[tokio::test]
+async fn the_overview_shows_status_before_the_title_and_sums_it_up() {
+    let w = world().await;
+    let board = decisions_board(&w).await;
+    let o = w.ok("board_read", json!({ "board": board })).await;
+    assert!(
+        o.contains("n5  note [question · open] \"Q-2 · Redriving dead letters"),
+        "status survives a clipped title:\n{o}"
+    );
+    assert!(o.contains("n2  note [decision · accepted] \"ADR-2"), "{o}");
+    assert!(
+        o.contains("Decisions: 1 accepted, 1 proposed · Open questions: 3 (n4, n5, n6)"),
+        "{o}"
+    );
+    assert!(
+        o.contains("\"Q-1 · Retention\""),
+        "a title is read past frontmatter:\n{o}"
+    );
+    // Five links into one diagram read as one entry, both ways.
+    let group = "d1#{Signing, Worker, Outbox, Admin, Ingest}";
+    assert_eq!(
+        o.matches(&format!("← n2 describes {group}")).count(),
+        1,
+        "{o}"
+    );
+    assert!(o.contains(&format!("→ describes {group}")), "{o}");
+    assert!(o.contains("← n1 describes d1#Signing"), "{o}");
+
+    let desk = w.ok("desk", json!({})).await;
+    assert!(desk.contains("3 open questions"), "{desk}");
+
+    // The detail view still lists every element's links.
+    let d1 = w
+        .ok("item_read", json!({ "board": board, "ref": "d1" }))
+        .await;
+    for el in ["Signing", "Worker", "Outbox", "Admin", "Ingest"] {
+        assert!(d1.contains(&format!("- {el}: ")), "{el} in\n{d1}");
+    }
+    assert!(
+        d1.contains("- Signing: ← n1 describes, ← n2 describes"),
+        "{d1}"
+    );
+}
+
+#[tokio::test]
+async fn an_accepted_decision_tells_its_reader_to_ask_first() {
+    let w = world().await;
+    let board = decisions_board(&w).await;
+    let read = w
+        .ok("item_read", json!({ "board": board, "ref": "n2" }))
+        .await;
+    assert!(
+        read.lines()
+            .next()
+            .unwrap()
+            .contains("[decision · accepted]"),
+        "{read}"
+    );
+    assert!(
+        read.trim_end()
+            .ends_with(visarium::agent::read::ACCEPTED_DECISION),
+        "{read}"
+    );
+    let proposed = w
+        .ok("item_read", json!({ "board": board, "ref": "n3" }))
+        .await;
+    assert!(proposed.contains("[decision · proposed]"), "{proposed}");
+    assert!(
+        !proposed.contains("This is an accepted decision"),
+        "{proposed}"
+    );
+}
+
+#[tokio::test]
+async fn trace_lists_decisions_first() {
+    let w = world().await;
+    let board = decisions_board(&w).await;
+    for r in ["d1#Signing", "d1"] {
+        let t = w.ok("trace", json!({ "board": board, "ref": r })).await;
+        let (adr, component) = (
+            t.find("ADR-2").unwrap(),
+            t.find("Signing component").unwrap(),
+        );
+        assert!(adr < component, "decision first in {r}:\n{t}");
+        assert!(t.contains("[decision · accepted]"), "{t}");
+        assert!(
+            t.trim_end()
+                .ends_with(visarium::agent::read::ACCEPTED_DECISION),
+            "{t}"
+        );
+    }
+}
+
+impl World {
+    /// A tools/call with extra params (`_meta`, `inputResponses`) beside the arguments.
+    async fn call_with(&self, tool: &str, args: Value, extra: Value) -> Value {
+        let mut params = json!({ "name": tool, "arguments": args });
+        params
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        self.rpc("tools/call", params).await
+    }
+    async fn source_of(&self, board: &str, r: &str) -> (String, i64) {
+        let b = BoardData::load(
+            &self.app.db,
+            &Board {
+                id: uuid::Uuid::parse_str(board).unwrap(),
+                title: "Relayd".into(),
+            },
+        )
+        .await
+        .unwrap();
+        let i = b.resolve_item(r).unwrap();
+        (i.body.clone().unwrap_or_default(), i.revision)
+    }
+}
+
+fn text(r: &Value) -> String {
+    r["content"][0]["text"].as_str().unwrap_or("").to_string()
+}
+
+#[tokio::test]
+async fn changing_an_accepted_decision_asks_the_person_first() {
+    let w = world().await;
+    let board = decisions_board(&w).await;
+    let (_, rev) = w.source_of(&board, "n2").await;
+    let edit = json!({ "board": board, "ref": "n2", "base_rev": rev, "old": "Accepted", "new": "Superseded" });
+    let meta = json!({ ELICIT: { "elicitation": {} } });
+
+    // A client that cannot ask: refused, with the way forward.
+    let r = w.call_with("item_edit", edit.clone(), json!({})).await;
+    assert_eq!(r["isError"], true, "{r}");
+    let t = text(&r);
+    assert!(
+        t.contains("write a proposed decision")
+            && t.contains("status chip")
+            && t.contains("Nothing changed"),
+        "{t}"
+    );
+    assert_eq!(w.source_of(&board, "n2").await.0, ADR2);
+
+    // A client that can: asked, naming the note and the change.
+    let ask = w
+        .call_with("item_edit", edit.clone(), json!({ "_meta": meta }))
+        .await;
+    assert_eq!(ask["resultType"], "input_required", "{ask}");
+    let message = ask["inputRequests"]["confirm_status"]["params"]["message"]
+        .as_str()
+        .unwrap();
+    assert!(
+        message.contains("n2 \"ADR-2")
+            && message.contains("decision · accepted to decision · superseded"),
+        "{message}"
+    );
+    assert_eq!(w.source_of(&board, "n2").await.0, ADR2, "nothing yet");
+
+    // No, or a decline the client made up: unchanged, and only the client's answer is reported.
+    for answer in [
+        json!({ "action": "decline" }),
+        json!({ "action": "accept", "content": { "confirm": false } }),
+    ] {
+        let r = w
+            .call_with(
+                "item_edit",
+                edit.clone(),
+                json!({ "_meta": meta, "inputResponses": { "confirm_status": answer } }),
+            )
+            .await;
+        assert_eq!(r["isError"], false, "{r}");
+        let t = text(&r);
+        assert!(
+            t.contains("your client answered") && t.contains("write a proposed decision"),
+            "{t}"
+        );
+        assert!(
+            !t.contains("Ada declined"),
+            "never claims the person declined: {t}"
+        );
+        assert_eq!(w.source_of(&board, "n2").await.0, ADR2);
+    }
+
+    // Yes: applied, credited to the agent and its person.
+    let yes = json!({ "_meta": meta, "inputResponses": { "confirm_status": { "action": "accept", "content": { "confirm": true } } } });
+    let done = w.call_with("item_edit", edit, yes).await;
+    assert_eq!(done["isError"], false, "{done}");
+    assert!(text(&done).contains("Confirmed by Ada."), "{done}");
+    assert!(
+        w.source_of(&board, "n2")
+            .await
+            .0
+            .contains("**Status: Superseded**")
+    );
+    let agent: Option<String> = sqlx::query_scalar(
+        "SELECT actor_agent FROM canvas_operation WHERE canvas_id = ? ORDER BY revision DESC LIMIT 1",
+    )
+    .bind(&board)
+    .fetch_one(&w.app.db)
+    .await
+    .unwrap();
+    assert_eq!(agent.as_deref(), Some("Claude Code on laptop"));
+}
+
+#[tokio::test]
+async fn proposals_and_findings_are_free_and_settling_is_not() {
+    let w = world().await;
+    let board = decisions_board(&w).await;
+    // A proposal superseding ADR-2: no question.
+    w.ok(
+        "item_create",
+        json!({ "board": board, "kind": "note", "near": "n2",
+        "source": "# ADR-9 · Sign at enqueue\n\nStatus: Proposed\n\nSupersedes ADR-2." }),
+    )
+    .await;
+    // Findings on an open question: no question.
+    let (_, rev) = w.source_of(&board, "n6").await;
+    w.ok("item_edit", json!({ "board": board, "ref": "n6", "base_rev": rev, "old": "Status: open", "new": "Status: open\n\nFinding: keys rotate yearly." })).await;
+    // Closing it, calling it RESOLVED, creating an accepted decision, or deleting accepted or open: refused without a client that asks.
+    let (_, rev) = w.source_of(&board, "n6").await;
+    for (tool, args) in [
+        (
+            "item_edit",
+            json!({ "board": board, "ref": "n6", "base_rev": rev, "old": "Status: open", "new": "Status: answered" }),
+        ),
+        (
+            "item_edit",
+            json!({ "board": board, "ref": "n6", "base_rev": rev, "old": "Status: open", "new": "Status: RESOLVED" }),
+        ),
+        (
+            "item_create",
+            json!({ "board": board, "kind": "note", "source": "# ADR-10\n\nStatus: Accepted" }),
+        ),
+        ("item_delete", json!({ "board": board, "ref": "n2" })),
+        ("item_delete", json!({ "board": board, "ref": "n4" })),
+    ] {
+        let t = w.fails(tool, args.clone()).await;
+        assert!(t.contains("needs Ada's confirmation"), "{tool} {args}: {t}");
+    }
+    // A plain note deletes as before.
+    w.ok("item_delete", json!({ "board": board, "ref": "n1" }))
+        .await;
+}
+
+#[tokio::test]
+async fn a_yes_never_applies_to_text_the_person_was_not_shown() {
+    let w = world().await;
+    let board = decisions_board(&w).await;
+    let (_, rev) = w.source_of(&board, "n2").await;
+    let edit = json!({ "board": board, "ref": "n2", "base_rev": rev, "old": "We sign", "new": "We never sign", "request_id": "r-9" });
+    let meta = json!({ ELICIT: { "elicitation": {} } });
+    let ask = w
+        .call_with("item_edit", edit.clone(), json!({ "_meta": meta }))
+        .await;
+    assert_eq!(ask["resultType"], "input_required");
+
+    // Meanwhile a person changes the note.
+    let id = uuid::Uuid::parse_str(&w.data_of(&board, "n2").await).unwrap();
+    let ops: Vec<Op> = serde_json::from_value(json!([
+        { "type": "item.source", "itemId": id, "source": format!("{ADR2}\n\nAna: we sign twice.") }
+    ]))
+    .unwrap();
+    apply_as(&w.app, &board, &w.user, ops).await;
+
+    // The retry with a yes is not cut short by request_id, and base_rev refuses it.
+    let yes = json!({ "_meta": meta, "inputResponses": { "confirm_status": { "action": "accept", "content": { "confirm": true } } } });
+    let r = w.call_with("item_edit", edit, yes).await;
+    assert_eq!(r["isError"], true, "{r}");
+    let t = text(&r);
+    assert!(
+        t.contains("changed since") && !t.contains("Already done"),
+        "{t}"
+    );
+    assert!(!w.source_of(&board, "n2").await.0.contains("never sign"));
+}
+
+impl World {
+    async fn data_of(&self, board: &str, r: &str) -> String {
+        BoardData::load(
+            &self.app.db,
+            &Board {
+                id: uuid::Uuid::parse_str(board).unwrap(),
+                title: "Relayd".into(),
+            },
+        )
+        .await
+        .unwrap()
+        .resolve_item(r)
+        .unwrap()
+        .id
+        .clone()
+    }
 }

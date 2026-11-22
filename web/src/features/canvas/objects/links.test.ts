@@ -12,6 +12,10 @@ import {
   defaultLinkType,
   distanceToSegment,
   elementAt,
+  groupDrawing,
+  groupLinks,
+  type LinkGroup,
+  linkCounts,
   linkNear,
   linkPoints,
   nearestPoints,
@@ -91,6 +95,9 @@ describe('links', () => {
         segment: s,
         from: { box: { minX: 0, minY: 0, maxX: 0, maxY: 0 }, broken: false },
         to: { box: { minX: 0, minY: 0, maxX: 0, maxY: 0 }, broken: false },
+        count: 1,
+        faded: false,
+        labelled: false,
       },
     ];
     expect(linkNear(drawn, { x: 0, y: 5 }, 6)?.link.id).toBe('l');
@@ -149,5 +156,67 @@ describe('links', () => {
       from: { x: 100, y: 50 },
       to: { x: 300, y: 150 },
     });
+  });
+});
+
+describe('grouping and focus (canvas/links)', () => {
+  const note = asItemId('note');
+  const flowId = asItemId('flow');
+  const other = asItemId('other');
+  const to = (n: number, from = note, at = flowId) => ({
+    id: asLinkId(`l${n}`),
+    from: { itemId: from, element: null },
+    to: { itemId: at, element: `E${n}` },
+    linkType: 'describes' as const,
+  });
+  const five = [1, 2, 3, 4, 5].map((n) => to(n));
+  const none = { items: new Set<never>(), links: new Set<never>() };
+
+  it('makes one group of five links from a note to a diagram', () => {
+    const groups = groupLinks(five);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.links).toHaveLength(5);
+    expect(groupDrawing(groups[0] as LinkGroup, none)).toEqual({
+      fanned: false,
+      labelled: false,
+      strength: 'full',
+    });
+  });
+
+  it('keeps opposite directions apart', () => {
+    expect(groupLinks([to(1), to(2, flowId, note)])).toHaveLength(2);
+  });
+
+  it('draws a group of one to its element, as before', () => {
+    const [one] = groupLinks([to(1)]);
+    expect(groupDrawing(one as LinkGroup, none)).toEqual({
+      fanned: true,
+      labelled: false,
+      strength: 'full',
+    });
+  });
+
+  it('fans out when either end is in focus, and fades the rest', () => {
+    const [g, elsewhere] = groupLinks([...five, to(9, other, asItemId('far'))]);
+    for (const end of [note, flowId]) {
+      const focus = { items: new Set([end]), links: new Set<never>() };
+      expect(groupDrawing(g as LinkGroup, focus)).toEqual({
+        fanned: true,
+        labelled: true,
+        strength: 'full',
+      });
+      expect(groupDrawing(elsewhere as LinkGroup, focus).strength).toBe('faded');
+      expect(groupDrawing(elsewhere as LinkGroup, focus, true).strength).toBe('hidden');
+    }
+    const byLink = { items: new Set<never>(), links: new Set([asLinkId('l3')]) };
+    expect(groupDrawing(g as LinkGroup, byLink).fanned).toBe(true);
+    expect(groupDrawing(g as LinkGroup, none, true).strength).toBe('hidden');
+  });
+
+  it('counts every link on each item', () => {
+    const counts = linkCounts([...five, to(9, other)]);
+    expect(counts.get(note)).toBe(5);
+    expect(counts.get(flowId)).toBe(6);
+    expect(counts.get(other)).toBe(1);
   });
 });

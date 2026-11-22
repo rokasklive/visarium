@@ -1,0 +1,100 @@
+{
+  "comment": "Note source -> its status (canvas/note-status). The server (agent/status.rs) and the web client (objects/status.ts) both run this set. A status is declared by a `status:` key in frontmatter (closing `---` within 20 lines) or a `Status:` line among the first three non-empty lines after the opening heading; frontmatter wins. `raw` is the value as written, bold markers dropped. `kind` is decision, question or none (a word the board does not know); `expect` null means no status at all.",
+  "cases": [
+    {
+      "name": "bold status line with a trailing date",
+      "source": "# ADR-2 · Sign at send time\n\n**Status: Accepted** (2026-10-14)\n\nWe sign each webhook when it is sent.",
+      "expect": { "kind": "decision", "state": "accepted", "raw": "Accepted (2026-10-14)" }
+    },
+    {
+      "name": "bold key only",
+      "source": "# ADR-3 · Outbox\n\n**Status:** Proposed\n\nBody.",
+      "expect": { "kind": "decision", "state": "proposed", "raw": "Proposed" }
+    },
+    {
+      "name": "plain status line",
+      "source": "## ADR-4\nStatus: rejected\n",
+      "expect": { "kind": "decision", "state": "rejected", "raw": "rejected" }
+    },
+    {
+      "name": "words after the state",
+      "source": "# ADR-1 · Poll\n\nStatus: Superseded by ADR-5\n",
+      "expect": { "kind": "decision", "state": "superseded", "raw": "Superseded by ADR-5" }
+    },
+    {
+      "name": "deprecated",
+      "source": "# ADR-0\nDate: 2026-01-02\nStatus: Deprecated.\n",
+      "expect": { "kind": "decision", "state": "deprecated", "raw": "Deprecated." }
+    },
+    {
+      "name": "open question with commentary",
+      "source": "# Q-2 · Redriving dead letters\n\n**Status: Open question. Not decided.**\n\nWhat happens when…",
+      "expect": { "kind": "question", "state": "open", "raw": "Open question. Not decided." }
+    },
+    {
+      "name": "answered question",
+      "source": "# Q-1\n\nStatus: Answered — see ADR-2\n",
+      "expect": { "kind": "question", "state": "answered", "raw": "Answered — see ADR-2" }
+    },
+    {
+      "name": "frontmatter",
+      "source": "---\ntitle: Q-3\nstatus: open\n---\n# Q-3 · Retention\n\nHow long do we keep payloads?",
+      "expect": { "kind": "question", "state": "open", "raw": "open" }
+    },
+    {
+      "name": "quoted frontmatter value",
+      "source": "---\nstatus: \"Proposed\"\n---\n\n# ADR-6",
+      "expect": { "kind": "decision", "state": "proposed", "raw": "Proposed" }
+    },
+    {
+      "name": "both forms, frontmatter wins",
+      "source": "---\nstatus: accepted\n---\n# ADR-7\n\nStatus: Proposed\n",
+      "expect": { "kind": "decision", "state": "accepted", "raw": "accepted" }
+    },
+    {
+      "name": "frontmatter without status falls back to the line",
+      "source": "---\nowner: ana\n---\n# ADR-8\nStatus: Proposed\n",
+      "expect": { "kind": "decision", "state": "proposed", "raw": "Proposed" }
+    },
+    {
+      "name": "unknown value",
+      "source": "# Q-4\n\nStatus: Resolved\n",
+      "expect": { "kind": "none", "state": null, "raw": "Resolved" }
+    },
+    {
+      "name": "upper-case unknown value",
+      "source": "# Q-4\n\nStatus: RESOLVED\n",
+      "expect": { "kind": "none", "state": null, "raw": "RESOLVED" }
+    },
+    {
+      "name": "no heading: the first lines count",
+      "source": "Status: open\n\nShould retries back off?",
+      "expect": { "kind": "question", "state": "open", "raw": "open" }
+    },
+    {
+      "name": "status line too far down",
+      "source": "# Meeting notes\n\nWe talked.\n\nThen more.\n\nAnd more.\n\nStatus: open\n",
+      "expect": null
+    },
+    {
+      "name": "frontmatter never closed within 20 lines",
+      "source": "---\nstatus: accepted\na\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl\nm\nn\no\np\nq\nr\ns\n---\n# Long",
+      "expect": null
+    },
+    {
+      "name": "no status",
+      "source": "# Signing\n\nThe worker signs payloads.",
+      "expect": null
+    },
+    {
+      "name": "status mid-sentence is not a status line",
+      "source": "# Q-5\n\nThe status: open for now.\n",
+      "expect": null
+    },
+    {
+      "name": "empty value",
+      "source": "# ADR-9\n\nStatus:\n",
+      "expect": null
+    }
+  ]
+}

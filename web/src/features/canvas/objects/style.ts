@@ -65,5 +65,12 @@ export function objectCss(p: ObjectPalette): string {
 .vo-tasks .done .vo-text { text-decoration: line-through; color: ${p.inkDim}; }
 .vo-tasks .blocked .vo-text { color: ${p.inkDim}; }
 .vo-src { font: 13px/1.45 ${MONO}; white-space: pre-wrap; color: ${p.inkDim}; margin: 0; }
+.vo-chip { display: inline-block; font-size: 12px; line-height: 1.3; font-weight: 500; padding: 1px 8px; margin: 0 0 8px; border-radius: 9px; border: 1px solid ${p.line}; color: ${p.inkDim}; }
+.vo-chip.accepted { color: ${p.ink}; background: ${wash}; border-color: transparent; font-weight: 600; }
+.vo-chip.proposed { border-style: dashed; border-color: ${p.inkDim}; }
+.vo-chip.rejected, .vo-chip.superseded { text-decoration: line-through; }
+.vo-chip.deprecated { border-style: dotted; }
+.vo-chip.question.open { color: ${p.ink}; border: 1.5px solid ${p.ink}; font-weight: 600; }
+.vo-chip.answered { border-color: ${p.inkDim}; }
 `;
 }

@@ -6,26 +6,21 @@
 //! Deleting asks the agent's person first, through the client, as a
 //! multi-round-trip request (MCP 2026-07-28): the first call answers
 //! `input_required` with a form elicitation, and the client retries the call
-//! with the person's answer in `params.inputResponses`. See design.md for why
-//! no `requestState` is kept.
+//! with the person's answer in `params.inputResponses` (`confirm.rs`). See
+//! design.md for why no `requestState` is kept.
 
 use serde_json::{Value, json};
 
 use crate::AppState;
 use crate::agent::board::{Fail, db_fail, find_board};
+pub use crate::agent::confirm::Step;
+use crate::agent::confirm::{self, Answer};
 use crate::agent::write::{remember, remembered};
 use crate::agent::{Caller, Out, arg_str, opt_str};
 use crate::boards;
 
 /// The key the confirmation travels under, both ways.
 const CONFIRM: &str = "confirm_delete";
-
-/// A board tool's answer: done, or a question for the person first.
-pub enum Step {
-    Done(Out),
-    /// A complete `input_required` result, sent as is.
-    Ask(Value),
-}
 
 pub async fn run(
     app: &AppState,
@@ -147,15 +142,6 @@ async fn holdings(app: &AppState, board: &str) -> Result<String, Fail> {
     })
 }
 
-/// Whether the client said, on this request, that it can show a form.
-fn can_ask(params: &Value) -> bool {
-    params
-        .pointer("/_meta/io.modelcontextprotocol~1clientCapabilities/elicitation")
-        .and_then(Value::as_object)
-        // `{}` is form only; with modes listed, form must be one of them.
-        .is_some_and(|modes| modes.is_empty() || modes.contains_key("form"))
-}
-
 async fn delete(
     app: &AppState,
     caller: &Caller,
@@ -167,57 +153,42 @@ async fn delete(
     if boards::may_delete(&caller.user, &board).is_err() {
         return Err(format!(
             "Only the board's owner, a moderator or an admin can delete \"{}\", and {} is none of these. Nothing was deleted.",
-            board.title, caller.user.display_name
+            board.title,
+            caller.person()
         ));
     }
-    if !can_ask(params) {
+    if !confirm::can_ask(params) {
         return Err(format!(
-            "Deleting a board needs {}'s confirmation, and this client did not say it can ask them (no form elicitation capability). Nothing was deleted. {} can delete \"{}\" in the Visarium app.",
-            caller.user.display_name, caller.user.display_name, board.title
+            "Deleting a board needs {}'s confirmation, and this client did not say it can ask them (no form elicitation capability). Nothing was deleted. They can delete \"{}\" in the Visarium app.",
+            caller.person(),
+            board.title
         ));
     }
-    let answer = params.pointer(&format!("/inputResponses/{CONFIRM}"));
-    let Some(answer) = answer else {
+    let Some(answer) = confirm::answer(params, CONFIRM) else {
         let holds = holdings(app, &board.id).await?;
         let message = format!(
             "{} wants to delete the board \"{}\", which holds {holds}. Deleting cannot be undone.",
             by(caller),
             board.title
         );
-        return Ok(Step::Ask(json!({
-            "resultType": "input_required",
-            "inputRequests": { CONFIRM: {
-                "method": "elicitation/create",
-                "params": {
-                    "mode": "form",
-                    "message": message,
-                    "requestedSchema": {
-                        "type": "object",
-                        "properties": { "confirm": { "type": "boolean", "title": format!("Delete \"{}\" for good", board.title), "default": false } },
-                        "required": ["confirm"],
-                    },
-                },
-            } },
-            // For a client that does not read `resultType`: something true to
-            // say, and nothing deleted.
-            "content": [{ "type": "text", "text": format!(
+        return Ok(confirm::ask(
+            CONFIRM,
+            &message,
+            &format!("Delete \"{}\" for good", board.title),
+            &format!(
                 "Asked {} to confirm deleting \"{}\". Nothing is deleted until they confirm. If no question reached them, this client cannot ask; they can delete the board in the Visarium app.",
-                caller.user.display_name, board.title
-            ) }],
-            "isError": false,
-        })));
+                caller.person(),
+                board.title
+            ),
+        ));
     };
-    let action = answer.get("action").and_then(Value::as_str).unwrap_or("");
-    let confirmed = action == "accept"
-        && answer.pointer("/content/confirm").and_then(Value::as_bool) == Some(true);
-    if !confirmed {
+    if let Answer::No(action) = answer {
         // Say only what came back: a client can decline without showing the
         // person anything, so "they declined" would not always be true.
         return Ok(Step::Done(Out::text(format!(
-            "Deleting \"{}\" was not confirmed: your client answered \"{}\". Nothing was deleted. If {} says they were not asked, this client cannot show the question; they can delete the board in the Visarium app.",
+            "Deleting \"{}\" was not confirmed: your client answered \"{action}\". Nothing was deleted. If {} says they were not asked, this client cannot show the question; they can delete the board in the Visarium app.",
             board.title,
-            if action.is_empty() { "nothing" } else { action },
-            caller.user.display_name,
+            caller.person(),
         ))));
     }
     let holds = holdings(app, &board.id).await?;
@@ -227,7 +198,9 @@ async fn delete(
     Ok(Step::Done(
         Out::text(format!(
             "Deleted the board \"{}\" (id {}), which held {holds}, with {}'s confirmation. People who had it open were told.",
-            board.title, board.id, caller.user.display_name
+            board.title,
+            board.id,
+            caller.person()
         ))
         .with(json!({ "deleted": board.id })),
     ))

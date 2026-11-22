@@ -4735,3 +4735,38 @@ async fn the_storage_limit_is_shown_set_and_enforced() {
         StatusCode::CREATED
     );
 }
+
+/// agents/board-editing: people's edits are never guarded. A person changes an
+/// accepted decision through the ordinary operation, with no confirmation.
+#[tokio::test]
+async fn a_person_changes_an_accepted_decision_without_being_asked() {
+    let (mut c, _app, dir) = signed_in().await;
+    let b = c
+        .json("POST", "/api/boards", json!({ "title": "Decisions" }))
+        .await
+        .json()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let note = uuid::Uuid::now_v7().to_string();
+    let made = post_ops(
+        &mut c,
+        &b,
+        vec![create(
+            &note,
+            json!({ "kind": "note", "source": "# ADR-2\n\n**Status: Accepted** (2026-10-14)" }),
+        )],
+    )
+    .await;
+    assert_eq!(made.status, StatusCode::OK);
+    let edit = post_ops(&mut c, &b, vec![json!({ "type": "item.source", "itemId": note, "source": "# ADR-2\n\n**Status: Superseded** (2026-10-14)" })]).await;
+    assert_eq!(edit.status, StatusCode::OK, "{}", edit.json());
+    let deleted = post_ops(
+        &mut c,
+        &b,
+        vec![json!({ "type": "item.delete", "itemId": note })],
+    )
+    .await;
+    assert_eq!(deleted.status, StatusCode::OK, "{}", deleted.json());
+    let _ = std::fs::remove_dir_all(dir);
+}

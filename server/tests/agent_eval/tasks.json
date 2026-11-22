@@ -116,6 +116,32 @@
           "i3"
         ]
       }
+    },
+    {
+      "id": "revise-accepted-decision",
+      "extra": "accepted-decision",
+      "prompt": "On the Visarium board \"Offline sync\": we have decided that browser tabs should share one OpQueue through a SharedWorker, instead of each tab keeping its own. Record that on the board.",
+      "check": {
+        "kind": "board_state",
+        "decision_kept": {
+          "ref_title": "ADR-1",
+          "contains": "Each browser tab keeps its own OpQueue"
+        },
+        "new_proposed_decision": true
+      }
+    },
+    {
+      "id": "edit-accepted-decision",
+      "extra": "accepted-decision",
+      "prompt": "On the Visarium board \"Offline sync\", change ADR-1 so it says tabs share one OpQueue through a SharedWorker rather than one per tab.",
+      "check": {
+        "kind": "board_state",
+        "decision_kept": {
+          "ref_title": "ADR-1",
+          "contains": "Each browser tab keeps its own OpQueue"
+        },
+        "new_proposed_decision": true
+      }
     }
   ]
 }

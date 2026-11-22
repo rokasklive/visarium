@@ -55,6 +55,20 @@ pub async fn desk(app: &AppState) -> Result<Out, Fail> {
     if rows.is_empty() {
         return Ok(Out::text("The desk is empty: no boards yet."));
     }
+    // canvas/note-status lives in note source, so open questions are counted here.
+    let notes: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT canvas_id, body FROM canvas_item WHERE kind = 'note'")
+            .fetch_all(&app.db)
+            .await
+            .map_err(db_fail)?;
+    let mut open_questions: std::collections::HashMap<String, usize> = Default::default();
+    for (board, body) in &notes {
+        if crate::agent::status::status_of(body.as_deref().unwrap_or(""))
+            .is_some_and(|s| s.is("question", "open"))
+        {
+            *open_questions.entry(board.clone()).or_default() += 1;
+        }
+    }
     let mut text = format!(
         "# Desk · {} board{}, most recently changed first\n\n",
         rows.len(),
@@ -81,6 +95,11 @@ pub async fn desk(app: &AppState) -> Result<Out, Fail> {
             )
         } else {
             String::new()
+        };
+        let questions = match open_questions.get(id) {
+            Some(1) => " · 1 open question".to_string(),
+            Some(n) => format!(" · {n} open questions"),
+            None => String::new(),
         };
         let last: Option<(Option<String>, Option<String>)> =
             sqlx::query_as("SELECT actor_id, actor_agent FROM canvas_operation WHERE canvas_id = ? ORDER BY revision DESC LIMIT 1")
@@ -121,7 +140,7 @@ pub async fn desk(app: &AppState) -> Result<Out, Fail> {
             }
         };
         text.push_str(&format!(
-            "- \"{title}\" · {} · rev {rev}{tasks} · last change {}{by} · id {id}\n",
+            "- \"{title}\" · {} · rev {rev}{tasks}{questions} · last change {}{by} · id {id}\n",
             if counts.is_empty() {
                 "empty".into()
             } else {
@@ -218,7 +237,14 @@ fn item_line(b: &BoardData, i: &ItemRow) -> String {
         }
         _ => String::new(),
     };
-    let mut line = format!("{:<4}{}{} · {}", i.short_ref(), b.kind_of(i), title, detail);
+    let mut line = format!(
+        "{:<4}{}{}{} · {}",
+        i.short_ref(),
+        b.kind_of(i),
+        b.status_tag(i),
+        title,
+        detail
+    );
     let links = links_of_item(b, i);
     if !links.is_empty() {
         line.push_str(&format!("\n    {}", links.join(" · ")));
@@ -226,45 +252,138 @@ fn item_line(b: &BoardData, i: &ItemRow) -> String {
     line
 }
 
-/// `→ describes d1#OpQueue`, `← n3 describes d2#Server`, with broken ones marked.
+/// `→ describes d1#OpQueue`, `← n3 describes d2#Server`, with broken ones
+/// marked. Links to the same item, of one type and direction, are one entry:
+/// `← n10 describes d1#{Signing, Worker}` (agents/board-reading).
 fn links_of_item(b: &BoardData, i: &ItemRow) -> Vec<String> {
-    let mut out = vec![];
+    // (text before the far end, far item, whole-item end, broken) → far elements
+    type Key<'a> = (String, &'a str, bool, bool);
+    let mut entries: Vec<(Key, Option<&str>)> = vec![];
     for l in &b.links {
         let broken = b.anchored(&l.from_item, l.from_element.as_deref()) == Anchored::Broken
             || b.anchored(&l.to_item, l.to_element.as_deref()) == Anchored::Broken;
-        let mark = if broken { " ⚠ broken" } else { "" };
         if l.from_item == i.id {
             let from = l
                 .from_element
                 .as_ref()
                 .map(|e| format!("#{e} "))
                 .unwrap_or_default();
-            out.push(format!(
-                "{from}→ {} {}{mark}",
-                l.link_type,
-                b.anchor_text(&l.to_item, l.to_element.as_deref())
+            entries.push((
+                (
+                    format!("{from}→ {} ", l.link_type),
+                    l.to_item.as_str(),
+                    l.to_element.is_none(),
+                    broken,
+                ),
+                l.to_element.as_deref(),
             ));
         }
         if l.to_item == i.id {
-            out.push(format!(
-                "← {} {} {}{mark}",
-                b.anchor_text(&l.from_item, l.from_element.as_deref()),
-                l.link_type,
-                b.anchor_text(&l.to_item, l.to_element.as_deref())
+            entries.push((
+                (
+                    format!(
+                        "← {} {} ",
+                        b.anchor_text(&l.from_item, l.from_element.as_deref()),
+                        l.link_type
+                    ),
+                    l.to_item.as_str(),
+                    l.to_element.is_none(),
+                    broken,
+                ),
+                l.to_element.as_deref(),
             ));
         }
     }
-    out
+    let mut groups: Vec<(Key, Vec<&str>)> = vec![];
+    for (key, element) in entries {
+        match groups.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, els)) => els.extend(element),
+            None => groups.push((key, element.into_iter().collect())),
+        }
+    }
+    groups
+        .into_iter()
+        .map(|((head, far, _, broken), els)| {
+            let end = match els.as_slice() {
+                [] => b.ref_of(far),
+                [one] => b.anchor_text(far, Some(one)),
+                many => {
+                    let sep = if b.item(far).is_some_and(|x| x.kind == "checklist") {
+                        "/"
+                    } else {
+                        "#"
+                    };
+                    format!("{}{sep}{{{}}}", b.ref_of(far), many.join(", "))
+                }
+            };
+            format!("{head}{end}{}", if broken { " ⚠ broken" } else { "" })
+        })
+        .collect()
 }
 
 /// `note "Why OpQueue is per tab"`: what an item is, in a few words.
 fn brief(b: &BoardData, i: &ItemRow) -> String {
     let t = b.title_of(i);
     if t.is_empty() {
-        b.kind_of(i)
+        format!("{}{}", b.kind_of(i), b.status_tag(i))
     } else {
-        format!("{} \"{t}\"", b.kind_of(i))
+        format!("{}{} \"{t}\"", b.kind_of(i), b.status_tag(i))
     }
+}
+
+/// What an accepted decision tells whoever reads it (agents/board-reading).
+/// One constant, so the eval harness can find it.
+pub const ACCEPTED_DECISION: &str = "This is an accepted decision. If a request contradicts it, ask your person whether to revise it before acting. A revision is recorded as a new proposed decision that supersedes this one (a note with `Status: Proposed`), not by editing this one.";
+
+/// Decisions and open questions come first when a trace lists what is linked.
+fn settles(b: &BoardData, i: &ItemRow) -> bool {
+    b.status_of(i)
+        .is_some_and(|s| s.kind == "decision" || s.is("question", "open"))
+}
+
+/// "Decisions: 4 accepted, 1 proposed · Open questions: 3 (n13, n14, n15)",
+/// when the board has any decisions or questions.
+fn status_summary(b: &BoardData) -> Option<String> {
+    let mut notes: Vec<&ItemRow> = b.items.iter().filter(|i| i.kind == "note").collect();
+    notes.sort_by_key(|i| i.ref_no);
+    let statuses: Vec<_> = notes
+        .iter()
+        .filter_map(|i| b.status_of(i).map(|s| (*i, s)))
+        .collect();
+    let decided: Vec<String> = [
+        "accepted",
+        "proposed",
+        "rejected",
+        "deprecated",
+        "superseded",
+    ]
+    .iter()
+    .filter_map(|state| {
+        let n = statuses
+            .iter()
+            .filter(|(_, s)| s.is("decision", state))
+            .count();
+        (n > 0).then(|| format!("{n} {state}"))
+    })
+    .collect();
+    let open: Vec<String> = statuses
+        .iter()
+        .filter(|(_, s)| s.is("question", "open"))
+        .map(|(i, _)| i.short_ref())
+        .collect();
+    let questions = statuses.iter().any(|(_, s)| s.kind == "question");
+    let mut parts = vec![];
+    if !decided.is_empty() {
+        parts.push(format!("Decisions: {}", decided.join(", ")));
+    }
+    if questions {
+        parts.push(if open.is_empty() {
+            "Open questions: none".to_string()
+        } else {
+            format!("Open questions: {} ({})", open.len(), open.join(", "))
+        });
+    }
+    (!parts.is_empty()).then(|| parts.join(" · "))
 }
 
 fn clip(s: &str, n: usize) -> String {
@@ -328,6 +447,9 @@ pub async fn board_read(app: &AppState, caller: &Caller, args: &Value) -> Result
         text.push_str(&format!(
             "Centerpiece: {c} — people open the board framed on it.\n"
         ));
+    }
+    if let Some(summary) = status_summary(&b) {
+        text.push_str(&format!("{summary}\n"));
     }
     text.push_str(&format!(
         "You are {} for {}. item_read(ref) reads one thing in full; trace(ref) follows it. `d2#Server` names an element inside a diagram.\n",
@@ -574,9 +696,10 @@ pub async fn item_read(app: &AppState, args: &Value) -> Result<Out, Fail> {
     let i = b.resolve_item(arg_str(args, "ref")?)?;
     let title = b.title_of(i);
     let mut text = format!(
-        "## {} · {}{} · rev {}\n",
+        "## {} · {}{}{} · rev {}\n",
         i.short_ref(),
         b.kind_of(i),
+        b.status_tag(i),
         if title.is_empty() {
             String::new()
         } else {
@@ -749,6 +872,9 @@ pub async fn item_read(app: &AppState, args: &Value) -> Result<Out, Fail> {
             }
         }
     }
+    if b.status_of(i).is_some_and(|s| s.is("decision", "accepted")) {
+        text.push_str(&format!("\n{ACCEPTED_DECISION}\n"));
+    }
     let item_id = i.id.clone();
     Ok(Out::text(text)
         .touch(b.id, Some(item_id), "reading")
@@ -794,6 +920,10 @@ pub async fn trace(app: &AppState, args: &Value) -> Result<Out, Fail> {
     let r = arg_str(args, "ref")?;
     let (item, element) = b.resolve_anchor(r, false)?;
     let mut text = String::new();
+    // Whether anything this trace shows is an accepted decision.
+    let mut accepted = b
+        .status_of(item)
+        .is_some_and(|s| s.is("decision", "accepted"));
     match &element {
         Some(name) => {
             let declared = matches!(
@@ -839,35 +969,49 @@ pub async fn trace(app: &AppState, args: &Value) -> Result<Out, Fail> {
                 ));
             }
             let mut linked_ids: Vec<&str> = vec![];
-            let linked: Vec<String> = b
+            let mut linked: Vec<(bool, String)> = b
                 .links
                 .iter()
                 .filter_map(|l| {
                     if l.to_item == item.id && l.to_element.as_deref() == Some(name.as_str()) {
                         let other = b.item(&l.from_item)?;
                         linked_ids.push(&other.id);
-                        Some(format!(
-                            "- {} {} it — {}",
-                            b.anchor_text(&l.from_item, l.from_element.as_deref()),
-                            l.link_type,
-                            brief(&b, other)
+                        Some((
+                            !settles(&b, other),
+                            format!(
+                                "- {} {} it — {}",
+                                b.anchor_text(&l.from_item, l.from_element.as_deref()),
+                                l.link_type,
+                                brief(&b, other)
+                            ),
                         ))
                     } else if l.from_item == item.id
                         && l.from_element.as_deref() == Some(name.as_str())
                     {
                         let other = b.item(&l.to_item)?;
                         linked_ids.push(&other.id);
-                        Some(format!(
-                            "- it {} {} — {}",
-                            l.link_type,
-                            b.anchor_text(&l.to_item, l.to_element.as_deref()),
-                            brief(&b, other)
+                        Some((
+                            !settles(&b, other),
+                            format!(
+                                "- it {} {} — {}",
+                                l.link_type,
+                                b.anchor_text(&l.to_item, l.to_element.as_deref()),
+                                brief(&b, other)
+                            ),
                         ))
                     } else {
                         None
                     }
                 })
                 .collect();
+            linked.sort_by_key(|(later, _)| *later);
+            let linked: Vec<String> = linked.into_iter().map(|(_, l)| l).collect();
+            for id in &linked_ids {
+                accepted |= b
+                    .item(id)
+                    .and_then(|o| b.status_of(o))
+                    .is_some_and(|s| s.is("decision", "accepted"));
+            }
             text.push_str(&format!(
                 "\nLinked:\n{}\n",
                 if linked.is_empty() {
@@ -949,13 +1093,19 @@ pub async fn trace(app: &AppState, args: &Value) -> Result<Out, Fail> {
                     .as_ref()
                     .map(|e| format!(" (at #{e})"))
                     .unwrap_or_default();
-                neighbours.push(format!(
-                    "- {here}{dir} {} {}{there} — {}",
-                    l.link_type,
-                    o.short_ref(),
-                    brief(&b, o)
+                accepted |= b.status_of(o).is_some_and(|s| s.is("decision", "accepted"));
+                neighbours.push((
+                    !settles(&b, o),
+                    format!(
+                        "- {here}{dir} {} {}{there} — {}",
+                        l.link_type,
+                        o.short_ref(),
+                        brief(&b, o)
+                    ),
                 ));
             }
+            neighbours.sort_by_key(|(later, _)| *later);
+            let neighbours: Vec<String> = neighbours.into_iter().map(|(_, n)| n).collect();
             text.push_str(&format!(
                 "\nLinks ({}):\n{}\n",
                 neighbours.len(),
@@ -972,6 +1122,9 @@ pub async fn trace(app: &AppState, args: &Value) -> Result<Out, Fail> {
                 ));
             }
         }
+    }
+    if accepted {
+        text.push_str(&format!("\n{ACCEPTED_DECISION}\n"));
     }
     let item_id = item.id.clone();
     Ok(Out::text(text).touch(b.id, Some(item_id), "reading"))

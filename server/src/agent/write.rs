@@ -8,16 +8,24 @@ use uuid::Uuid;
 use crate::AppState;
 use crate::NOW;
 use crate::agent::board::{Anchored, BoardData, Fail, db_fail, find_board, short_time};
+use crate::agent::confirm::{self, Answer, Step};
 use crate::agent::diagram::Extracted;
 use crate::agent::place::{self, LinkEnd, Rect, Scene, Segment, Side};
 use crate::agent::read::describe;
+use crate::agent::status::{Status, status_of};
 use crate::agent::{Caller, Out, arg_i64, arg_str, opt_str};
 use crate::boards::{self, Anchor, Content, ItemRow, Op, Task, Transform};
 
 const LINK_TYPES: [&str; 4] = ["describes", "comments", "implements", "depends-on"];
 const TASK_STATES: [&str; 4] = ["todo", "doing", "done", "blocked"];
 
-pub async fn run(app: &AppState, caller: &Caller, tool: &str, args: &Value) -> Result<Out, Fail> {
+pub async fn run(
+    app: &AppState,
+    caller: &Caller,
+    tool: &str,
+    params: &Value,
+) -> Result<Step, Fail> {
+    let args = &params.get("arguments").cloned().unwrap_or(json!({}));
     if let Err(wait) = app.agent_writes.take(&caller.key()) {
         return Err(format!(
             "Too many changes from this agent in one minute (the limit is {}). Wait {wait} seconds, then continue.",
@@ -25,20 +33,138 @@ pub async fn run(app: &AppState, caller: &Caller, tool: &str, args: &Value) -> R
         ));
     }
     if let Some(earlier) = remembered(app, caller, args).await? {
-        return Ok(earlier);
+        return Ok(Step::Done(earlier));
     }
-    let out = match tool {
-        "item_create" => item_create(app, caller, args).await?,
-        "item_edit" => item_edit(app, caller, args).await?,
-        "tasks" => tasks(app, caller, args).await?,
-        "link" => link(app, caller, args).await?,
-        "unlink" => unlink(app, caller, args).await?,
-        "arrange" => arrange(app, caller, args).await?,
-        "group_create" => group_create(app, caller, args).await?,
-        _ => item_delete(app, caller, args).await?,
+    let step = match tool {
+        "item_create" => item_create(app, caller, args, params).await?,
+        "item_edit" => item_edit(app, caller, args, params).await?,
+        "item_delete" => item_delete(app, caller, args, params).await?,
+        "tasks" => Step::Done(tasks(app, caller, args).await?),
+        "link" => Step::Done(link(app, caller, args).await?),
+        "unlink" => Step::Done(unlink(app, caller, args).await?),
+        "arrange" => Step::Done(arrange(app, caller, args).await?),
+        _ => Step::Done(group_create(app, caller, args).await?),
     };
-    remember(app, caller, args, &out).await?;
-    Ok(out)
+    // A question is not an answer: only what was finally done is kept, so
+    // the retry carrying the person's answer runs (design: Guard).
+    if let Step::Done(out) = &step {
+        remember(app, caller, args, out).await?;
+    }
+    Ok(step)
+}
+
+// --- agents propose; people decide (agents/board-editing) --------------------------
+
+/// The key the decision guard's confirmation travels under, both ways.
+const CONFIRM_STATUS: &str = "confirm_status";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Write {
+    Create,
+    Edit,
+    Delete,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Guard {
+    Free,
+    /// Needs the person's yes; what would happen, as a verb phrase.
+    Confirm(String),
+}
+
+fn words(s: Option<&Status>) -> String {
+    s.map_or_else(|| "no status".into(), Status::label)
+}
+
+/// Whether an agent's write needs its person's confirmation, from the note's
+/// status before (none for a create) and after (none for a delete).
+pub fn guard(before: Option<&Status>, after: Option<&Status>, write: Write) -> Guard {
+    let accepted = before.is_some_and(|s| s.is("decision", "accepted"));
+    if write == Write::Delete {
+        return if accepted || before.is_some_and(|s| s.is("question", "open")) {
+            Guard::Confirm(format!("delete a note whose status is {}", words(before)))
+        } else {
+            Guard::Free
+        };
+    }
+    let same = |a: Option<&Status>, b: Option<&Status>| match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) if a.state.is_some() || b.state.is_some() => {
+            a.kind == b.kind && a.state == b.state
+        }
+        (Some(a), Some(b)) => a.raw.eq_ignore_ascii_case(&b.raw),
+        _ => false,
+    };
+    let settles = !same(before, after)
+        && !after.is_some_and(|s| s.is("decision", "proposed") || s.is("question", "open"));
+    match (settles, write) {
+        (true, Write::Create) => {
+            Guard::Confirm(format!("create a note whose status is {}", words(after)))
+        }
+        (true, _) => Guard::Confirm(format!(
+            "change a note's status from {} to {}",
+            words(before),
+            words(after)
+        )),
+        (false, Write::Edit) if accepted => Guard::Confirm("edit an accepted decision".into()),
+        _ => Guard::Free,
+    }
+}
+
+/// What the guard lets through: go ahead (and whether the person said yes),
+/// or stop with this answer.
+enum Gate {
+    Go { confirmed: bool },
+    Stop(Step),
+}
+
+/// Asks the person when the guard says so. `what` names the note, as
+/// `n10 "ADR-2 · Sign at send time"`; `detail` adds to the reason ("3 lines").
+fn gate(
+    caller: &Caller,
+    params: &Value,
+    guard: Guard,
+    what: &str,
+    detail: &str,
+) -> Result<Gate, Fail> {
+    let Guard::Confirm(reason) = guard else {
+        return Ok(Gate::Go { confirmed: false });
+    };
+    let person = caller.person();
+    let instead = format!(
+        "Instead, write a proposed decision (a note with `Status: Proposed`) that supersedes it and link the two, or add your findings and leave the status as it is; {person} can change a status from the note's status chip on the board."
+    );
+    if !confirm::can_ask(params) {
+        return Err(format!(
+            "This would {reason} ({what}{detail}), which needs {person}'s confirmation, and this client did not say it can ask them (no form elicitation capability). Nothing changed. {instead}"
+        ));
+    }
+    match confirm::answer(params, CONFIRM_STATUS) {
+        None => Ok(Gate::Stop(confirm::ask(
+            CONFIRM_STATUS,
+            &format!(
+                "{} for {person} wants to {reason}: {what}{detail}.",
+                caller.agent
+            ),
+            &format!("Allow: {reason}"),
+            &format!(
+                "Asked {person} to confirm: {reason} ({what}). Nothing changes until they confirm. If no question reached them, this client cannot ask. {instead}"
+            ),
+        ))),
+        Some(Answer::No(action)) => Ok(Gate::Stop(Step::Done(Out::text(format!(
+            // Only what came back: a client can decline without asking anyone.
+            "Not confirmed: your client answered \"{action}\" to {reason} ({what}). Nothing changed. If {person} says they were not asked, this client cannot show the question. {instead}"
+        ))))),
+        Some(Answer::Yes) => Ok(Gate::Go { confirmed: true }),
+    }
+}
+
+fn confirmed_by(caller: &Caller, confirmed: bool) -> String {
+    if confirmed {
+        format!(" Confirmed by {}.", caller.person())
+    } else {
+        String::new()
+    }
 }
 
 fn request_id(args: &Value) -> Option<String> {
@@ -551,7 +677,12 @@ async fn reload(app: &AppState, b: &BoardData) -> Result<BoardData, Fail> {
 
 // --- the tools ------------------------------------------------------------------------
 
-async fn item_create(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, Fail> {
+async fn item_create(
+    app: &AppState,
+    caller: &Caller,
+    args: &Value,
+    params: &Value,
+) -> Result<Step, Fail> {
     let board = find_board(&app.db, arg_str(args, "board")?).await?;
     let b = BoardData::load(&app.db, &board).await?;
     let kind = arg_str(args, "kind")?;
@@ -670,6 +801,28 @@ async fn item_create(app: &AppState, caller: &Caller, args: &Value) -> Result<Ou
         }
     };
     let at = whereabouts(app, &b, args).await?;
+    let made_status = content
+        .source
+        .as_deref()
+        .filter(|_| kind == "note")
+        .and_then(status_of);
+    let confirmed = match gate(
+        caller,
+        params,
+        guard(None, made_status.as_ref(), Write::Create),
+        &format!(
+            "a new note \"{}\"",
+            crate::agent::status::body(content.source.as_deref().unwrap_or(""))
+                .lines()
+                .map(|l| l.trim().trim_start_matches('#').trim())
+                .find(|l| !l.is_empty())
+                .unwrap_or("")
+        ),
+        "",
+    )? {
+        Gate::Go { confirmed } => confirmed,
+        Gate::Stop(step) => return Ok(step),
+    };
     let l = layout(&b, &[], at.group.as_deref());
     let ends: Vec<(LinkEnd, String)> = match &link {
         Some((_, to)) => {
@@ -795,10 +948,13 @@ async fn item_create(app: &AppState, caller: &Caller, args: &Value) -> Result<Ou
     }
     text.push_str(&moved_aside(&after, &pushed));
     text.push_str(&format!(" Board is at rev {revision}."));
+    text.push_str(&confirmed_by(caller, confirmed));
     let made_ref = made.short_ref();
-    Ok(Out::text(text)
-        .with(json!({ "ref": made_ref, "revision": made.revision, "boardRevision": revision }))
-        .touch(b.id, Some(item_id.to_string()), "editing"))
+    Ok(Step::Done(
+        Out::text(text)
+            .with(json!({ "ref": made_ref, "revision": made.revision, "boardRevision": revision }))
+            .touch(b.id, Some(item_id.to_string()), "editing"),
+    ))
 }
 
 /// Line numbers (1-based) where `needle` starts in `hay`.
@@ -841,7 +997,12 @@ async fn stale_message(
     ))
 }
 
-async fn item_edit(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, Fail> {
+async fn item_edit(
+    app: &AppState,
+    caller: &Caller,
+    args: &Value,
+    params: &Value,
+) -> Result<Step, Fail> {
     let board = find_board(&app.db, arg_str(args, "board")?).await?;
     let b = BoardData::load(&app.db, &board).await?;
     let item = b.resolve_item(arg_str(args, "ref")?)?;
@@ -905,11 +1066,47 @@ async fn item_edit(app: &AppState, caller: &Caller, args: &Value) -> Result<Out,
         }
     };
     if new == old {
-        return Ok(Out::text(format!(
+        return Ok(Step::Done(Out::text(format!(
             "{} already says that; nothing changed.",
             item.short_ref()
-        )));
+        ))));
     }
+    let changed = {
+        let (o, n): (Vec<&str>, Vec<&str>) = (old.lines().collect(), new.lines().collect());
+        let same = o.iter().zip(&n).take_while(|(a, b)| a == b).count();
+        let tail = o
+            .iter()
+            .rev()
+            .zip(n.iter().rev())
+            .take_while(|(a, b)| a == b)
+            .count()
+            .min(o.len().min(n.len()) - same);
+        n.len()
+            .saturating_sub(same + tail)
+            .max(o.len().saturating_sub(same + tail))
+    };
+    // Checked after base_rev, so a yes always answers for the text it was asked about.
+    let confirmed = if item.kind == "note" {
+        match gate(
+            caller,
+            params,
+            guard(
+                status_of(&old).as_ref(),
+                status_of(&new).as_ref(),
+                Write::Edit,
+            ),
+            &format!("{} \"{}\"", item.short_ref(), b.title_of(item)),
+            &format!(
+                ", {changed} line{} changed",
+                if changed == 1 { "" } else { "s" }
+            ),
+        )? {
+            Gate::Go { confirmed } => confirmed,
+            Gate::Stop(step) => return Ok(step),
+        }
+    } else {
+        false
+    };
     let item_id = Uuid::parse_str(&item.id).unwrap();
     let op = Op::ItemSource {
         item_id,
@@ -931,30 +1128,17 @@ async fn item_edit(app: &AppState, caller: &Caller, args: &Value) -> Result<Out,
     let made = after
         .item(&item.id)
         .ok_or("The item was deleted meanwhile.")?;
-    let changed = {
-        let (o, n): (Vec<&str>, Vec<&str>) = (old.lines().collect(), new.lines().collect());
-        let same = o.iter().zip(&n).take_while(|(a, b)| a == b).count();
-        let tail = o
-            .iter()
-            .rev()
-            .zip(n.iter().rev())
-            .take_while(|(a, b)| a == b)
-            .count()
-            .min(o.len().min(n.len()) - same);
-        n.len()
-            .saturating_sub(same + tail)
-            .max(o.len().saturating_sub(same + tail))
-    };
     let mut text = format!(
         "Edited {}: {changed} line{} changed; it is now rev {}.",
         made.short_ref(),
         if changed == 1 { "" } else { "s" },
         made.revision
     );
+    text.push_str(&confirmed_by(caller, confirmed));
     for line in diagram_effect(&b, &after, &item.id) {
         text.push_str(&format!("\n{line}"));
     }
-    Ok(Out::text(text).with(json!({ "ref": made.short_ref(), "revision": made.revision, "boardRevision": revision })).touch(b.id, Some(item.id.clone()), "editing"))
+    Ok(Step::Done(Out::text(text).with(json!({ "ref": made.short_ref(), "revision": made.revision, "boardRevision": revision })).touch(b.id, Some(item.id.clone()), "editing")))
 }
 
 fn task_id(r: &str) -> &str {
@@ -1629,10 +1813,25 @@ async fn arrange(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, F
         .touch(b.id, items.first().map(|i| i.id.clone()), "editing"))
 }
 
-async fn item_delete(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, Fail> {
+async fn item_delete(
+    app: &AppState,
+    caller: &Caller,
+    args: &Value,
+    params: &Value,
+) -> Result<Step, Fail> {
     let board = find_board(&app.db, arg_str(args, "board")?).await?;
     let b = BoardData::load(&app.db, &board).await?;
     let item = b.resolve_item(arg_str(args, "ref")?)?;
+    let confirmed = match gate(
+        caller,
+        params,
+        guard(b.status_of(item).as_ref(), None, Write::Delete),
+        &format!("{} \"{}\"", item.short_ref(), b.title_of(item)),
+        "",
+    )? {
+        Gate::Go { confirmed } => confirmed,
+        Gate::Stop(step) => return Ok(step),
+    };
     let links: Vec<_> = b
         .links
         .iter()
@@ -1676,10 +1875,71 @@ async fn item_delete(app: &AppState, caller: &Caller, args: &Value) -> Result<Ou
         )
     });
     text.push_str(&format!(". Board at rev {revision}."));
+    text.push_str(&confirmed_by(caller, confirmed));
     if let Some(body) = item.body.as_deref().filter(|_| item.kind != "image") {
         text.push_str(&format!(
             "\nIts content, should it need recreating:\n```\n{body}\n```"
         ));
     }
-    Ok(Out::text(text).with(json!({ "boardRevision": revision })))
+    Ok(Step::Done(
+        Out::text(text).with(json!({ "boardRevision": revision })),
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn st(src: &str) -> Option<Status> {
+        status_of(src)
+    }
+
+    #[test]
+    fn the_guard_lets_proposals_through_and_stops_what_settles() {
+        let accepted = st("# ADR-2\nStatus: Accepted");
+        let proposed = st("# ADR-6\nStatus: Proposed");
+        let open = st("# Q-2\nStatus: open");
+        let free = |b: &Option<Status>, a: &Option<Status>, w| {
+            guard(b.as_ref(), a.as_ref(), w) == Guard::Free
+        };
+        // Edit an accepted decision, even leaving it accepted.
+        assert!(!free(&accepted, &accepted, Write::Edit));
+        // Write a proposal; a plain note.
+        assert!(free(&None, &proposed, Write::Create));
+        assert!(free(&None, &None, Write::Create));
+        // Add findings to an open question.
+        assert!(free(&open, &open, Write::Edit));
+        // Close a question, or call it something the board does not know.
+        assert!(!free(&open, &st("# Q-2\nStatus: Answered"), Write::Edit));
+        assert!(!free(&open, &st("# Q-2\nStatus: RESOLVED"), Write::Edit));
+        // Remove a status.
+        assert!(!free(&open, &None, Write::Edit));
+        // Create an accepted decision.
+        assert!(!free(&None, &accepted, Write::Create));
+        // Delete: accepted and open ask; a proposal or plain note does not.
+        assert!(!free(&accepted, &None, Write::Delete));
+        assert!(!free(&open, &None, Write::Delete));
+        assert!(free(&proposed, &None, Write::Delete));
+        assert!(free(&None, &None, Write::Delete));
+        // Editing a proposal's text, or reopening into proposed, is free.
+        assert!(free(
+            &proposed,
+            &st("# ADR-6 more\nStatus: Proposed"),
+            Write::Edit
+        ));
+        assert!(
+            !free(&accepted, &proposed, Write::Edit),
+            "accepted is always guarded"
+        );
+        assert_eq!(
+            guard(
+                open.as_ref(),
+                st("# Q\nStatus: answered").as_ref(),
+                Write::Edit
+            ),
+            Guard::Confirm(
+                "change a note's status from question · open to question · answered".into()
+            )
+        );
+    }
 }

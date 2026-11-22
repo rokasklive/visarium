@@ -181,3 +181,57 @@ export function FieldEditor({
     </div>
   );
 }
+
+/**
+ * The states a status chip offers (canvas/note-status): a short menu under
+ * the chip. Choosing one calls `onPick`; Escape or leaving it closes it.
+ */
+export function StatusMenu({
+  placement,
+  states,
+  onPick,
+  onDone,
+}: {
+  placement: Placement;
+  states: readonly { readonly state: string; readonly label: string }[];
+  onPick: (state: string) => void;
+  onDone: () => void;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const done = useOnce((state?: string) => (state ? onPick(state) : onDone()));
+  useEffect(() => {
+    ref.current?.querySelector('button')?.focus();
+  }, []);
+  return (
+    <div
+      ref={ref}
+      role="menu"
+      aria-label="Change status"
+      data-testid="status-menu"
+      style={{ ...frame(placement), width: 'auto' }}
+      className="flex flex-col rounded border border-line-strong bg-surface-raised py-1 text-[12px] text-ink"
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          done();
+        }
+      }}
+      onBlur={(e) => {
+        if (!ref.current?.contains(e.relatedTarget as Node | null)) done();
+      }}
+    >
+      {states.map((s) => (
+        <button
+          key={s.state}
+          type="button"
+          role="menuitem"
+          className="px-3 py-0.5 text-left hover:bg-surface-sunken focus-visible:bg-surface-sunken focus-visible:outline-none"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => done(s.state)}
+        >
+          {s.label}
+        </button>
+      ))}
+    </div>
+  );
+}

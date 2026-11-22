@@ -100,7 +100,7 @@ import { installBench, noteRender } from './bench';
 import { useBitmaps } from './bitmap-cache';
 import { BoardSync } from './board-sync';
 import { canvasTheme } from './canvas-theme';
-import { CanvasToolbar, zEdge } from './canvas-toolbar';
+import { CanvasToolbar, useLinksOnFocus, zEdge } from './canvas-toolbar';
 import {
   createItem,
   createPlacement,
@@ -121,9 +121,12 @@ import {
   contains,
   type DrawnLink,
   defaultLinkType,
+  groupDrawing,
+  groupLinks,
   isTitle,
   labelBox,
   layoutBox,
+  linkCounts,
   linkNear,
   midpoint,
   nextLinkType,
@@ -413,6 +416,15 @@ export function CanvasSurface({
   /** The selected link. Selecting a link clears the item selection and back. */
   const [selectedLink, setSelectedLink] = useState<LinkId | null>(null);
   const [hoveredLink, setHoveredLink] = useState<LinkId | null>(null);
+  /**
+   * The item under the pointer: its links come forward (canvas/links). A ref,
+   * redrawing only the links, so crossing items never re-renders the surface.
+   */
+  const hoveredItem = useRef<ItemId | null>(null);
+  const [linksOnFocus, setLinksOnFocus] = useLinksOnFocus();
+  /** For the key handler, which is bound once: flips the setting as it is now. */
+  const toggleLinksOnFocus = useRef(() => {});
+  toggleLinksOnFocus.current = () => setLinksOnFocus(!linksOnFocus);
   /** Every link as last drawn, for hit-testing: the shape draws from live positions. */
   const drawnLinks = useRef<DrawnLink[]>([]);
   const linkShape = useRef<Konva.Shape | null>(null);
@@ -456,6 +468,8 @@ export function CanvasSurface({
         drawnLinks.current.map((d) => ({
           id: d.link.id,
           linkType: d.link.linkType,
+          count: d.count,
+          faded: d.faded,
           broken: d.from.broken || d.to.broken,
           from: d.segment.from,
           to: d.segment.to,
@@ -1526,6 +1540,11 @@ export function CanvasSurface({
         setGifsPaused((paused) => !paused);
         return;
       }
+      if (!mod && !event.altKey && event.key.toLowerCase() === 'l') {
+        event.preventDefault();
+        toggleLinksOnFocus.current();
+        return;
+      }
       if (event.key === 'Delete' || event.key === 'Backspace') {
         if (selectedLink && !readOnly) {
           event.preventDefault();
@@ -1915,6 +1934,12 @@ export function CanvasSurface({
     }
     const near = linkNear(drawnLinks.current, at, 8 / camera.zoom);
     if (!near) return;
+    if (near.count > 1) {
+      // A grouped line is one target: selecting its source fans it out.
+      setSelectedLink(null);
+      setSelection([near.link.from.itemId]);
+      return;
+    }
     setSelection([]);
     setSelectedLink(near.link.id);
   };
@@ -1922,6 +1947,7 @@ export function CanvasSurface({
   const onLinkHover = () => {
     const at = stageRef.current?.getRelativePointerPosition();
     const near = at ? linkNear(drawnLinks.current, at, 8 / camera.zoom) : undefined;
+    // On a grouped line this is its first link, which brings the group into focus and fans it out.
     setHoveredLink(near?.link.id ?? null);
   };
 
@@ -1944,13 +1970,41 @@ export function CanvasSurface({
     const c = (ctx as unknown as { _context: CanvasRenderingContext2D })._context;
     const zoom = camera.zoom;
     const list: DrawnLink[] = [];
-    for (const link of doc.links()) {
-      const a = doc.item(link.from.itemId);
-      const b = doc.item(link.to.itemId);
-      if (!a || !b) continue;
-      const from = anchorBox(a, objects.view(a), link.from.element, liveTransform(a));
-      const to = anchorBox(b, objects.view(b), link.to.element, liveTransform(b));
-      list.push({ link, segment: segmentBetween(from.box, to.box, zoom), from, to });
+    // Links between the same two items are one line until either end is in
+    // focus; then they fan out and the rest recede (canvas/links).
+    const focus = {
+      items: new Set<ItemId>([...selection, ...(hoveredItem.current ? [hoveredItem.current] : [])]),
+      links: new Set<LinkId>([hoveredLink, selectedLink].filter((l): l is LinkId => l !== null)),
+    };
+    for (const g of groupLinks(doc.links())) {
+      const a = doc.item(g.from);
+      const b = doc.item(g.to);
+      const first = g.links[0];
+      if (!a || !b || !first) continue;
+      const how = groupDrawing(g, focus, linksOnFocus);
+      if (how.strength === 'hidden') continue;
+      const faded = how.strength === 'faded';
+      if (!how.fanned) {
+        const from = anchorBox(a, objects.view(a), null, liveTransform(a));
+        const to = anchorBox(b, objects.view(b), null, liveTransform(b));
+        const segment = segmentBetween(from.box, to.box, zoom);
+        list.push({
+          link: first,
+          segment,
+          from,
+          to,
+          count: g.links.length,
+          faded,
+          labelled: false,
+        });
+        continue;
+      }
+      for (const link of g.links) {
+        const from = anchorBox(a, objects.view(a), link.from.element, liveTransform(a));
+        const to = anchorBox(b, objects.view(b), link.to.element, liveTransform(b));
+        const segment = segmentBetween(from.box, to.box, zoom);
+        list.push({ link, segment, from, to, count: 1, faded, labelled: how.labelled });
+      }
     }
     drawnLinks.current = list;
     const arrow = (seg: { from: { x: number; y: number }; to: { x: number; y: number } }) => {
@@ -1981,26 +2035,53 @@ export function CanvasSurface({
     c.textAlign = 'center';
     c.textBaseline = 'bottom';
     c.lineJoin = 'round';
+    const halo = (text: string, x: number, y: number, colour: string) => {
+      c.strokeStyle = theme.ground;
+      c.fillStyle = colour;
+      c.lineWidth = 4 / zoom;
+      c.strokeText(text, x, y);
+      c.fillText(text, x, y);
+    };
     for (const d of list) {
-      const hot = d.link.id === hoveredLink || d.link.id === selectedLink;
-      const broken = d.from.broken || d.to.broken;
-      const colour = hot ? theme.accent : broken ? theme.frame : theme.label;
+      const hot = d.count === 1 && (d.link.id === hoveredLink || d.link.id === selectedLink);
+      const broken = d.count === 1 && (d.from.broken || d.to.broken);
+      const colour = hot
+        ? theme.accent
+        : broken
+          ? theme.frame
+          : d.faded
+            ? theme.linkFaded
+            : theme.label;
       c.strokeStyle = colour;
       c.fillStyle = colour;
-      c.lineWidth = (d.link.id === selectedLink ? 2.5 : 1.5) / zoom;
+      c.lineWidth = (d.link.id === selectedLink && d.count === 1 ? 2.5 : 1.5) / zoom;
       c.setLineDash(broken ? [5 / zoom, 4 / zoom] : []);
       arrow(d.segment);
-      if (!hot) continue;
       c.setLineDash([]);
-      c.lineWidth = 1.5 / zoom;
-      outline(d.from.box);
-      outline(d.to.box);
       const m = midpoint(d.segment);
-      const text = broken ? `broken · ${d.link.linkType}` : d.link.linkType;
-      c.strokeStyle = theme.ground;
-      c.lineWidth = 4 / zoom;
-      c.strokeText(text, m.x, m.y - 3 / zoom);
-      c.fillText(text, m.x, m.y - 3 / zoom);
+      if (d.count > 1) {
+        // Where the type label would be: how many links this line stands for.
+        halo(`×${d.count}`, m.x, m.y - 3 / zoom, colour);
+        continue;
+      }
+      if (hot) {
+        c.lineWidth = 1.5 / zoom;
+        outline(d.from.box);
+        outline(d.to.box);
+      }
+      if (hot || d.labelled)
+        halo(broken ? `broken · ${d.link.linkType}` : d.link.linkType, m.x, m.y - 3 / zoom, colour);
+    }
+    // With links on focus only, each item says how many it has, so none looks unlinked.
+    if (linksOnFocus) {
+      c.textAlign = 'right';
+      for (const [id, n] of linkCounts(doc.links())) {
+        const item = doc.item(id);
+        if (!item) continue;
+        const box = anchorBox(item, objects.view(item), null, liveTransform(item)).box;
+        halo(`${n} link${n === 1 ? '' : 's'}`, box.maxX, box.minY - 3 / zoom, theme.label);
+      }
+      c.textAlign = 'center';
     }
     // The link being dragged out, and what it would land on.
     const draft = linkDraft.current;
@@ -2050,6 +2131,12 @@ export function CanvasSurface({
   const onItemHover = (item: CanvasItem | null, e: Konva.KonvaEventObject<MouseEvent>) => {
     const at = stageRef.current?.getRelativePointerPosition();
     if (!at) return;
+    const id = item?.id ?? null;
+    if (hoveredItem.current !== id) {
+      hoveredItem.current = id;
+      linkShape.current?.getLayer()?.batchDraw();
+    }
+    if (item && !isObject(item)) return;
     objectEditing.hover(item, at, pointerIn(containerRef.current, e.evt as PointerEvent));
   };
 
@@ -2783,6 +2870,8 @@ export function CanvasSurface({
           <CanvasToolbar
             history={history}
             onHistory={redraw}
+            linksOnFocus={linksOnFocus}
+            onLinksOnFocus={setLinksOnFocus}
             onFrame={frameView}
             onChecklist={() =>
               objectEditing.newChecklist(
@@ -3119,13 +3208,9 @@ function ItemNode({
     onDblClick: () => onDoubleClick(item),
     onDblTap: () => onDoubleClick(item),
     onClick: (e: Konva.KonvaEventObject<MouseEvent>) => onClick(item, e),
-    // Only objects say anything on hover (who changed a task); images stay silent.
-    ...(isObject(item)
-      ? {
-          onMouseMove: (e: Konva.KonvaEventObject<MouseEvent>) => onHover(item, e),
-          onMouseLeave: (e: Konva.KonvaEventObject<MouseEvent>) => onHover(null, e),
-        }
-      : {}),
+    // Hovering any item brings its links forward; only objects also say who changed a task.
+    onMouseMove: (e: Konva.KonvaEventObject<MouseEvent>) => onHover(item, e),
+    onMouseLeave: (e: Konva.KonvaEventObject<MouseEvent>) => onHover(null, e),
     perfectDrawEnabled: false,
     shadowForStrokeEnabled: false,
   };

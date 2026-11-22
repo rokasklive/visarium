@@ -643,3 +643,55 @@ test('a note scaled 2x is edited at 2x, the editor covering what is drawn', asyn
   // The text renders at twice its CSS size: the field's on-screen height is at least one 2x line.
   expect(field?.height ?? 0).toBeGreaterThan(size * 2);
 });
+
+test('a status chip offers the other states and rewrites the status line, undone in one step', async ({
+  page,
+}) => {
+  const source = '# ADR-6 · Sign at enqueue\n\n**Status: Proposed** (2026-10-14)\n\nBody.';
+  const posted = await stubBoard(page, [note(source)]);
+  const centre = await open(page);
+  const chip = await controlCentre(page, centre, NOTE, (h) => h.kind === 'status');
+  await page.mouse.click(chip.x, chip.y);
+  const menu = page.getByRole('menu', { name: 'Change status' });
+  await expect(menu.getByRole('menuitem')).toHaveText([
+    'Decision · Accepted',
+    'Decision · Rejected',
+    'Decision · Deprecated',
+    'Decision · Superseded',
+  ]);
+  await menu.getByRole('menuitem', { name: 'Decision · Accepted' }).click();
+  await expect.poll(() => ofType(posted, 'item.source').length).toBe(1);
+  expect(ofType(posted, 'item.source')[0]).toMatchObject({
+    itemId: NOTE,
+    baseRevision: 0,
+    source: '# ADR-6 · Sign at enqueue\n\n**Status: Accepted** (2026-10-14)\n\nBody.',
+  });
+  await expect(menu).toHaveCount(0);
+
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect.poll(() => ofType(posted, 'item.source').length).toBe(2);
+  expect(ofType(posted, 'item.source')[1]?.source).toBe(source);
+});
+
+test('a status chip rewrites frontmatter, which is never drawn', async ({ page }) => {
+  const posted = await stubBoard(page, [note('---\nstatus: open\n---\n# Q-1 · Retention')]);
+  const centre = await open(page);
+  const drawnText = (await (
+    await page.waitForFunction(
+      (i) =>
+        (
+          window as unknown as { __objects?: { search(id: string, q: string): unknown } }
+        ).__objects?.search(i, 'Q'),
+      NOTE,
+    )
+  ).jsonValue()) as { text: string };
+  expect(drawnText.text).not.toContain('status: open');
+  expect(drawnText.text).toContain('Question · Open');
+  const chip = await controlCentre(page, centre, NOTE, (h) => h.kind === 'status');
+  await page.mouse.click(chip.x, chip.y);
+  await page.getByRole('menuitem', { name: 'Question · Answered' }).click();
+  await expect.poll(() => ofType(posted, 'item.source').length).toBe(1);
+  expect(ofType(posted, 'item.source')[0]?.source).toBe(
+    '---\nstatus: answered\n---\n# Q-1 · Retention',
+  );
+});

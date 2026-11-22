@@ -11,8 +11,10 @@ import {
   type Anchor,
   type CanvasItem,
   type CanvasItemContent,
+  type ItemId,
   LINK_TYPES,
   type Link,
+  type LinkId,
   type LinkType,
   type Rect,
   type Transform,
@@ -232,12 +234,82 @@ export const midpoint = (s: Segment): Vec2 => ({
   y: (s.from.y + s.to.y) / 2,
 });
 
-/** One link, ready to draw and to hit-test. */
+/**
+ * One drawn line, ready to draw and to hit-test: a link, or, at rest, every
+ * link from one item to another as one line (`count` > 1, `link` the first).
+ */
 export interface DrawnLink {
   readonly link: Link;
   readonly segment: Segment;
   readonly from: AnchorBox;
   readonly to: AnchorBox;
+  /** How many links this line stands for; 1 for a fanned-out or single link. */
+  readonly count: number;
+  readonly faded: boolean;
+  /** Its type label is shown: it touches what is hovered or selected. */
+  readonly labelled: boolean;
+}
+
+/** Every link from one item to another, direction kept (canvas/links). */
+export interface LinkGroup {
+  readonly from: ItemId;
+  readonly to: ItemId;
+  readonly links: readonly Link[];
+}
+
+/**
+ * Links grouped by `(from item, to item)`: elements, passages and tasks fold
+ * into their item. In the order the first of each group comes.
+ */
+export function groupLinks(links: Iterable<Link>): LinkGroup[] {
+  const groups = new Map<string, { from: ItemId; to: ItemId; links: Link[] }>();
+  for (const link of links) {
+    const key = `${link.from.itemId}>${link.to.itemId}`;
+    const group = groups.get(key);
+    if (group) group.links.push(link);
+    else groups.set(key, { from: link.from.itemId, to: link.to.itemId, links: [link] });
+  }
+  return [...groups.values()];
+}
+
+/** What is hovered or selected: the items and links that bring links forward. */
+export interface LinkFocus {
+  readonly items: ReadonlySet<ItemId>;
+  readonly links: ReadonlySet<LinkId>;
+}
+
+export interface GroupDrawing {
+  /** Drawn as its separate links, each to its own anchor; else one line between the items. */
+  readonly fanned: boolean;
+  /** Its links are labelled: it touches the focus. */
+  readonly labelled: boolean;
+  readonly strength: 'full' | 'faded' | 'hidden';
+}
+
+/**
+ * How a group is drawn. At rest a group of more than one is one line; one
+ * that touches the focus fans out, labelled, and everything else fades. With
+ * links on focus only, what does not touch the focus is not drawn at all.
+ */
+export function groupDrawing(g: LinkGroup, focus: LinkFocus, onFocusOnly = false): GroupDrawing {
+  const touches =
+    focus.items.has(g.from) || focus.items.has(g.to) || g.links.some((l) => focus.links.has(l.id));
+  const resting = focus.items.size === 0 && focus.links.size === 0;
+  return {
+    fanned: touches || g.links.length === 1,
+    labelled: touches,
+    strength: touches ? 'full' : onFocusOnly ? 'hidden' : resting ? 'full' : 'faded',
+  };
+}
+
+/** How many links each item has, in and out, for the counts shown with links on focus only. */
+export function linkCounts(links: Iterable<Link>): Map<ItemId, number> {
+  const counts = new Map<ItemId, number>();
+  for (const l of links) {
+    counts.set(l.from.itemId, (counts.get(l.from.itemId) ?? 0) + 1);
+    counts.set(l.to.itemId, (counts.get(l.to.itemId) ?? 0) + 1);
+  }
+  return counts;
 }
 
 /** The link nearest a world point, within `slop` world units of its line. */
