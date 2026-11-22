@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0
+## v0.1.0
 
 - First release. An infinite canvas for image references, Markdown notes, Mermaid and PlantUML diagrams, and checklists, with typed links that say how items relate.
 - Every item and diagram element has a stable reference, such as d2#Server or c1/t3, so you and your agents point at exactly the same thing.
