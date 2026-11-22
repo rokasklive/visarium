@@ -1,29 +1,32 @@
 # Releasing:
 #
-#   just version 0.1.0                 # then a "## 0.1.0" section in CHANGELOG.md; commit, push
-#   gh release create v0.1.0 --target master --title "Visarium 0.1.0 Shirakawa" --notes-file <notes.md>
+#   just version 0.1.0                 # then a "## 0.1.0" section in CHANGELOG.md; commit, merge
+#   gh release create v0.1.0 --draft --target master --title "Visarium 0.1.0 Shirakawa" --notes-file release/v0.1.0.md
+#   gh workflow run release.yml -f tag=v0.1.0
 #
 # The release notes are yours, kept as written. The app's own notes (the
 # updater's and Settings → About) come from the CHANGELOG.md section.
 #
-# Publishing the release starts this. It turns the release back into a draft at
-# once, builds and checks everything, attaches the installers, the updater feed
-# (latest.json) and checksums, pushes the multi-arch image to GHCR, and only
-# then publishes the release again. If anything fails, the release stays a
-# draft and the image is not pushed: fix it, then delete the draft and its tag
-# and run `gh release create` again.
+# Releases are immutable once published, so this builds into the draft: it pins
+# the draft to the commit it builds, runs the checks, builds and signs the
+# desktop apps, verifies the updater signatures, attaches the installers, the
+# updater feed (latest.json) and checksums, pushes the multi-arch image to GHCR,
+# and only then publishes, which creates the tag. If anything fails, the release
+# stays a draft with no tag and the image is untagged: fix it and run it again.
 #
-# Rehearsal: run this workflow by hand (Actions → Release → Run workflow). It
-# does all of the above for the version in desktop/tauri.conf.json, signed and
-# notarized, but publishes nothing: the result is in the run's artifacts.
+# Rehearsal: run it with no tag (Actions → Release → Run workflow). It does all
+# of the above for the version in desktop/tauri.conf.json, signed and notarized,
+# but publishes nothing: the result is in the run's artifacts.
 
 name: Release
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
+      tag:
+        description: Draft release to build and publish, e.g. v0.1.0. Empty for a rehearsal
+        type: string
+        required: false
       notarized_alpha:
         description: Instead, build the isolated notarized macOS alpha pair for testing in-app updates
         type: boolean
@@ -37,12 +40,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || 'rehearsal' }}
   cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
-  PUBLISH: ${{ github.event_name == 'release' }}
+  PUBLISH: ${{ inputs.tag != '' }}
   IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
@@ -56,12 +59,23 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
       prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
-      - name: Take the release back to a draft until its assets are attached
+      # Publishing creates the tag at the draft's target, so the target must be
+      # this very commit, not a branch that may move on while this runs.
+      - name: Pin the draft release to the commit being built
         if: env.PUBLISH == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.release.tag_name }}
-        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=true
+          TAG: ${{ inputs.tag }}
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          release=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,targetCommitish) \
+            || fail "No release $TAG: gh release create $TAG --draft --target master ..."
+          jq -e .isDraft <<< "$release" >/dev/null || fail "$TAG is already published"
+          target=$(jq -r .targetCommitish <<< "$release")
+          sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$target" --jq .sha)
+          [[ "$sha" == "$GITHUB_SHA" ]] \
+            || fail "$TAG targets $target ($sha), but this run is on $GITHUB_SHA: gh workflow run release.yml --ref $target -f tag=$TAG"
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -70,7 +84,7 @@ jobs:
       - id: version
         name: Check the tag, the versions, the changelog and the updater key agree
         env:
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ inputs.tag }}
         run: |
           version=$(jq -er .version desktop/tauri.conf.json)
           tag=${TAG:-v$version}
@@ -404,8 +418,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
-          latest=$([[ "$PRERELEASE" == true ]] && echo --latest=false || echo --latest)
-          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false "$latest"
+          if [[ "$PRERELEASE" == true ]]; then flags=(--prerelease --latest=false); else flags=(--latest); fi
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false "${flags[@]}"
 
   # Two notarized versions with their own identity and a loopback feed, to try
   # the in-app update against a real Developer ID build before releasing.
