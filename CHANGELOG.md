@@ -2,19 +2,11 @@
 
 ## 0.1.0
 
-- Organize image references, notes, diagrams, and checklists on an infinite canvas.
-- **Self-hosted servers: password sign-in is now off unless VISARIUM_AUTH_PASSWORD=on is set.** Signing in through an OpenID Connect provider is the recommended way. A server with neither refuses to start and explains how to fix it. If people sign in with passwords today, set VISARIUM_AUTH_PASSWORD=on before upgrading, or have them link a provider under Settings first.
-- Let a vision model describe every image, so agents whose model cannot see pictures still know what they show, and search finds images by their content. Admins set it up under Instance Settings → Vision model, with any OpenAI-compatible endpoint, or with VISARIUM_VISION_* on the server.
-- Connect Claude, ChatGPT, Cursor and other MCP apps to a self-hosted server by its address alone. You sign in and approve the app in your browser, and it appears under Settings → Agents, where you can revoke it. Agent tokens still work. This needs VISARIUM_PUBLIC_URL to be set.
-- Work in a desktop library or connect to a self-hosted Visarium server.
-- Find the version, build, diagnostic collection, and update controls in Settings → About.
-- Security fixes from an audit. Agent tokens only work as bearer tokens on /mcp, and the server no longer accepts them as a sign-in cookie. Open boards stop updating within a minute of their session being signed out.
-- Self-hosted servers: images are now marked Cache-Control: private. If a caching proxy or CDN sits in front of your server, purge its cache for /api/assets/ after upgrading.
-
-## 0.0.2
-
-- Verify the replacement Mac build and current-version changelog after an in-app alpha update.
-
-## 0.0.1
-
-- Check for a signed alpha update and collect diagnostic logs from Settings → About.
+- First release. An infinite canvas for image references, Markdown notes, Mermaid and PlantUML diagrams, and checklists, with typed links that say how items relate.
+- Every item and diagram element has a stable reference, such as d2#Server or c1/t3, so you and your agents point at exactly the same thing.
+- Agents work on boards through the built-in MCP server. Claude, ChatGPT, Cursor and other MCP apps connect to a self-hosted server by its address alone; you approve them in your browser and revoke them under Settings → Agents. Their edits are credited to them and appear live.
+- Notes can be decisions or open questions. Agents propose them, and you settle them.
+- A vision model can describe every image, so agents that cannot see pictures still know what they show, and search finds images by their content. Set it up under Instance Settings → Vision model with any OpenAI-compatible endpoint.
+- Drag images in from folders and browsers, one at a time or in batches, and drag them back out. Crop, resize and rotate them on the board.
+- The desktop app for macOS, Windows and Linux keeps a library on your machine and also connects to self-hosted servers. It updates itself from Settings → About.
+- Self-host the server as one Docker image for amd64 and arm64. People sign in through an OpenID Connect provider, or with a password when VISARIUM_AUTH_PASSWORD=on. Admins manage sign-in providers, moderators and a storage limit in Instance Settings.
