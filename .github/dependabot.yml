@@ -20,3 +20,8 @@ updates:
     directory: /
     schedule: { interval: weekly }
     groups: { npm: { update-types: [minor, patch] } }
+    # Pinned on purpose: diagram anchors read their output, so bump them by hand
+    # with e2e/canvas.objects.spec.ts (web/src/features/canvas/objects/versions.test.ts).
+    ignore:
+      - dependency-name: mermaid
+      - dependency-name: "@plantuml/core"
