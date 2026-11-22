@@ -1015,7 +1015,7 @@ foreign-types-macros 0.2.4 — MIT/Apache-2.0 — https://github.com/sfackler/fo
     licence text [69] [120]
 foreign-types-shared 0.3.1 — MIT/Apache-2.0 — https://github.com/sfackler/foreign-types
     licence text [69] [120]
-form_urlencoded 1.2.2 — MIT OR Apache-2.0 — https://github.com/servo/rust-url
+form_urlencoded 1.2.3 — MIT OR Apache-2.0 — https://github.com/servo/rust-url
     licence text [4] [121]
 fs_extra 1.3.0 — MIT — https://github.com/webdesus/fs_extra
     licence text [122]
@@ -1843,7 +1843,7 @@ unicode-segmentation 1.13.3 — MIT OR Apache-2.0 — https://github.com/unicode
     licence text [4] [136]
 untrusted 0.9.0 — ISC — https://github.com/briansmith/untrusted
     licence text [307]
-url 2.5.8 — MIT OR Apache-2.0 — https://github.com/servo/rust-url
+url 2.5.9 — MIT OR Apache-2.0 — https://github.com/servo/rust-url
     licence text [4] [153]
 urlpattern 0.6.0 — MIT — https://github.com/denoland/rust-urlpattern
     licence text [308]

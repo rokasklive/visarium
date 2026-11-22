@@ -33,13 +33,13 @@ If you add or change a dependency, run `just licenses` and commit the updated `w
 
 ## How the code is laid out
 
-| Path | What lives there |
-| --- | --- |
-| `server/` | Rust server (axum + SQLite): API, realtime sync, MCP, assets |
-| `web/` | React web app |
-| `desktop/` | Tauri desktop app, which embeds the server |
+| Path                   | What lives there                                                    |
+| ---------------------- | ------------------------------------------------------------------- |
+| `server/`              | Rust server (axum + SQLite): API, realtime sync, MCP, assets        |
+| `web/`                 | React web app                                                       |
+| `desktop/`             | Tauri desktop app, which embeds the server                          |
 | `packages/canvas-core` | Canvas model: geometry, camera, operations. No React, Konva or DOM. |
-| `packages/*` | Renderer, API client and other shared packages |
+| `packages/*`           | Renderer, API client and other shared packages                      |
 
 Some rules the code relies on:
 

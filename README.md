@@ -25,7 +25,7 @@ Working with an agent breaks down at **grounding**: the shared understanding of 
 
 Visarium puts the common ground on a canvas both of you can see and edit. Images, notes, diagrams and checklists sit side by side, with typed links that say how they relate. Every item and diagram element has a stable reference (`d2#Server`, `c1/t3`), so you can point at exactly what you mean and so can the agent. Its edits are credited to it and appear live, and it records decisions and open questions as proposals for you to settle. Nothing is assumed, because everything is on the board.
 
-> *Honestly? I got sick of juggling screenshots at work, and one thing led to another.*
+> _Honestly? I got sick of juggling screenshots at work, and one thing led to another._
 
 ## See it
 
