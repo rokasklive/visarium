@@ -84,6 +84,10 @@ just            # everything else
 
 Self-hosted: `docker compose up -d` (settings in `.env.example`).
 
+> **Linux:** the desktop app works, but it has had far less polish and testing
+> than on macOS and Windows. Expect rough edges, for example dropped files land
+> at the window centre and pasting a copied file does not work yet.
+
 ## Licence
 
 Copyright © 2026 Rokas Kučinskas.
