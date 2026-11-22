@@ -257,6 +257,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Docker Desktop on the Mac mini keeps logins in the Keychain, which a
+      # runner service may not write to. This job gets its own client config in
+      # its temp folder, which the runner empties after every job: same context
+      # and plugins, and the GHCR login written into it below.
+      - name: Give the job its own Docker config
+        run: |
+          dir="$RUNNER_TEMP/docker-config"
+          mkdir -p "$dir"
+          printf '{"currentContext":"%s"}\n' "$(docker context show)" > "$dir/config.json"
+          for d in contexts cli-plugins; do
+            if [[ -d "$HOME/.docker/$d" ]]; then ln -s "$HOME/.docker/$d" "$dir/$d"; fi
+          done
+          echo "DOCKER_CONFIG=$dir" >> "$GITHUB_ENV"
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Build
@@ -272,12 +285,17 @@ jobs:
 
       - run: infra/docker/smoke.sh visarium:release
 
-      - if: env.PUBLISH == 'true'
-        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      # Written into the job's config rather than through `docker login`, which
+      # on macOS picks the Keychain again whenever the config names no store.
+      - name: Log in to GHCR
+        if: env.PUBLISH == 'true'
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          auth=$(printf '%s:%s' "$GITHUB_ACTOR" "$TOKEN" | base64 | tr -d '\n')
+          echo "::add-mask::$auth"
+          printf '{"currentContext":"%s","auths":{"ghcr.io":{"auth":"%s"}}}\n' \
+            "$(docker context show)" "$auth" > "$DOCKER_CONFIG/config.json"
 
       # Pushed by digest only: no tag points at it until every platform is in.
       - id: push
