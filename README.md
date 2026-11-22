@@ -27,6 +27,22 @@ Visarium puts the common ground on a canvas both of you can see and edit. Images
 
 > *Honestly? I got sick of juggling screenshots at work, and one thing led to another.*
 
+## See it
+
+<p align="center">
+  <img src="docs/media/agent-demo.gif" alt="An agent building a board over MCP: a diagram, notes linked to its elements, a proposed decision and a checklist it works through" width="800">
+</p>
+
+**An agent at work.** Claude builds a board through the MCP server. It draws a diagram, links notes to individual elements, proposes a decision for you to settle, and works through a checklist, all appearing live.
+
+<p align="center">
+  <img src="docs/media/link-nodes.gif" alt="Linking items on the board while an animated GIF plays" width="800">
+</p>
+
+**Typed links, live GIFs.** Connect notes, images, diagrams and checklists with links that say what they mean. Animated images keep playing on the canvas.
+
+More demos at [www.visarium.dev](https://www.visarium.dev).
+
 ## Use it your way
 
 - **Local**: a desktop app for macOS, Windows and Linux. Your boards stay on your machine.
