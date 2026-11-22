@@ -65,11 +65,11 @@ function packages() {
     .flat()
     .filter((p) => !p.name.startsWith('@visarium/'))
     .flatMap((p) =>
-      p.versions.map((version, i) => ({
+      p.paths.map((path) => ({
         name: p.name,
         license: p.license,
         url: p.homepage ?? '',
-        texts: texts(p.paths[i]),
+        texts: texts(path),
       })),
     );
 }
