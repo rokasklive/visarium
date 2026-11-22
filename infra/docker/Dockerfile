@@ -22,7 +22,8 @@ ARG WEB_BUILD=prod
 RUN if [ "$WEB_BUILD" = dev ]; then pnpm --filter @visarium/web build:dev; \
     else pnpm --filter @visarium/web build && pnpm --filter @visarium/web check:bundle; fi
 
-FROM rust:1-bookworm AS server
+# Keep in step with rust-toolchain.toml.
+FROM rust:1.99.1-bookworm AS server
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY server/ server/
@@ -35,6 +36,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --release --locked -p visarium-server && cp target/release/visarium /visarium
 
 FROM debian:bookworm-slim
+LABEL org.opencontainers.image.title=Visarium \
+      org.opencontainers.image.source=https://github.com/rokasklive/visarium \
+      org.opencontainers.image.licenses=AGPL-3.0-only
 # CA roots: the server calls OpenID Connect providers over https.
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 RUN groupadd -g 1000 visarium && useradd -u 1000 -g visarium -M visarium \

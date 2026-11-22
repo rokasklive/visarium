@@ -5,7 +5,10 @@
   "identifier": "dev.visarium.desktop",
   "build": {
     "frontendDist": "static",
-    "beforeDevCommand": { "script": "pnpm --filter @visarium/web build", "wait": true },
+    "beforeDevCommand": {
+      "script": "pnpm --filter @visarium/web build",
+      "wait": true
+    },
     "beforeBuildCommand": "pnpm --filter @visarium/web build"
   },
   "app": {
@@ -29,5 +32,14 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMxMzA5QUI5MTZBOTMzMzEKUldReE02a1d1Wm93d2VmZlh5am5oaTBCTzJUTUhDRCsxd1BudFpKZEVXemFUSTFkYWxwTnVLT3MK",
+      "endpoints": ["https://github.com/rokasklive/visarium/releases/latest/download/latest.json"],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

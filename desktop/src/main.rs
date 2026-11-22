@@ -23,13 +23,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod about;
-#[cfg(all(target_os = "macos", feature = "alpha-updater"))]
-mod alpha_update;
 mod connect;
 mod drag_out;
 #[cfg(target_os = "linux")]
 mod file_drops;
 mod local_port;
+mod update;
 
 use std::path::PathBuf;
 
@@ -46,9 +45,9 @@ const GREETING: &str = "http://tauri.localhost/";
 const GREETING: &str = "tauri://localhost/";
 
 /// The keychain service every device token is filed under.
-#[cfg(not(all(target_os = "macos", feature = "alpha-updater")))]
+#[cfg(not(feature = "alpha-updater"))]
 const KEYCHAIN: &str = "dev.visarium.desktop";
-#[cfg(all(target_os = "macos", feature = "alpha-updater"))]
+#[cfg(feature = "alpha-updater")]
 const KEYCHAIN: &str = "dev.visarium.desktop.alpha";
 
 struct Desktop {
@@ -506,8 +505,7 @@ fn main() {
                         file_drops::replay(&handle, url);
                         return false;
                     }
-                    #[cfg(all(target_os = "macos", feature = "alpha-updater"))]
-                    if !alpha_update::allow_navigation(&handle, url) {
+                    if !update::allow_navigation(&handle, url) {
                         return false;
                     }
                     match connect::provider_link(url) {
@@ -548,8 +546,7 @@ fn main() {
                 "local" => app.state::<local_port::LocalPort>().library(),
                 _ => return,
             };
-            #[cfg(all(target_os = "macos", feature = "alpha-updater"))]
-            if !alpha_update::allow_navigation(app, &target) {
+            if !update::allow_navigation(app, &target) {
                 return;
             }
             // Cosmetic.

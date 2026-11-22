@@ -14,6 +14,8 @@ services:
       args:
         # `dev` bakes the inspector into the image (`just dev-image`).
         WEB_BUILD: ${WEB_BUILD:-prod}
+    # Or run a release instead of building: image: ghcr.io/rokasklive/visarium:0.1.0
+    # (and delete `build:`). Tags: X.Y.Z, X.Y, latest; edge follows master.
     image: visarium:local
     restart: unless-stopped
     networks:
