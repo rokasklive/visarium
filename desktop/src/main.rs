@@ -27,6 +27,8 @@ mod about;
 mod alpha_update;
 mod connect;
 mod drag_out;
+#[cfg(target_os = "linux")]
+mod file_drops;
 mod local_port;
 
 use std::path::PathBuf;
@@ -497,6 +499,13 @@ fn main() {
             let handle = app.handle().clone();
             WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                 .on_navigation(move |url| {
+                    // A file dropped outside the board's drop zone would
+                    // otherwise replace the whole app with that file.
+                    if url.scheme() == "file" {
+                        #[cfg(target_os = "linux")]
+                        file_drops::replay(&handle, url);
+                        return false;
+                    }
                     #[cfg(all(target_os = "macos", feature = "alpha-updater"))]
                     if !alpha_update::allow_navigation(&handle, url) {
                         return false;
