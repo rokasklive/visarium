@@ -1588,6 +1588,16 @@ async fn a_retried_write_applies_once() {
 async fn a_runaway_agent_is_slowed() {
     let w = world().await;
     let limit = visarium::agent::AGENT_WRITES_PER_MINUTE;
+    // The limit counts per wall-clock minute: a burst that crosses into the
+    // next one starts counting again and is never refused. Start it early in a minute.
+    let into_minute = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        % 60;
+    if into_minute > 40 {
+        tokio::time::sleep(std::time::Duration::from_secs(61 - into_minute)).await;
+    }
     let mut refused = None;
     for n in 0..=limit {
         let r = w.rpc("tools/call", json!({ "name": "link", "arguments": { "board": "Offline sync", "from": "n1", "to": "d1#OpQueue", "type": "describes" } })).await;
