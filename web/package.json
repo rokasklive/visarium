@@ -18,14 +18,14 @@
   },
   "dependencies": {
     "@plantuml/core": "1.2026.9",
-    "@tanstack/react-query": "5.107.2",
+    "@tanstack/react-query": "5.108.1",
     "@tanstack/react-router": "1.170.46",
     "@visarium/api-client": "workspace:*",
     "@visarium/canvas-core": "workspace:*",
     "@visarium/canvas-renderer-konva": "workspace:*",
-    "dompurify": "3.4.17",
+    "dompurify": "3.4.18",
     "konva": "10.9.1",
-    "marked": "18.1.3",
+    "marked": "18.2.1",
     "mermaid": "12.3.0",
     "radix-ui": "1.8.1",
     "react": "19.3.1",
@@ -43,6 +43,6 @@
     "happy-dom": "21.0.4",
     "tailwindcss": "4.3.5",
     "vite": "8.3.8",
-    "vitest": "5.1.0"
+    "vitest": "5.1.1"
   }
 }
