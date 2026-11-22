@@ -490,12 +490,28 @@ fn address(g: &Gateway, req: &Request) -> String {
         .unwrap_or_default()
 }
 
-/// What no sandbox may reach: agents and the sign-in machinery they need.
+/// What no sandbox may reach: agents and the sign-in machinery they need, and
+/// every account and instance setting. A sandbox's one account is the
+/// single-user admin, so without this a visitor could lift their own storage
+/// limit or point the vision model at any address.
 /// ponytail: agents in the demo are a later step (a token per sandbox).
 fn blocked(path: &str) -> bool {
-    ["/mcp", "/oauth", "/.well-known", "/auth"]
-        .iter()
-        .any(|p| path == *p || path.starts_with(&format!("{p}/")))
+    [
+        "/mcp",
+        "/oauth",
+        "/.well-known",
+        "/auth",
+        "/api/instance",
+        "/api/accounts",
+        "/api/agent-tokens",
+        "/api/agent-settings",
+        "/api/sessions",
+        "/api/invitations",
+        "/api/shares",
+        "/api/setup",
+    ]
+    .iter()
+    .any(|p| path == *p || path.starts_with(&format!("{p}/")))
 }
 
 pub fn router(gateway: GatewayState) -> Router {
@@ -663,16 +679,33 @@ mod tests {
     }
 
     #[test]
-    fn agents_and_sign_in_are_not_part_of_the_demo() {
+    fn agents_sign_in_and_settings_are_not_part_of_the_demo() {
         for p in [
             "/mcp",
             "/oauth/token",
             "/.well-known/oauth-protected-resource",
             "/auth/oidc/x/start",
+            "/api/instance/storage",
+            "/api/instance/vision/test",
+            "/api/accounts/me",
+            "/api/agent-tokens",
+            "/api/agent-settings",
+            "/api/sessions",
+            "/api/shares/x",
+            "/api/setup",
         ] {
             assert!(blocked(p), "{p}");
         }
-        for p in ["/", "/api/boards", "/ws/canvas/x", "/authors"] {
+        // The board app itself, including the session it starts from.
+        for p in [
+            "/",
+            "/settings",
+            "/api/boards",
+            "/api/session",
+            "/api/shared/x",
+            "/ws/canvas/x",
+            "/authors",
+        ] {
             assert!(!blocked(p), "{p}");
         }
     }

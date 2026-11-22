@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from '@tanstack/react-router';
+import { createFileRoute, Link, Navigate } from '@tanstack/react-router';
 import { type FormEvent, useEffect, useState } from 'react';
 import {
   mcpUrl,
@@ -41,6 +41,8 @@ function Settings() {
   const session = useSession();
   const me = session.data?.user;
   const shared = !session.data?.singleUser;
+  // A demo has no Settings (see SettingsLink); a typed /settings goes back to the boards.
+  if (session.data?.demo) return <Navigate to="/" replace />;
 
   const sections: [id: string, title: string, shown: boolean][] = [
     ['profile', 'Profile', !!me],

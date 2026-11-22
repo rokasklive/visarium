@@ -13,6 +13,7 @@ import {
 import { useHealth } from '~/api/health';
 import { useSession, useSignOut } from '~/api/session';
 import { storageState } from '~/api/storage';
+import { SOURCE } from '~/app/source';
 import { useUiStore } from '~/app/ui-store';
 import { GENERATED_BOARDS } from '~/features/canvas/board-fixture';
 import { LibraryPanel } from '~/features/library/library-panel';
@@ -58,7 +59,7 @@ export function Shell({ children }: { children: ReactNode }) {
         <span className="mx-1 h-4 w-px bg-line" />
         <NavLink to="/">Boards</NavLink>
         <NavLink to="/library">Library</NavLink>
-        <NavLink to="/settings">Settings</NavLink>
+        <SettingsLink />
         <InstanceLink />
         <BoardTitle />
         <SignedInPerson />
@@ -180,6 +181,12 @@ function BoardTitle() {
       </button>
     </>
   );
+}
+
+/** Not in a demo sandbox: nothing there is the visitor's to set (the gateway refuses it too). */
+function SettingsLink() {
+  if (useSession().data?.demo) return null;
+  return <NavLink to="/settings">Settings</NavLink>;
 }
 
 /** Instance Settings, for moderators and admins of a shared instance. */
@@ -461,6 +468,24 @@ function StatusBar() {
         </button>
       )}
       {session.data?.demo && <DemoCountdown endsAt={session.data.demo.endsAt} />}
+      {session.data?.demo && (
+        // A demo has no Settings, so About's notices live here: the AGPL asks
+        // that people using it over a network are offered its source.
+        <span className="flex gap-2">
+          <a
+            href={SOURCE}
+            target="_blank"
+            rel="noreferrer"
+            className="hover:text-ink"
+            data-testid="demo-source"
+          >
+            source code
+          </a>
+          <a href="/licenses.txt" target="_blank" rel="noreferrer" className="hover:text-ink">
+            licences
+          </a>
+        </span>
+      )}
       {storageLevel !== 'ok' && (
         <Link
           to="/instance"
