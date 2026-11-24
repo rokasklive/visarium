@@ -1,6 +1,4 @@
-import { createRootRoute, Outlet, useLocation } from '@tanstack/react-router';
-import { useLayoutEffect } from 'react';
-import { markLibraryOpened } from '~/api/desktop';
+import { createRootRoute, Outlet } from '@tanstack/react-router';
 import { Shell } from '~/components/shell';
 
 export const Route = createRootRoute({
@@ -11,11 +9,6 @@ export const Route = createRootRoute({
 });
 
 function Root() {
-  const pathname = useLocation({ select: (location) => location.pathname });
-  useLayoutEffect(() => {
-    if (pathname !== '/settings') markLibraryOpened();
-  }, [pathname]);
-
   return (
     <Shell>
       <Outlet />

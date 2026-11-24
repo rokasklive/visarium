@@ -248,6 +248,11 @@ function build(output, notarized = false) {
     join(feed, 'latest.json'),
     JSON.stringify({
       version: versions[1],
+      // Shaped like the release feed's: newest first, one heading each.
+      notes: [
+        `## v${versions[1]}\n\n- Rehearsal build. Its notes should be expanded.`,
+        `## v${versions[0]}\n\n- The installed build, so the prompt should not list it.`,
+      ].join('\n\n'),
       platforms: {
         [`darwin-${arch}`]: {
           url: `${feedUrl}/${archiveName}`,

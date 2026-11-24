@@ -1,0 +1,340 @@
+<!doctype html>
+<!--
+  The update prompt (openspec desktop/updates), in its own window so it shows
+  over whatever the main window has open. desktop/src/update.rs owns the
+  whole flow; this page renders its View and sends the choice back. Granted
+  only update_state and update_choose (capabilities/update.json).
+
+  Same world as the greeting page (index.html): its tokens, copied from
+  web/src/styles/app.css, the system face at 13px, 11px dim labels, hairlines,
+  ghost buttons. The release notes are the content, so they get the room.
+  Notes are text: every node is built with textContent, never parsed as HTML.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Software Update</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --surface-sunken: oklch(0.14 0.006 265);
+        --surface-raised: oklch(0.22 0.006 265);
+        --line: oklch(0.3 0.008 265);
+        --line-strong: oklch(0.51 0.008 265);
+        --ink: oklch(0.92 0.004 265);
+        --ink-dim: oklch(0.66 0.006 265);
+        --ink-disabled: oklch(0.5 0.006 265);
+        --accent: oklch(0.72 0.15 215);
+        --on-accent: oklch(0.14 0.006 265);
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          --surface-sunken: oklch(0.955 0.004 265);
+          --surface-raised: oklch(0.945 0.004 265);
+          --line: oklch(0.9 0.006 265);
+          --line-strong: oklch(0.6 0.008 265);
+          --ink: oklch(0.24 0.008 265);
+          --ink-dim: oklch(0.48 0.008 265);
+          --ink-disabled: oklch(0.57 0.006 265);
+          --accent: oklch(0.5 0.12 215);
+          --on-accent: oklch(0.985 0.002 265);
+        }
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        display: flex; flex-direction: column;
+        background: var(--surface-sunken); color: var(--ink);
+        font: 13px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        -webkit-font-smoothing: antialiased;
+        -webkit-user-select: none; user-select: none;
+      }
+      /* biome-ignore lint/complexity/noImportantStyles: [hidden] must beat element display rules */
+      [hidden] { display: none !important; }
+      ::selection { background: color-mix(in oklch, var(--accent) 35%, transparent); }
+      :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+      header { padding: 24px 24px 16px; }
+      h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.005em; text-wrap: balance; }
+      .versions { margin: 4px 0 0; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
+      .versions em { font-style: italic; }
+
+      /* The only part that scrolls: header and choices stay put. */
+      #notes {
+        flex: 1; min-height: 0; overflow: auto;
+        padding: 0 24px 16px;
+        border-top: 1px solid var(--line);
+        scrollbar-color: var(--line-strong) transparent;
+        -webkit-user-select: text; user-select: text;
+      }
+      .label {
+        position: sticky; top: 0; margin: 0; padding: 16px 0 8px;
+        background: var(--surface-sunken);
+        font-size: 11px; text-transform: uppercase; letter-spacing: 0.025em; color: var(--ink-dim);
+      }
+      details { border-bottom: 1px solid var(--line); }
+      summary {
+        display: flex; align-items: center; gap: 8px; padding: 8px 0;
+        list-style: none; cursor: pointer; font-weight: 600; font-variant-numeric: tabular-nums;
+        -webkit-user-select: none; user-select: none;
+      }
+      summary::-webkit-details-marker { display: none; }
+      summary svg { flex: none; color: var(--ink-dim); transition: transform 160ms cubic-bezier(0.16, 1, 0.3, 1); }
+      details[open] > summary svg { transform: rotate(90deg); }
+      summary .newest { font-weight: normal; color: var(--ink-dim); }
+      .body { padding: 0 0 12px 20px; max-width: 68ch; }
+      .body ul { margin: 0; padding-left: 16px; }
+      .body li { margin: 0 0 6px; }
+      .body li::marker { color: var(--ink-dim); }
+      .body p { margin: 0 0 6px; }
+      .body code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 0 3px; border-radius: 3px; background: var(--surface-raised); }
+      a { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; text-decoration-color: var(--line-strong); }
+      a:hover { text-decoration-color: var(--ink); }
+      .more { margin: 12px 0 0; color: var(--ink-dim); }
+      .more a { color: inherit; }
+
+      footer { padding: 12px 24px 20px; border-top: 1px solid var(--line); }
+      #status { min-height: 20px; margin: 0 0 12px; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
+      #status.problem { color: var(--ink); }
+      progress { display: block; width: 100%; height: 4px; margin-top: 6px; appearance: none; border: 0; border-radius: 2px; background: var(--line); accent-color: var(--accent); }
+      progress::-webkit-progress-bar { background: var(--line); border-radius: 2px; }
+      progress::-webkit-progress-value { background: var(--accent); border-radius: 2px; transition: width 200ms linear; }
+      .choices { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+      .actions { display: flex; gap: 8px; margin-left: auto; }
+      button {
+        padding: 4px 12px; border: 1px solid var(--line-strong); border-radius: 4px;
+        background: none; color: var(--ink); font: inherit; cursor: pointer; white-space: nowrap;
+      }
+      button:hover:not(:disabled) { background: var(--surface-raised); }
+      button:disabled { color: var(--ink-disabled); border-color: var(--line); cursor: default; }
+      button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+      button.primary:hover:not(:disabled) { background: color-mix(in oklch, var(--accent) 88%, var(--ink)); }
+      button.primary:disabled { background: none; color: var(--ink-disabled); border-color: var(--line); font-weight: normal; }
+      /* The choice that lasts: quietest, and apart from the rest. */
+      button.quiet { padding-left: 0; padding-right: 0; border-color: transparent; color: var(--ink-dim); }
+      button.quiet:hover:not(:disabled) { background: none; color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
+
+      @media (prefers-reduced-motion: reduce) {
+        summary svg, progress::-webkit-progress-value { transition: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1 id="title">Software Update</h1>
+      <p class="versions" id="versions" hidden></p>
+    </header>
+    <section id="notes" aria-labelledby="notes-label" hidden>
+      <h2 class="label" id="notes-label">What’s new</h2>
+      <div id="sections"></div>
+      <p class="more" id="more" hidden>
+        Older changes are in the <a id="releases" href="https://github.com/rokasklive/visarium/releases" target="_blank" rel="noreferrer">release notes online</a>.
+      </p>
+    </section>
+    <footer>
+      <div id="status" role="status" aria-live="polite"></div>
+      <div class="choices">
+        <button type="button" class="quiet" id="skip">Skip This Version</button>
+        <div class="actions">
+          <button type="button" id="later">Remind Me Later</button>
+          <button type="button" id="quit">Update on Quit</button>
+          <button type="button" id="close">Close</button>
+          <button type="button" class="primary" id="download">Download</button>
+          <button type="button" class="primary" id="restart">Restart Now</button>
+          <button type="button" class="primary" id="ok">OK</button>
+        </div>
+      </div>
+    </footer>
+    <script>
+      (() => {
+        const { invoke } = window.__TAURI__.core;
+        const $ = (id) => document.getElementById(id);
+        let view;
+
+        // Same mapping as codenameFor in packages/api-client/src/meta.ts.
+        const codename = (v) => (v.startsWith('0.') ? 'Shirakawa' : v.startsWith('1.') ? 'Tokyo' : '');
+        const mb = (bytes) => (bytes / 1e6).toFixed(bytes < 1e7 ? 1 : 0);
+
+        function el(tag, text, cls) {
+          const node = document.createElement(tag);
+          if (text !== undefined) node.textContent = text;
+          if (cls) node.className = cls;
+          return node;
+        }
+
+        /** `**bold**`, `` `code` `` and `[text](https://…)`; everything else is text. */
+        function inline(text) {
+          const out = document.createDocumentFragment();
+          const pattern = /\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\((https:\/\/[^\s)]+)\)/g;
+          let at = 0;
+          for (const m of text.matchAll(pattern)) {
+            out.append(text.slice(at, m.index));
+            if (m[1] !== undefined) out.append(el('strong', m[1]));
+            else if (m[2] !== undefined) out.append(el('code', m[2]));
+            else {
+              const a = el('a', m[3]);
+              a.href = m[4];
+              a.target = '_blank';
+              a.rel = 'noreferrer';
+              out.append(a);
+            }
+            at = m.index + m[0].length;
+          }
+          out.append(text.slice(at));
+          return out;
+        }
+
+        const chevron = () => {
+          const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+          svg.setAttribute('width', '12');
+          svg.setAttribute('height', '12');
+          svg.setAttribute('viewBox', '0 0 12 12');
+          svg.setAttribute('aria-hidden', 'true');
+          const path = document.createElementNS(svg.namespaceURI, 'path');
+          path.setAttribute('d', 'M4.5 2.5 8 6l-3.5 3.5');
+          path.setAttribute('fill', 'none');
+          path.setAttribute('stroke', 'currentColor');
+          path.setAttribute('stroke-width', '1.5');
+          path.setAttribute('stroke-linecap', 'round');
+          path.setAttribute('stroke-linejoin', 'round');
+          svg.append(path);
+          return svg;
+        };
+
+        function renderNotes(sections) {
+          const box = $('sections');
+          // Keep what the reader opened or closed when only the status changes.
+          const open = new Map([...box.querySelectorAll('details')].map((d) => [d.dataset.version, d.open]));
+          box.replaceChildren();
+          sections.forEach((section, index) => {
+            const details = el('details');
+            details.dataset.version = section.version;
+            details.open = open.get(section.version) ?? index === 0;
+            const summary = el('summary');
+            summary.append(chevron(), `v${section.version}`);
+            if (index === 0 && sections.length > 1) summary.append(el('span', 'newest', 'newest'));
+            const body = el('div', undefined, 'body');
+            let list;
+            for (const line of section.lines) {
+              const bullet = /^\s*[-*] (.*)$/.exec(line);
+              if (bullet) {
+                if (!list) {
+                  list = el('ul');
+                  body.append(list);
+                }
+                const item = el('li');
+                item.append(inline(bullet[1]));
+                list.append(item);
+              } else {
+                list = undefined;
+                const heading = /^#{1,6} (.*)$/.exec(line);
+                const p = el(heading ? 'h3' : 'p');
+                if (heading) p.className = 'label';
+                p.append(inline(heading ? heading[1] : line));
+                body.append(p);
+              }
+            }
+            details.append(summary, body);
+            box.append(details);
+          });
+        }
+
+        function render(next) {
+          const first = !view;
+          view = next;
+          const offer = Boolean(next.version);
+          const busy = ['downloading', 'saving', 'installing'].includes(next.phase);
+          const waiting = next.phase === 'staged' || (next.phase === 'downloading' && next.onQuit);
+
+          $('title').textContent = offer ? 'A new version of Visarium is available' : 'Software Update';
+          $('versions').hidden = !offer;
+          if (offer) {
+            const name = codename(next.version);
+            $('versions').replaceChildren(
+              `v${next.version}`,
+              ...(name ? [' ', el('em', name)] : []),
+              ` · you have v${next.current}`,
+            );
+          }
+
+          $('notes').hidden = !offer || next.notes.length === 0;
+          if (offer) renderNotes(next.notes);
+          $('more').hidden = !next.truncated;
+          $('releases').href = next.releases;
+
+          const status = $('status');
+          status.className = '';
+          status.replaceChildren();
+          if (next.phase === 'downloading') {
+            const of = next.total ? ` — ${mb(next.received)} of ${mb(next.total)} MB` : '';
+            status.append(
+              next.onQuit
+                ? `Downloading v${next.version}${of}. It installs when you quit Visarium.`
+                : `Downloading v${next.version}${of}`,
+            );
+            const bar = el('progress');
+            bar.setAttribute('aria-label', 'Download progress');
+            if (next.total) {
+              bar.max = next.total;
+              bar.value = next.received;
+            }
+            status.append(bar);
+          } else if (next.phase === 'saving') {
+            status.textContent = 'Saving your work…';
+          } else if (next.phase === 'installing') {
+            status.textContent = 'Installing. Visarium will restart.';
+          } else if (next.phase === 'staged') {
+            status.textContent = `v${next.version} installs when you quit Visarium.`;
+          } else if (next.message) {
+            status.textContent = next.message;
+            status.className = offer ? 'problem' : '';
+          } else if (next.phase === 'current') {
+            status.textContent = 'Visarium is up to date.';
+          }
+
+          const show = {
+            skip: offer && !waiting,
+            later: offer && !waiting,
+            quit: offer && next.canInstall && !waiting,
+            close: waiting,
+            download: offer && !next.canInstall && !waiting,
+            restart: offer && next.canInstall && !(busy && waiting),
+            ok: !offer,
+          };
+          for (const [id, visible] of Object.entries(show)) {
+            $(id).hidden = !visible;
+            $(id).disabled = busy && !waiting && id !== 'close';
+          }
+          // Restart Now is the default; with a staged update it applies it now.
+          if (first) (show.restart ? $('restart') : show.download ? $('download') : $('ok')).focus();
+        }
+
+        function choose(choice) {
+          invoke('update_choose', { choice, version: view?.version ?? '' }).catch((message) => {
+            const status = $('status');
+            status.className = 'problem';
+            status.textContent = typeof message === 'string' ? message : 'That did not work. Try again.';
+          });
+        }
+
+        for (const [id, choice] of [
+          ['skip', 'skip'],
+          ['later', 'later'],
+          ['quit', 'quit'],
+          ['close', 'later'],
+          ['download', 'download'],
+          ['restart', 'restart'],
+          ['ok', 'later'],
+        ]) {
+          $(id).addEventListener('click', () => choose(choice));
+        }
+        addEventListener('keydown', (event) => {
+          if (event.key === 'Escape') choose('later');
+        });
+
+        window.__TAURI__.event.listen('update://state', (event) => render(event.payload));
+        invoke('update_state').then(render);
+      })();
+    </script>
+  </body>
+</html>

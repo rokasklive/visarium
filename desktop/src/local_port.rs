@@ -40,6 +40,30 @@ pub struct LocalPort {
 struct Live {
     port: u16,
     server: JoinHandle<std::io::Result<()>>,
+    /// Sending or dropping it stops the listener; requests in flight finish.
+    stop: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+impl Live {
+    /// Stops listening and closes idle connections once requests in flight
+    /// are answered. (Aborting the task would leave its connections open.)
+    fn close(mut self) {
+        if let Some(stop) = self.stop.take() {
+            let _ = stop.send(());
+        }
+    }
+}
+
+fn serve(state: visarium::AppState, listener: tokio::net::TcpListener, port: u16) -> Live {
+    let (stop, stopped) = tokio::sync::oneshot::channel();
+    let server = tauri::async_runtime::spawn(visarium::serve_until(state, listener, async move {
+        let _ = stopped.await;
+    }));
+    Live {
+        port,
+        server,
+        stop: Some(stop),
+    }
 }
 
 #[derive(serde::Deserialize, Serialize)]
@@ -83,11 +107,11 @@ impl LocalPort {
         listener: tokio::net::TcpListener,
     ) -> std::io::Result<LocalPort> {
         let port = listener.local_addr()?.port();
-        let server = tauri::async_runtime::spawn(visarium::serve(state.clone(), listener));
+        let live = serve(state.clone(), listener, port);
         Ok(LocalPort {
             state,
             file,
-            live: Mutex::new(Live { port, server }),
+            live: Mutex::new(live),
         })
     }
 
@@ -100,11 +124,26 @@ impl LocalPort {
     /// served until now, still running: the caller stops it once nothing needs it.
     fn swap(&self, listener: tokio::net::TcpListener) -> std::io::Result<Live> {
         let port = listener.local_addr()?.port();
-        let server = tauri::async_runtime::spawn(visarium::serve(self.state.clone(), listener));
-        Ok(std::mem::replace(
-            &mut *self.live.lock().unwrap(),
-            Live { port, server },
-        ))
+        let live = serve(self.state.clone(), listener, port);
+        Ok(std::mem::replace(&mut *self.live.lock().unwrap(), live))
+    }
+
+    /// Stops taking requests and waits, up to `wait`, for those in flight to
+    /// be answered: before the app is replaced by an update. Whether they all were.
+    pub async fn shutdown(&self, wait: Duration) -> bool {
+        if let Some(stop) = self.live.lock().unwrap().stop.take() {
+            let _ = stop.send(());
+        }
+        let deadline = std::time::Instant::now() + wait;
+        loop {
+            if self.live.lock().unwrap().server.inner().is_finished() {
+                return true;
+            }
+            if std::time::Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
     }
 
     fn info(&self) -> PortInfo {
@@ -202,10 +241,10 @@ pub async fn set_local_port(
                 tracing::warn!(error = %e, "could not move the window to the new port");
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
-            old.server.abort();
+            old.close();
         });
     } else {
-        old.server.abort();
+        old.close();
     }
     Ok(port.info())
 }
@@ -285,11 +324,65 @@ mod tests {
             "the same library answers at the new address"
         );
 
-        old.server.abort();
+        old.close();
         tokio::time::sleep(Duration::from_millis(200)).await;
         assert!(
             boards(before).await.is_err(),
             "the old address no longer answers"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn shutdown_answers_the_request_in_flight_then_stops_listening() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let dir = std::env::temp_dir().join(format!("visarium-drain-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let state = visarium::open(visarium::Config {
+            database: dir.join("visarium.db"),
+            assets: dir.join("assets"),
+            derivatives: dir.join("derivatives"),
+            version: "test".into(),
+            single_user: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        let local = std::sync::Arc::new(
+            LocalPort::start(state, dir.join("local-server.json"), listener).unwrap(),
+        );
+
+        // Half a request on the wire when the shutdown starts.
+        let mut socket = tokio::net::TcpStream::connect(addr).await.unwrap();
+        socket
+            .write_all(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n")
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let draining = {
+            let local = local.clone();
+            tokio::spawn(async move { local.shutdown(Duration::from_secs(5)).await })
+        };
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        socket
+            .write_all(b"Connection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let mut reply = String::new();
+        socket.read_to_string(&mut reply).await.unwrap();
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+
+        assert!(
+            draining.await.unwrap(),
+            "the server stopped within the wait"
+        );
+        assert!(
+            tokio::net::TcpStream::connect(addr).await.is_err(),
+            "no new connections"
         );
         let _ = std::fs::remove_dir_all(dir);
     }
