@@ -67,7 +67,12 @@ test('a moderator acts on members only and never sees sign-in setup', async ({ p
   await page.goto('/');
   await page.getByRole('link', { name: 'Instance' }).click();
   const nav = page.getByRole('navigation', { name: 'Instance Settings sections' });
-  await expect(nav.getByRole('link')).toHaveText(['Accounts', 'Invitations', 'Share links']);
+  await expect(nav.getByRole('link')).toHaveText([
+    'Accounts',
+    'Invitations',
+    'Share links',
+    'Storage',
+  ]);
 
   const accounts = page.getByTestId('accounts');
   await expect(accounts.getByRole('button', { name: 'Deactivate Bob' })).toBeVisible();
