@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, type Page, test } from '@playwright/test';
 import type { BenchReport } from '../src/features/canvas/bench';
-import { signedIn } from './session';
+import { canvasBox, signedIn } from './session';
 
 /**
  * The M01 benchmark.
@@ -31,8 +31,7 @@ const BOARDS = [
 ] as const;
 
 async function tour(page: Page) {
-  const box = await page.locator('canvas').first().boundingBox();
-  if (!box) throw new Error('no canvas');
+  const box = await canvasBox(page);
   const cx = box.x + box.width / 2;
   const cy = box.y + box.height / 2;
   await page.evaluate(() => window.__bench?.start());

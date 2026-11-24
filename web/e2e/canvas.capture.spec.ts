@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, type Page, test } from '@playwright/test';
-import { signedIn } from './session';
+import { canvasBox, signedIn } from './session';
 
 /**
  * Dropping an image onto a board.
@@ -73,8 +73,7 @@ async function itemCount(page: Page) {
 async function openBoard(page: Page) {
   await page.goto('/boards/small');
   await expect(page.getByTestId('canvas-stats')).toBeVisible();
-  const box = await page.locator('canvas').first().boundingBox();
-  if (!box) throw new Error('no canvas');
+  const box = await canvasBox(page);
   return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 }
 

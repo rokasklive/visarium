@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 
 /**
  * Being signed in, for the specs whose subject is something else.
@@ -85,4 +85,16 @@ export async function signedIn(
 /** The sidebar starts collapsed; specs that use it start with it open. */
 export async function sidebarOpen(page: Page): Promise<void> {
   await page.addInitScript(() => localStorage.setItem('visarium.sidebar', 'open'));
+}
+
+/**
+ * The board's canvas, on screen. The stage mounts a moment after
+ * `canvas-stats` shows, so this waits for it rather than reading null.
+ */
+export async function canvasBox(page: Page) {
+  const canvas = page.locator('canvas').first();
+  await expect.poll(() => canvas.boundingBox()).not.toBeNull();
+  const box = await canvas.boundingBox();
+  if (!box) throw new Error('no canvas');
+  return box;
 }

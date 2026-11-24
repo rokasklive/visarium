@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, type Page, test } from '@playwright/test';
 import type { BenchReport } from '../src/features/canvas/bench';
-import { signedIn } from './session';
+import { canvasBox, signedIn } from './session';
 
 /**
  * Q7: what decoded-bitmap memory actually does on a board of real images.
@@ -50,8 +50,7 @@ test('decoded-bitmap memory stays under budget across a pan tour', async ({ page
   await page.goto('/boards/assets');
   await expect(page.getByTestId('canvas-stats')).toBeVisible();
 
-  const box = await page.locator('canvas').first().boundingBox();
-  if (!box) throw new Error('no canvas');
+  const box = await canvasBox(page);
   const cx = box.x + box.width / 2;
   const cy = box.y + box.height / 2;
 
@@ -127,8 +126,7 @@ test('holds the line when the budget is smaller than the board', async ({ page }
   await page.goto(`/boards/assets?budget=${BUDGET_MB}`);
   await expect(page.getByTestId('canvas-stats')).toBeVisible();
 
-  const box = await page.locator('canvas').first().boundingBox();
-  if (!box) throw new Error('no canvas');
+  const box = await canvasBox(page);
   const cx = box.x + box.width / 2;
   const cy = box.y + box.height / 2;
 
@@ -183,8 +181,7 @@ test('a bulk drop does not cost frames', async ({ page }) => {
     .filter((name) => /\.(png|jpg)$/.test(name))
     .map((name) => ({ name, bytes: [...readFileSync(join(fixtures, name))] }));
 
-  const box = await page.locator('canvas').first().boundingBox();
-  if (!box) throw new Error('no canvas');
+  const box = await canvasBox(page);
   const cx = box.x + box.width / 2;
   const cy = box.y + box.height / 2;
 

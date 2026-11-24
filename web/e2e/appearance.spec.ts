@@ -81,12 +81,6 @@ async function drawnIn(page: Page, itemId: string, wanted: 'light' | 'dark'): Pr
 
 test.beforeEach(async ({ page }) => {
   await signedIn(page);
-  // The shell's footer asks for this on every page; unanswered it 401s, which
-  // reads as the session ending and remounts the shell under the test.
-  await page.route(
-    (url) => url.pathname === '/api/meta',
-    (route) => route.fulfill({ json: { name: 'Visarium', version: '0.1.0', protocolVersion: 1 } }),
-  );
 });
 
 test('a new device follows a light-mode computer', async ({ page }) => {

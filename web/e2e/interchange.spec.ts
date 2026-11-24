@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, type Page, test } from '@playwright/test';
-import { signedIn } from './session';
+import { canvasBox, signedIn } from './session';
 
 /**
  * M09's exit criterion: a selection leaving the browser, and coming back.
@@ -169,8 +169,7 @@ async function stubBoard(
 async function openBoard(page: Page) {
   await page.goto(`/boards/${BOARD}`);
   await expect(page.getByTestId('canvas-stats')).toBeVisible();
-  const box = await page.locator('canvas').first().boundingBox();
-  if (!box) throw new Error('no canvas');
+  const box = await canvasBox(page);
   return box;
 }
 
