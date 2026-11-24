@@ -1,9 +1,33 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="light dark" />
+    <!--
+      The theme, applied before the first paint (appearance/theme). A classic
+      inline script on purpose: a module or a deferred script runs after the
+      stylesheet has painted, and the page would flash the other theme first.
+      It mirrors resolve()/apply() in src/app/theme.ts, which takes over once
+      the app loads. The server's CSP has no script-src; one added later must
+      carry this script's hash.
+    -->
+    <script>
+      (function () {
+        var choice;
+        try {
+          choice = localStorage.getItem('visarium.theme');
+        } catch {}
+        var theme =
+          choice === 'light' || choice === 'dark'
+            ? choice
+            : matchMedia('(prefers-color-scheme: dark)').matches
+              ? 'dark'
+              : 'light';
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.colorScheme = theme;
+      })();
+    </script>
     <title>Visarium</title>
   </head>
   <body>

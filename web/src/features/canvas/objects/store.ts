@@ -25,6 +25,7 @@ import type {
   OperationOrigin,
   Transform,
 } from '@visarium/canvas-core';
+import { resolvedTheme } from '~/app/theme';
 import { type Layout, laidWidth, layoutItem, layoutSource, SourceError } from './layout';
 
 export function isObject(item: CanvasItem): boolean {
@@ -32,12 +33,19 @@ export function isObject(item: CanvasItem): boolean {
   return k === 'note' || k === 'diagram' || k === 'checklist';
 }
 
-/** What decides an object's layout. Identical keys mean an identical drawing. */
+/**
+ * What decides an object's layout. Identical keys mean an identical drawing.
+ *
+ * The theme is part of it: a note's ink and a diagram's lines are drawn into
+ * the bitmap, so a switch (appearance/theme) is a new key for every object.
+ * `request` then lays each out again while its last drawing stays on screen,
+ * and the bitmap cache, keyed off this, keeps one bitmap per theme.
+ */
 export function layoutKey(item: CanvasItem): string {
   const c = item.content;
   // The width it is laid out at: a corner resize that scales the text keeps
   // it, and with it the drawing (canvas/text-scaling).
-  const w = Math.round(laidWidth(item) * 100) / 100;
+  const w = `${resolvedTheme()}|${Math.round(laidWidth(item) * 100) / 100}`;
   switch (c.kind) {
     case 'note':
       return `${w}|n|${c.source}`;
@@ -200,6 +208,9 @@ export class ObjectLayouts {
     const view = this.#entries.get(itemId)?.view;
     if (!view) return undefined;
     return {
+      // Which theme and content it was drawn for, and the drawing (appearance/theme).
+      key: view.key,
+      svg: view.layout.svg(1),
       width: view.layout.width,
       height: view.layout.height,
       stale: view.stale,

@@ -112,6 +112,62 @@
   --color-presence-5: oklch(0.72 0.16 185);
 }
 
+/*
+ * The light theme (appearance/theme). The same tokens, chosen again for a light
+ * room rather than inverted from the dark one, and held to the same rules by
+ * tokens.test.ts, which also fails a token declared in one theme only.
+ *
+ * `data-theme` always holds the RESOLVED theme: the inline script in
+ * index.html and app/theme.ts turn "system" into light or dark before anything
+ * reads it, so nothing here needs a media query.
+ *
+ * What changes and why:
+ * - The board ground is an off-white gray, never white: a reference is judged
+ *   against it, and white would make every image look darker than it is.
+ * - Panels (`surface`) sit lighter than the board, and `surface-raised` (hover,
+ *   active, fields, popovers) is one step DARKER than a panel. In a light room
+ *   emphasis is a shade, not a glow, so the step runs the other way from dark.
+ * - Accent and presence keep their hues and drop to lightness ~0.5, where they
+ *   clear 4.5:1 on a light ground; at the dark theme's 0.72 they are ~2:1.
+ */
+:root[data-theme="light"] {
+  --color-surface: oklch(0.99 0.002 265);
+  --color-surface-raised: oklch(0.945 0.004 265);
+  --color-surface-sunken: oklch(0.955 0.004 265);
+  --color-line: oklch(0.9 0.006 265);
+  /* 3.84:1 on surface, 3.46:1 on the board: the floating toolbar's bound. */
+  --color-line-strong: oklch(0.6 0.008 265);
+  --color-ink: oklch(0.24 0.008 265);
+  --color-ink-dim: oklch(0.48 0.008 265);
+  --color-ink-disabled: oklch(0.57 0.006 265);
+  --color-accent: oklch(0.5 0.12 215);
+  --color-accent-wash: oklch(0.5 0.12 215 / 0.12);
+
+  --color-item: oklch(0.9 0.018 265);
+  --color-item-edge: oklch(0.82 0.026 265);
+  --color-group-edge: oklch(0.72 0.032 265);
+  --color-grid: oklch(0.85 0.01 265);
+  --color-link-faded: oklch(0.82 0.006 265);
+
+  /* Same hues as dark, at the lightness where each clears 4.5:1 on a tile. */
+  --color-presence-0: oklch(0.54 0.17 25);
+  --color-presence-1: oklch(0.52 0.15 145);
+  --color-presence-2: oklch(0.52 0.17 305);
+  --color-presence-3: oklch(0.52 0.12 85);
+  --color-presence-4: oklch(0.54 0.18 355);
+  --color-presence-5: oklch(0.52 0.1 185);
+
+  /*
+   * The wordmark's lit rows. White is ink here (the same value), and the four
+   * sunset colours keep their hues, darkened until each clears 3:1 on a panel.
+   */
+  --wordmark-white: oklch(0.24 0.008 265);
+  --wordmark-cream: oklch(0.58 0.11 80);
+  --wordmark-peach: oklch(0.58 0.13 55);
+  --wordmark-coral: oklch(0.58 0.17 30);
+  --wordmark-turquoise: oklch(0.56 0.1 182);
+}
+
 @layer base {
   :root {
     --wordmark-white: #ffffff;

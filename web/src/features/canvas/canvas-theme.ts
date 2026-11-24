@@ -1,5 +1,5 @@
 /**
- * The canvas' colours, read out of the stylesheet once.
+ * The canvas' colours, read out of the stylesheet once per theme.
  *
  * Konva paints into a bitmap rather than into the DOM, so it cannot resolve
  * `var(--color-item)` the way an element does — the values have to be handed
@@ -11,10 +11,13 @@
  * is chosen. A hex literal in the renderer is a second palette that drifts from
  * the first one silently, which is exactly what this replaced.
  *
- * ponytail: cached for the life of the tab. There is one theme and no switch; a
- * second one invalidates this and nothing else.
+ * Cached per theme (appearance/theme): the stylesheet answers for whichever
+ * theme `<html data-theme>` holds, so a switch reads the other set once and
+ * switching back is free. The surface re-renders on a switch through
+ * `useTheme()`, and its next call here returns the new colours.
  */
 import { PRESENCE_COLOUR_SLOTS } from '@visarium/canvas-core';
+import { resolvedTheme, type Theme } from '~/app/theme';
 
 export interface CanvasTheme {
   /** Fill for an item with no bitmap: placeholder, MICRO lod, still decoding. */
@@ -55,10 +58,12 @@ export interface CanvasTheme {
   readonly presence: readonly string[];
 }
 
-let cached: CanvasTheme | undefined;
+const cached = new Map<Theme, CanvasTheme>();
 
 export function canvasTheme(): CanvasTheme {
-  if (cached) return cached;
+  const theme = resolvedTheme();
+  const hit = cached.get(theme);
+  if (hit) return hit;
 
   const style = getComputedStyle(document.documentElement);
   const token = (name: string) => {
@@ -71,7 +76,7 @@ export function canvasTheme(): CanvasTheme {
     return value;
   };
 
-  cached = {
+  const read: CanvasTheme = {
     item: token('item'),
     itemEdge: token('item-edge'),
     groupEdge: token('group-edge'),
@@ -85,5 +90,6 @@ export function canvasTheme(): CanvasTheme {
     surface: token('surface'),
     presence: Array.from({ length: PRESENCE_COLOUR_SLOTS }, (_, slot) => token(`presence-${slot}`)),
   };
-  return cached;
+  cached.set(theme, read);
+  return read;
 }
