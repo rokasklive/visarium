@@ -1,8 +1,9 @@
 # Changelog
 
-## Unreleased
+## v0.2.0
 
 - Visarium now has a light theme and follows your computer's light or dark setting, switching when it does. Pick Light or Dark instead under Settings → Appearance; the choice is kept on that device. If your computer is in light mode, Visarium opens light after this update.
+- Updates the cookie library for a security advisory about processes that fork (RUSTSEC-2026-0594). Visarium does not fork, so it was not affected.
 
 ## v0.1.0
 
