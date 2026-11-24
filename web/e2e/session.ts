@@ -59,6 +59,22 @@ export async function signedIn(
       route.fulfill({ status: 200, contentType: 'application/json', body: '{"status":"up"}' }),
   );
 
+  // The board list. The shell asks for it on a board route too (the title in
+  // the header), so a spec that only answers its own board would 401 here.
+  await page.route(
+    (url) => url.pathname === '/api/boards',
+    (route) =>
+      route.request().method() === 'GET' ? route.fulfill({ json: [] }) : route.fallback(),
+  );
+
+  // The footer's server version. Members-only on the server, so unanswered it
+  // 401s; and since this stub keeps saying "signed in", the shell remounts and
+  // asks again — hundreds of times a second, detaching whatever a spec holds.
+  await page.route(
+    (url) => url.pathname === '/api/meta',
+    (route) => route.fulfill({ json: { name: 'Visarium', version: '0.1.0', protocolVersion: 1 } }),
+  );
+
   await page.route('**/api/session', (route) => {
     // DELETE is the sign-out; anything else is the boot question.
     if (route.request().method() === 'DELETE') return route.fulfill({ status: 204 });
