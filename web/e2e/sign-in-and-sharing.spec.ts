@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, type Page, test } from '@playwright/test';
-import { SIGNED_IN_USER, signedIn } from './session';
+import { canvasBox, SIGNED_IN_USER, signedIn } from './session';
 
 /**
  * The browser half of ADR-0025–0027: provider sign-in, invitations, the desktop
@@ -542,8 +542,7 @@ test('a share link shows the board’s links and their hover, and offers no way 
     page.evaluate(() => (window as unknown as { __objects?: Hook }).__objects?.links() ?? []);
   await expect.poll(async () => (await links()).length, { timeout: 20_000 }).toBe(1);
 
-  const canvas = await page.locator('canvas').first().boundingBox();
-  if (!canvas) throw new Error('no canvas');
+  const canvas = await canvasBox(page);
   const c = { x: canvas.x + canvas.width / 2, y: canvas.y + canvas.height / 2 };
   const [line] = await links();
   if (!line) throw new Error('no line');
@@ -621,8 +620,7 @@ test('a share-link viewer sees a status chip and cannot change it', async ({ pag
   expect(drawnText).toContain('Decision · Proposed');
   const chip = layout.hits.find((h) => h.kind === 'status');
   if (!chip) throw new Error('no chip');
-  const canvas = await page.locator('canvas').first().boundingBox();
-  if (!canvas) throw new Error('no canvas');
+  const canvas = await canvasBox(page);
   await page.waitForTimeout(300);
   await page.mouse.click(
     canvas.x + canvas.width / 2 - 160 + chip.rect.x + chip.rect.width / 2,

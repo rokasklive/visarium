@@ -6,7 +6,9 @@
  * corner included. This module derives an orthogonal contour that follows the
  * members' actual extent — rectangular for a tight grid, stepped and concave
  * for anything looser — by snapping padded member bounds to a coarse grid and
- * tracing the boundary of the occupied cells.
+ * tracing the boundary of the occupied cells. Members spread too far apart to
+ * trace as one region get their bounding box instead: the frame always
+ * encloses every member.
  *
  * Pure geometry on purpose: it lives in canvas-core so it can be unit-tested
  * without a renderer, and so the renderer stays a consumer of points. The
@@ -175,13 +177,18 @@ export function groupOutline(memberRects: readonly Rect[], options: OutlineOptio
     if (exterior.has(key(cx - 1, cy))) addEdge([cx, cy + 1], [cx, cy]);
   }
 
-  // Chain edges into loops. Normally the boundary is one loop; two regions
-  // touching only at a grid corner yield two, and the outer one is whichever
-  // encloses more area — the pinch between them is not worth a frame.
+  // Chain edges into loops. Normally the boundary is one loop. More than one
+  // means the members fell apart into separate clusters (or regions touching
+  // only at a grid corner), and no single traced ring encloses them all — so
+  // the frame becomes the snapped bounding box of every member. Never a ring
+  // around some of them: a frame that leaves a member outside claims that
+  // member is not in the group. The box is also the shape server collision
+  // already treats as the group.
   const toWorld = (c: Pt): Pt => ({ x: c.x * pitch, y: c.y * pitch });
   let best: Pt[] | undefined;
   let bestArea = -1;
   let bestStartKey = '';
+  let rings = 0;
   while (true) {
     let startKey: string | undefined;
     for (const k of outgoing.keys()) {
@@ -213,12 +220,21 @@ export function groupOutline(memberRects: readonly Rect[], options: OutlineOptio
       ring.push(next);
       current = next;
     }
+    rings++;
     const area = signedArea(ring.map(toWorld));
     if (area > bestArea || (area === bestArea && byCoordinate(startKey, bestStartKey) < 0)) {
       best = ring.map(toWorld);
       bestArea = area;
       bestStartKey = startKey;
     }
+  }
+  if (rings > 1) {
+    return [
+      { x: c0x, y: c0y },
+      { x: c1x + 1, y: c0y },
+      { x: c1x + 1, y: c1y + 1 },
+      { x: c0x, y: c1y + 1 },
+    ].map(toWorld);
   }
   return mergeCollinear(best ?? []);
 }

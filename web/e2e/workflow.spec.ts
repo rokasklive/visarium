@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, type Page, test } from '@playwright/test';
-import { SIGNED_IN_USER, sidebarOpen } from './session';
+import { canvasBox, SIGNED_IN_USER, sidebarOpen } from './session';
 
 test.beforeEach(async ({ page }) => {
   await sidebarOpen(page);
@@ -426,8 +426,7 @@ async function itemCount(page: Page) {
 }
 
 async function canvasCentre(page: Page) {
-  const box = await page.locator('canvas').first().boundingBox();
-  if (!box) throw new Error('no canvas');
+  const box = await canvasBox(page);
   return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 }
 

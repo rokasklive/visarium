@@ -1,5 +1,5 @@
 import { expect, type Page, test } from '@playwright/test';
-import { signedIn } from './session';
+import { canvasBox, signedIn } from './session';
 
 /**
  * Links (canvas/links): Alt-drag between things, drawn quietly, following
@@ -73,8 +73,7 @@ type Hook = {
 async function open(page: Page) {
   await page.goto(`/boards/${BOARD}`);
   await expect(page.getByTestId('canvas-stats')).toBeVisible();
-  const box = await page.locator('canvas').first().boundingBox();
-  if (!box) throw new Error('no canvas');
+  const box = await canvasBox(page);
   for (const id of [NOTE, FLOW, LIST]) {
     await page.waitForFunction(
       (i) =>

@@ -40,6 +40,21 @@ async function asStaff(page: Page, me: Record<string, unknown>) {
     (url) => url.pathname === '/api/shares',
     (route) => route.fulfill({ json: [] }),
   );
+  await page.route(
+    (url) => url.pathname === '/api/instance/storage',
+    (route) =>
+      route.fulfill({
+        json: {
+          usedBytes: 0,
+          trashBytes: 0,
+          images: 0,
+          limitBytes: null,
+          diskFreeBytes: null,
+          diskTotalBytes: null,
+          diskReserveBytes: 0,
+        },
+      }),
+  );
 }
 
 test('a member has no Instance Settings', async ({ page }) => {

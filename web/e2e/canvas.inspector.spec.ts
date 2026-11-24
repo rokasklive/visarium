@@ -1,5 +1,5 @@
 import { expect, type Page, test } from '@playwright/test';
-import { signedIn } from './session';
+import { canvasBox, signedIn } from './session';
 
 /**
  * The inspector (canvas/inspector), on the dev server: opened by backquote,
@@ -153,8 +153,7 @@ test('backquote opens the inspector beside the board and closes it; a text field
   await expect(inspector(page)).toHaveCount(0);
 
   // Typing a backquote into a note types it.
-  const box = await page.locator('canvas').first().boundingBox();
-  if (!box) throw new Error('no canvas');
+  const box = await canvasBox(page);
   await page.mouse.dblclick(box.x + box.width / 2 + 150, box.y + box.height / 2 + 200);
   await page.keyboard.type('code `x`');
   await expect(page.getByRole('textbox', { name: 'New note' })).toHaveValue('code `x`');
@@ -166,8 +165,7 @@ test("shows a selected diagram's stored model, its elements and links, and the b
 }) => {
   await stubBoard(page);
   await open(page);
-  const box = await page.locator('canvas').first().boundingBox();
-  if (!box) throw new Error('no canvas');
+  const box = await canvasBox(page);
   // Clear of the link, which now runs straight across from the note at the
   // height the two share (canvas/link-geometry).
   await page.mouse.click(box.x + box.width / 2 + 100, box.y + box.height / 2 - 130);

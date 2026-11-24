@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, type Page, test } from '@playwright/test';
-import { signedIn } from './session';
+import { canvasBox, signedIn } from './session';
 
 /**
  * A board that outlives the tab, from the browser's side.
@@ -160,8 +160,7 @@ async function itemCount(page: Page) {
 async function openBoard(page: Page, id = BOARD) {
   await page.goto(`/boards/${id}`);
   await expect(page.getByTestId('canvas-stats')).toBeVisible();
-  const box = await page.locator('canvas').first().boundingBox();
-  if (!box) throw new Error('no canvas');
+  const box = await canvasBox(page);
   return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 }
 
@@ -325,8 +324,7 @@ test('an arrangement survives a reload, with no save anywhere in the flow', asyn
     items: [snapshotItem(first, 0, 1), snapshotItem(second, 500, 2)],
   });
   const centre = await openBoard(page);
-  const box = await page.locator('canvas').first().boundingBox();
-  if (!box) throw new Error('no canvas');
+  const box = await canvasBox(page);
 
   // Drag the first item, then group both, then send them to the back.
   await page.mouse.move(centre.x, centre.y);

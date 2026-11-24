@@ -115,6 +115,27 @@ describe('groupOutline', () => {
     expect(inside(ring, { x: 150, y: 150 })).toBe(true);
   });
 
+  it('encloses every member when they fall apart into clusters', () => {
+    const members = [rect(0, 0, 100, 100), rect(0, 120, 100, 220), rect(2000, 0, 2100, 100)];
+    const ring = groupOutline(members);
+    expect(orthogonalClosed(ring)).toBe(true);
+    for (const m of members) {
+      expect(inside(ring, { x: (m.minX + m.maxX) / 2, y: (m.minY + m.maxY) / 2 })).toBe(true);
+    }
+  });
+
+  it('does not let a large far member take the frame from the small ones', () => {
+    // Before: the largest ring won, so the frame jumped to the image alone.
+    const ring = groupOutline([
+      rect(0, 0, 100, 100),
+      rect(0, 120, 100, 220),
+      rect(1000, 0, 1400, 400),
+    ]);
+    expect(inside(ring, { x: 50, y: 50 })).toBe(true);
+    expect(inside(ring, { x: 50, y: 170 })).toBe(true);
+    expect(inside(ring, { x: 1200, y: 200 })).toBe(true);
+  });
+
   it('honours an explicit pitch and margin, snapped outward', () => {
     const ring = groupOutline([rect(0, 0, 100, 100)], { pitch: 50, margin: 25 });
     expect(bounds(ring)).toEqual({ minX: -50, minY: -50, maxX: 150, maxY: 150 });

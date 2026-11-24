@@ -1,5 +1,5 @@
 import { expect, type Page, test } from '@playwright/test';
-import { signedIn } from './session';
+import { canvasBox, signedIn } from './session';
 
 /**
  * Collision (canvas/collision), from the browser's side: the toolbar toggle
@@ -68,8 +68,7 @@ async function stubBoard(page: Page, items: Record<string, unknown>[], pushOther
 async function openBoard(page: Page) {
   await page.goto(`/boards/${BOARD}`);
   await expect(page.getByTestId('canvas-stats')).toBeVisible();
-  const box = await page.locator('canvas').first().boundingBox();
-  if (!box) throw new Error('no canvas');
+  const box = await canvasBox(page);
   // A note has no background: it is hit on its text, at its top left. The
   // camera starts at the world origin, where NOTE's centre is.
   return { x: box.x + box.width / 2 - 150 + 24, y: box.y + box.height / 2 - 60 + 14 };
