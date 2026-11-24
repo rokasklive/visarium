@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/React-Vite-f9c59a?style=flat-square&labelColor=17171b" alt="React">
   <img src="https://img.shields.io/badge/Tauri-desktop-f87562?style=flat-square&labelColor=17171b" alt="Tauri">
   <img src="https://img.shields.io/badge/MCP-ready-31c5b7?style=flat-square&labelColor=17171b" alt="MCP">
-  <img src="https://img.shields.io/badge/v0.1.0-Shirakawa-17171b?style=flat-square&labelColor=3a3a42" alt="v0.1.0 Shirakawa">
+  <img src="https://img.shields.io/badge/v0.2.0-Shirakawa-17171b?style=flat-square&labelColor=3a3a42" alt="v0.2.0 Shirakawa">
 </p>
 
 ---
