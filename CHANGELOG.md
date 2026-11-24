@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Visarium now has a light theme and follows your computer's light or dark setting, switching when it does. Pick Light or Dark instead under Settings → Appearance; the choice is kept on that device. If your computer is in light mode, Visarium opens light after this update.
+
 ## v0.1.0
 
 - First release. An infinite canvas for image references, Markdown notes, Mermaid and PlantUML diagrams, and checklists, with typed links that say how items relate.

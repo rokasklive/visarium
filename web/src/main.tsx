@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { reportErrorsToDesktop } from '~/api/desktop';
 import { AppProviders } from '~/app/providers';
+import { followSystemTheme } from '~/app/theme';
 import './styles/app.css';
 
 // No browser context menu over the app; a menu of its own comes later. Text
@@ -14,6 +15,7 @@ document.addEventListener('contextmenu', (event) => {
 });
 
 reportErrorsToDesktop();
+followSystemTheme();
 
 const container = document.getElementById('root');
 if (!container) throw new Error('#root missing from index.html');

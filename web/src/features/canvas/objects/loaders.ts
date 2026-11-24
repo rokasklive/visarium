@@ -73,9 +73,22 @@ export interface MermaidPalette {
 }
 
 let mermaid: Promise<Mermaid> | undefined;
-export function loadMermaid(palette: MermaidPalette): Promise<Mermaid> {
+/** The palette Mermaid was last initialised with; one object per theme (layout.ts). */
+let initialised: MermaidPalette | undefined;
+
+/**
+ * Mermaid, initialised for the theme on screen. The import happens once; a
+ * theme switch (appearance/theme) hands over the other palette, and Mermaid is
+ * initialised again with it before the next drawing.
+ */
+export async function loadMermaid(palette: MermaidPalette, dark: boolean): Promise<Mermaid> {
   mermaid ??= import('mermaid').then(({ default: m }) => {
     loaded.mermaid += 1;
+    return m;
+  });
+  const m = await mermaid;
+  if (initialised !== palette) {
+    initialised = palette;
     m.initialize({
       startOnLoad: false,
       // No click callbacks, no scripts, no HTML from the source.
@@ -86,7 +99,7 @@ export function loadMermaid(palette: MermaidPalette): Promise<Mermaid> {
       theme: 'base',
       fontFamily: SANS,
       themeVariables: {
-        darkMode: true,
+        darkMode: dark,
         fontFamily: SANS,
         fontSize: '14px',
         primaryColor: palette.item,
@@ -109,9 +122,8 @@ export function loadMermaid(palette: MermaidPalette): Promise<Mermaid> {
       },
       themeCSS: `text, tspan { font-family: ${SANS}; } .code, code { font-family: ${MONO}; }`,
     });
-    return m;
-  });
-  return mermaid;
+  }
+  return m;
 }
 
 type PlantUml = { render(lines: string[], targetId: string, options?: { dark?: boolean }): void };
