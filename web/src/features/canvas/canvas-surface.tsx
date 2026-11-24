@@ -19,6 +19,7 @@ import {
   cropFrame,
   DEFAULT_CAMERA,
   deleteItemsBodies,
+  dropTargets,
   type Edges,
   expandToGroups,
   type FlipAxis,
@@ -32,9 +33,11 @@ import {
   ItemLod,
   type LinkId,
   marqueeSelect,
+  membershipBodies,
   movingEdges,
   newLinkId,
   originalTransform,
+  outlineWithout,
   panBy,
   type Rect,
   rotateSelection,
@@ -2221,6 +2224,69 @@ export function CanvasSurface({
   const endGroupDrag = () => {
     moveGroupDrag(0, 0);
     groupDrag.current = [];
+    endFramePreview();
+  };
+
+  /**
+   * What the drop would do to frames, shown while the drag is still going
+   * (canvas/group-frames): the frame an item would join is drawn in the accent,
+   * and a frame a member would leave is drawn around the members that stay.
+   * The drop's own rule on live positions, at most once per animation frame,
+   * drawn onto the frame nodes by hand like the rest of a drag. Each touched
+   * node's attributes are kept so they go back before the commit redraws —
+   * React re-applies only props that changed, so a stroke left in the accent
+   * would stay.
+   */
+  const framePreview = useRef({
+    raf: 0,
+    latest: new Map<ItemId, Transform>() as ReadonlyMap<ItemId, Transform>,
+    saved: new Map<
+      GroupId,
+      { node: Konva.Line; stroke: string | CanvasGradient; points: number[] }
+    >(),
+  });
+  const endFramePreview = () => {
+    const p = framePreview.current;
+    cancelAnimationFrame(p.raf);
+    p.raf = 0;
+    for (const { node, stroke, points } of p.saved.values()) node.setAttrs({ stroke, points });
+    if (p.saved.size > 0) stageRef.current?.batchDraw();
+    p.saved.clear();
+  };
+  const previewFrames = (moved: ReadonlyMap<ItemId, Transform>) => {
+    if (readOnly) return;
+    const p = framePreview.current;
+    p.latest = moved;
+    if (p.raf !== 0) return;
+    p.raf = requestAnimationFrame(() => {
+      p.raf = 0;
+      const join = new Set<GroupId>();
+      const leaving = new Map<GroupId, Set<ItemId>>();
+      for (const [id, target] of dropTargets(doc, p.latest)) {
+        if (target !== null) join.add(target);
+        const from = doc.item(id)?.groupId;
+        if (from !== undefined) leaving.set(from, (leaving.get(from) ?? new Set()).add(id));
+      }
+      const wanted = new Set([...join, ...leaving.keys()]);
+      for (const [g, { node, stroke, points }] of p.saved) {
+        if (wanted.has(g)) continue;
+        node.setAttrs({ stroke, points });
+        p.saved.delete(g);
+      }
+      for (const g of wanted) {
+        const node = stageRef.current?.findOne<Konva.Line>(`#${GROUP_FRAME}${g}`);
+        if (!node) continue; // not drawn: off screen, nothing to show
+        const saved = p.saved.get(g) ?? { node, stroke: node.stroke(), points: node.points() };
+        p.saved.set(g, saved);
+        const without = leaving.get(g);
+        const ring = without ? outlineWithout(doc, g, without) : [];
+        node.setAttrs({
+          stroke: join.has(g) ? theme.accent : saved.stroke,
+          points: ring.length > 0 ? ring.flatMap((pt) => [pt.x, pt.y]) : saved.points,
+        });
+      }
+      stageRef.current?.batchDraw();
+    });
   };
 
   /**
@@ -2356,6 +2422,7 @@ export function CanvasSurface({
       markAt(item.id, e.target.x(), e.target.y());
       moveGroupDrag(e.target.x() - item.transform.x, e.target.y() - item.transform.y);
       previewNow(moved);
+      previewFrames(moved);
       return;
     }
     const dx = e.target.x() - origin.x;
@@ -2372,6 +2439,7 @@ export function CanvasSurface({
       at(id, start.x + dx, start.y + dy);
     }
     previewNow(moved);
+    previewFrames(moved);
   };
 
   /**
@@ -2397,32 +2465,26 @@ export function CanvasSurface({
     }
     setGesturing(false);
     endGroupDrag();
-    const bodies: CanvasOperationBody[] = [];
-    for (const id of dragOrigins.current.keys()) {
+    // A drag without recorded origins moved only the pressed item.
+    const ids = dragOrigins.current.size > 0 ? [...dragOrigins.current.keys()] : [item.id];
+    dragOrigins.current.clear();
+    const positions = new Map<ItemId, Transform>();
+    for (const id of ids) {
       const node = stageRef.current?.findOne(`#${id}`);
       const current = doc.item(id);
-      if (!node || !current) continue;
-      bodies.push({
-        type: 'item.transform',
-        itemId: id,
-        transform: { ...current.transform, x: node.x(), y: node.y() },
-      });
+      if (node && current) positions.set(id, { ...current.transform, x: node.x(), y: node.y() });
     }
-    dragOrigins.current.clear();
-    if (bodies.length === 0) {
-      const node = stageRef.current?.findOne(`#${item.id}`);
-      const current = doc.item(item.id);
-      if (node && current) {
-        commit({
+    // Moving and joining or leaving a frame are one undo step and one batch.
+    commit(
+      ...[...positions].map(
+        ([itemId, transform]): CanvasOperationBody => ({
           type: 'item.transform',
-          itemId: item.id,
-          transform: { ...current.transform, x: node.x(), y: node.y() },
-        });
-      }
-      releaseWhenDurable();
-      return;
-    }
-    commit(...bodies);
+          itemId,
+          transform,
+        }),
+      ),
+      ...membershipBodies(doc, positions),
+    );
     releaseWhenDurable();
   };
 

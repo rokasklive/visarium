@@ -9,6 +9,7 @@ export * from './camera';
 export * from './classify';
 export * from './crop';
 export * from './document';
+export * from './frames';
 export * from './geometry';
 export * from './history';
 export * from './ids';

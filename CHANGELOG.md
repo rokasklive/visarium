@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Frames now decide who is in the group. Drop an item inside a frame and it joins that group; hold a member and drag it out of its frame and it leaves. While you drag, the frame you would join lights up and a frame you would leave is drawn without the item. A frame always surrounds every member, however far apart they are, instead of losing the ones that wander off.
+
 ## v0.2.0
 
 - Visarium now has a light theme and follows your computer's light or dark setting, switching when it does. Pick Light or Dark instead under Settings → Appearance; the choice is kept on that device. If your computer is in light mode, Visarium opens light after this update.
