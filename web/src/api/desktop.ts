@@ -4,6 +4,8 @@
  * no bridge and every call answers `undefined`.
  */
 
+import { flushAll, type SyncStatus } from '~/features/canvas/board-sync';
+
 interface TauriInternals {
   invoke(cmd: string, args?: unknown): Promise<unknown>;
 }
@@ -68,9 +70,7 @@ export async function copyText(text: string): Promise<boolean> {
   }
 }
 
-export type UpdateStatus =
-  | { status: 'available'; version: string; canInstall: boolean }
-  | { status: 'current' | 'unconfigured' };
+export type UpdateStatus = { status: 'available' | 'current' | 'unconfigured' };
 
 async function desktopCommand<T>(command: string, args?: unknown): Promise<T> {
   const app = tauri();
@@ -88,21 +88,24 @@ export function checkForUpdates() {
   return desktopCommand<UpdateStatus>('check_for_updates');
 }
 
-export function installUpdate(version: string) {
-  return desktopCommand<void>('install_update', { version });
+/** Whether the app checks on its own; pass `automatic` to change it. */
+export function updatePreferences(automatic?: boolean) {
+  return desktopCommand<{ automatic: boolean }>('update_preferences', { automatic });
 }
 
 export function collectDiagnostics(build: string) {
   return desktopCommand<string>('collect_diagnostics', { build });
 }
 
-export function markLibraryOpened() {
-  // The native permission applies only to the embedded library.
-  if (window.location.hostname === '127.0.0.1') {
-    void tauri()
-      ?.invoke('mark_library_opened')
-      .catch(() => {});
-  }
+/**
+ * Before an update replaces the app, it asks the library page to send every
+ * board's pending edits (desktop/src/update.rs), and restarts only when this
+ * answers nothing pending and nothing failing.
+ */
+export function answerBeforeRestart() {
+  if (!tauri()) return;
+  (window as { __visariumBeforeRestart?: () => Promise<SyncStatus> }).__visariumBeforeRestart =
+    () => flushAll();
 }
 
 /**

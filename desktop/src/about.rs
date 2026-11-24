@@ -143,16 +143,17 @@ pub fn log_client_error(
 
 pub fn allow(app: &AppHandle, origin: &Url) -> tauri::Result<()> {
     // The custom IPC transport supplies only the origin. Each About command
-    // checks the webview's current Settings path before doing any work.
+    // checks the webview's current Settings path before doing any work;
+    // `update_flushed` only answers a question the app asked the library page.
     app.add_capability(
         CapabilityBuilder::new("desktop-about")
             .local(false)
             .remote(format!("{origin}*"))
             .window("main")
             .permission("allow-check-for-updates")
-            .permission("allow-install-update")
-            .permission("allow-collect-diagnostics")
-            .permission("allow-mark-library-opened"),
+            .permission("allow-update-preferences")
+            .permission("allow-update-flushed")
+            .permission("allow-collect-diagnostics"),
     )
 }
 
@@ -172,26 +173,46 @@ fn require_settings(window: &WebviewWindow) -> Result<(), String> {
     }
 }
 
+/// Settings' Check for Updates. When there is one, the prompt window shows it.
 #[tauri::command]
 pub async fn check_for_updates(window: WebviewWindow) -> Result<serde_json::Value, String> {
     require_settings(&window)?;
-    crate::update::check(window.app_handle()).await
+    let available = crate::update::check(window.app_handle(), true).await?;
+    Ok(serde_json::json!({ "status": if available { "available" } else { "current" } }))
 }
 
+/// Whether the app checks for updates on its own; `automatic` changes it.
 #[tauri::command]
-pub async fn install_update(window: WebviewWindow, version: String) -> Result<(), String> {
+pub fn update_preferences(
+    window: WebviewWindow,
+    automatic: Option<bool>,
+) -> Result<serde_json::Value, String> {
     require_settings(&window)?;
-    crate::update::install(&window, &version).await
+    let automatic = crate::update::automatic(window.app_handle(), automatic);
+    Ok(serde_json::json!({ "automatic": automatic }))
 }
 
+/// The library page's answer when asked to save before a restart.
 #[tauri::command]
-pub fn mark_library_opened(app: AppHandle, window: WebviewWindow) {
+pub fn update_flushed(app: AppHandle, window: WebviewWindow, pending: u32, failing: bool) {
     if window
         .url()
         .is_ok_and(|url| app.state::<LocalPort>().library().origin() == url.origin())
     {
-        crate::update::mark_library_opened(&app);
+        crate::update::flushed(&app, pending, failing);
     }
+}
+
+/// The prompt window's: what to show. Granted to that window only (capabilities/update.json).
+#[tauri::command]
+pub fn update_state(app: AppHandle) -> crate::update::View {
+    crate::update::state(&app)
+}
+
+/// The prompt window's: restart, quit, later, skip or download, for `version`.
+#[tauri::command]
+pub async fn update_choose(app: AppHandle, choice: String, version: String) -> Result<(), String> {
+    crate::update::choose(&app, &choice, &version).await
 }
 
 #[tauri::command]

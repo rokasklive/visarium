@@ -430,10 +430,12 @@ fn main() {
             local_port::local_port,
             local_port::set_local_port,
             about::check_for_updates,
-            about::install_update,
+            about::update_preferences,
+            about::update_flushed,
+            about::update_state,
+            about::update_choose,
             about::collect_diagnostics,
-            about::log_client_error,
-            about::mark_library_opened
+            about::log_client_error
         ])
         .setup(|app| {
             about::setup(app)?;
@@ -493,6 +495,29 @@ fn main() {
             // webview gets no clipboard shortcuts on macOS.
             let menu = Menu::default(app.handle())?;
             menu.append(&server)?;
+            let check = MenuItem::with_id(
+                app,
+                "check-updates",
+                "Check for Updates…",
+                true,
+                None::<&str>,
+            )?;
+            // Where each platform keeps it: the app menu on macOS, Help elsewhere.
+            #[cfg(target_os = "macos")]
+            if let Some(app_menu) = menu
+                .items()?
+                .first()
+                .and_then(|item| item.as_submenu().cloned())
+            {
+                app_menu.insert(&check, 1)?;
+            }
+            #[cfg(not(target_os = "macos"))]
+            if let Some(help) = menu
+                .get(tauri::menu::HELP_SUBMENU_ID)
+                .and_then(|item| item.as_submenu().cloned())
+            {
+                help.append(&check)?;
+            }
             app.set_menu(menu)?;
 
             let handle = app.handle().clone();
@@ -542,6 +567,7 @@ fn main() {
                 return;
             };
             let target = match event.id().as_ref() {
+                "check-updates" => return update::check_from_menu(app),
                 "home" => GREETING.parse().unwrap(),
                 "local" => app.state::<local_port::LocalPort>().library(),
                 _ => return,
@@ -553,6 +579,12 @@ fn main() {
             let _ = window.set_title("Visarium");
             navigate_or_log(&window, target);
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Visarium");
+        .on_window_event(update::on_window_event)
+        .build(tauri::generate_context!())
+        .expect("error while building Visarium")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                update::install_on_exit(app);
+            }
+        });
 }

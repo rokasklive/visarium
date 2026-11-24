@@ -359,7 +359,17 @@ jobs:
         env:
           REPO: ${{ github.repository }}
         run: |
-          notes=$(awk -v v="$VERSION" '/^## / {p = ($2 == v || $2 == "v" v); next} p' CHANGELOG.md)
+          # This version's section and every older one, headings kept, so the
+          # app can show all it would gain; cut at a section past 32 KB.
+          notes=$(awk -v v="$VERSION" -v max=32768 '
+            function flush() {
+              if (on && (size == 0 || size + length(sec) <= max)) { printf "%s", sec; size += length(sec) }
+              else if (on) done = 1
+              sec = ""
+            }
+            /^## / { flush(); if (done) exit; if ($2 == v || $2 == "v" v) on = 1 }
+            { sec = sec $0 "\n" }
+            END { if (!done) flush() }' CHANGELOG.md)
           platforms='{}'
           for marker in dist/updater-*; do
             file=$(cat "$marker")

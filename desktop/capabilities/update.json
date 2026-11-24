@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "update",
+  "description": "The bundled update prompt's own commands (desktop/static/update.html), in its own window. No `remote` URLs: no server's page, and not the local SPA, can choose to install.",
+  "windows": ["update"],
+  "permissions": [
+    "allow-update-state",
+    "allow-update-choose",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
+  ]
+}

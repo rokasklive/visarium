@@ -47,6 +47,34 @@ export interface SyncStatus {
 
 export const SYNCED: SyncStatus = { pending: 0, failing: false };
 
+/** Every queue that is running, so the desktop app can save them all before it restarts. */
+const live = new Set<BoardSync>();
+
+/**
+ * Sends what every board on this page holds, waiting up to `ms`. `pending`
+ * counts edits not yet durable, uploads still waiting to be created among them.
+ */
+export async function flushAll(ms = 8000): Promise<SyncStatus> {
+  const queues = [...live];
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    Promise.all(
+      queues.map((sync) => {
+        void sync.flush();
+        return sync.settled();
+      }),
+    ),
+    new Promise((resolve) => {
+      timer = setTimeout(resolve, ms);
+    }),
+  ]);
+  clearTimeout(timer);
+  return {
+    pending: queues.reduce((sum, sync) => sum + sync.unsaved, 0),
+    failing: queues.some((sync) => sync.status.failing),
+  };
+}
+
 /**
  * What a post reached: the revision, and any operations the server appended to
  * the batch — collision pushes (canvas/collision) the author must apply too,
@@ -215,10 +243,16 @@ export class BoardSync {
     this.#post = options.post ?? postOperations;
     this.#flushMs = options.flushMs ?? FLUSH_MS;
     this.#onStatus = options.onStatus ?? (() => {});
+    live.add(this);
   }
 
   get status(): SyncStatus {
     return { pending: this.#queue.length, failing: this.#failures >= ATTEMPTS };
+  }
+
+  /** Edits the server does not have yet: queued, in flight, or waiting on an upload. */
+  get unsaved(): number {
+    return this.#queue.length + (this.#inFlight ? 1 : 0) + this.#deferred.size;
   }
 
   /** Tell the queue who it is, once the socket has been welcomed. */
@@ -396,6 +430,7 @@ export class BoardSync {
 
   /** Stop scheduling. Anything queued is still sent by an explicit `flush`. */
   stop(): void {
+    live.delete(this);
     this.#stopped = true;
     if (this.#timer !== undefined) clearTimeout(this.#timer);
     this.#timer = undefined;

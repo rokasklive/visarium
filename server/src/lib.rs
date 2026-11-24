@@ -406,6 +406,18 @@ pub async fn serve(state: AppState, listener: tokio::net::TcpListener) -> std::i
     axum::serve(listener, router(state)).await
 }
 
+/// Like [`serve`], until `shutdown` resolves: then it stops accepting and
+/// returns once the requests in flight have been answered.
+pub async fn serve_until(
+    state: AppState,
+    listener: tokio::net::TcpListener,
+    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+) -> std::io::Result<()> {
+    axum::serve(listener, router(state))
+        .with_graceful_shutdown(shutdown)
+        .await
+}
+
 async fn meta(State(app): State<AppState>) -> Json<serde_json::Value> {
     Json(
         json!({ "name": "visarium", "version": app.config.version, "protocolVersion": PROTOCOL_VERSION }),

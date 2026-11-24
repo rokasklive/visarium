@@ -15,10 +15,12 @@ fn main() {
         "local_port",
         "set_local_port",
         "check_for_updates",
-        "install_update",
+        "update_preferences",
+        "update_flushed",
+        "update_state",
+        "update_choose",
         "collect_diagnostics",
         "log_client_error",
-        "mark_library_opened",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(commands))
         .expect("tauri build script");

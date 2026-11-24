@@ -1,6 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { reportErrorsToDesktop } from '~/api/desktop';
+import { answerBeforeRestart, reportErrorsToDesktop } from '~/api/desktop';
 import { AppProviders } from '~/app/providers';
 import { followSystemTheme } from '~/app/theme';
 import './styles/app.css';
@@ -15,6 +15,7 @@ document.addEventListener('contextmenu', (event) => {
 });
 
 reportErrorsToDesktop();
+answerBeforeRestart();
 followSystemTheme();
 
 const container = document.getElementById('root');

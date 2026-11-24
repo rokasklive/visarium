@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The desktop app now tells you when an update is out. A window shows what changed in every version since yours and lets you choose: Restart Now, Update on Quit, Remind Me Later (it asks again the next day), or Skip This Version (it asks again only when a newer one comes out). You no longer have to reopen Visarium to install, because your edits are saved before it restarts. Check for Updates is in the app menu as well as in Settings → About, where you can also turn automatic checks off. This release still installs the old way, from Settings → About.
 - Frames now decide who is in the group. Drop an item inside a frame and it joins that group; hold a member and drag it out of its frame and it leaves. While you drag, the frame you would join lights up and a frame you would leave is drawn without the item. A frame always surrounds every member, however far apart they are, instead of losing the ones that wander off.
 
 ## v0.2.0

@@ -1,8 +1,7 @@
-import { useQuery } from '@tanstack/react-query';
-import { useBlocker } from '@tanstack/react-router';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { codenameFor, fetchServerInfo } from '@visarium/api-client';
 import { type ComponentType, useState } from 'react';
-import { checkForUpdates, collectDiagnostics, installUpdate, localPort } from '~/api/desktop';
+import { checkForUpdates, collectDiagnostics, localPort, updatePreferences } from '~/api/desktop';
 import { SOURCE } from '~/app/source';
 import changelog from '../../../../CHANGELOG.md?raw';
 
@@ -10,13 +9,7 @@ declare const __VISARIUM_BUILD__: string;
 
 const link = 'underline underline-offset-2 hover:text-ink';
 
-type UpdateView =
-  | { type: 'checking' | 'installing' }
-  | { type: 'available'; version: string; canInstall: boolean }
-  | { type: 'message'; text: string };
-
-const reopen =
-  'Finish saving your work, reopen Visarium, and choose Settings from the startup screen.';
+type UpdateView = { type: 'checking' } | { type: 'message'; text: string };
 
 /** The CHANGELOG lines for `version` (bare semver), under `## vX.Y.Z` or `## X.Y.Z`. */
 export function notesFor(version: string | undefined) {
@@ -43,9 +36,13 @@ export function About({
     queryFn: async () => (await localPort()) !== undefined,
   });
   const [update, setUpdate] = useState<UpdateView>();
-  useBlocker({
-    shouldBlockFn: () => update?.type === 'installing',
-    enableBeforeUnload: false,
+  /** The box as last clicked, ahead of the app's answer. */
+  const [chosen, setChosen] = useState<boolean>();
+  const queryClient = useQueryClient();
+  const preferences = useQuery({
+    queryKey: ['update-preferences'],
+    queryFn: () => updatePreferences(),
+    enabled: desktop.data === true,
   });
   const version = server.data?.version;
   const notes = notesFor(version);
@@ -54,29 +51,31 @@ export function About({
     setUpdate({ type: 'checking' });
     try {
       const result = desktop.data ? await checkForUpdates() : { status: 'unconfigured' };
-      if (result.status === 'available' && 'version' in result) {
-        setUpdate({ type: 'available', version: result.version, canInstall: result.canInstall });
-      } else {
-        setUpdate({
-          type: 'message',
-          text:
-            result.status === 'current'
-              ? 'Visarium is up to date.'
-              : 'App updates are unavailable on this installation.',
-        });
-      }
+      setUpdate(
+        result.status === 'available'
+          ? // The app's own update window has it from here.
+            undefined
+          : {
+              type: 'message',
+              text:
+                result.status === 'current'
+                  ? 'Visarium is up to date.'
+                  : 'App updates are unavailable on this installation.',
+            },
+      );
     } catch (error) {
       setUpdate({ type: 'message', text: (error as Error).message });
     }
   }
 
-  async function install(offeredVersion: string) {
-    setUpdate({ type: 'installing' });
+  async function setAutomatic(automatic: boolean) {
+    setChosen(automatic);
     try {
-      await installUpdate(offeredVersion);
+      queryClient.setQueryData(['update-preferences'], await updatePreferences(automatic));
     } catch (error) {
       setUpdate({ type: 'message', text: (error as Error).message });
     }
+    setChosen(undefined);
   }
 
   return (
@@ -92,14 +91,27 @@ export function About({
             ) : null}
           </span>
           <Button
-            disabled={
-              desktop.isPending || update?.type === 'checking' || update?.type === 'installing'
-            }
+            disabled={desktop.isPending || update?.type === 'checking'}
             onClick={() => void check()}
           >
             Check for Updates
           </Button>
         </dd>
+        {preferences.data ? (
+          <>
+            <dt className="text-ink-dim">Updates</dt>
+            <dd>
+              <label className="flex items-center gap-2 text-ink">
+                <input
+                  type="checkbox"
+                  checked={chosen ?? preferences.data.automatic}
+                  onChange={(e) => void setAutomatic(e.target.checked)}
+                />
+                Check for updates automatically
+              </label>
+            </dd>
+          </>
+        ) : null}
         <dt className="text-ink-dim">Build</dt>
         <dd>{__VISARIUM_BUILD__}</dd>
         {/* The AGPL's "Appropriate Legal Notices" (§5d) and source offer (§13).
@@ -122,26 +134,7 @@ export function About({
       </dl>
       <div className="mt-2 text-ink-dim" role="status" aria-live="polite">
         {update?.type === 'checking' ? 'Checking for updates…' : null}
-        {update?.type === 'installing'
-          ? 'Downloading and verifying the update. Visarium will restart when it is ready.'
-          : null}
         {update?.type === 'message' ? update.text : null}
-        {update?.type === 'available' ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <span>
-              Visarium v{update.version}
-              {codenameFor(update.version) ? ` (${codenameFor(update.version)})` : ''} is available.
-            </span>
-            {update.canInstall ? (
-              <>
-                <Button onClick={() => void install(update.version)}>Install and Restart</Button>
-                <Button onClick={() => setUpdate(undefined)}>Later</Button>
-              </>
-            ) : (
-              <span>{reopen}</span>
-            )}
-          </div>
-        ) : null}
       </div>
       <h3 className="mt-4 mb-2 text-[11px] uppercase tracking-wide text-ink-dim">Changelog</h3>
       {notes?.length ? (
