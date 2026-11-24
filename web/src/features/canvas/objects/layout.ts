@@ -12,6 +12,7 @@
  */
 
 import { type CanvasItem, type DiagramLang, textScaleOf } from '@visarium/canvas-core';
+import { resolvedTheme, type Theme } from '~/app/theme';
 import { measureIn, textIndex } from '../search';
 import { slug } from './blocks';
 import { loadMarkdown, loadMermaid, loadPlantUml, type MermaidPalette } from './loaders';
@@ -88,14 +89,17 @@ function offscreen(): HTMLDivElement {
   return host;
 }
 
-let colours: { object: ObjectPalette; mermaid: MermaidPalette } | undefined;
+const colours = new Map<Theme, { object: ObjectPalette; mermaid: MermaidPalette }>();
 /**
  * The palette, from `app.css`. Object CSS uses the tokens as written; Mermaid's
  * colour maths only reads hex, so its colours are resolved by painting one
- * pixel and reading it back. Cached: there is one theme (see canvas-theme.ts).
+ * pixel and reading it back. Cached per theme (see canvas-theme.ts); a switch
+ * re-lays out every object because the theme is part of its layout key.
  */
 function palette() {
-  if (colours) return colours;
+  const theme = resolvedTheme();
+  const hit = colours.get(theme);
+  if (hit) return hit;
   const style = getComputedStyle(document.documentElement);
   const token = (name: string) => style.getPropertyValue(`--color-${name}`).trim();
   const canvas = document.createElement('canvas');
@@ -109,7 +113,7 @@ function palette() {
     const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
     return `#${[r, g, b].map((v) => (v ?? 0).toString(16).padStart(2, '0')).join('')}`;
   };
-  colours = {
+  const read = {
     object: {
       ink: token('ink'),
       inkDim: token('ink-dim'),
@@ -125,7 +129,8 @@ function palette() {
       surface: resolved('surface'),
     },
   };
-  return colours;
+  colours.set(theme, read);
+  return read;
 }
 
 export async function layoutItem(item: CanvasItem): Promise<Layout> {
@@ -462,7 +467,7 @@ async function layoutDiagram(lang: DiagramLang, source: string, width: number): 
 }
 
 async function mermaidSvg(source: string): Promise<string> {
-  const mermaid = await loadMermaid(palette().mermaid);
+  const mermaid = await loadMermaid(palette().mermaid, resolvedTheme() === 'dark');
   const id = `vo-mmd-${++renderSeq}`;
   try {
     await mermaid.parse(source);
@@ -477,6 +482,37 @@ async function mermaidSvg(source: string): Promise<string> {
     // A failed render can leave its scratch element behind.
     document.getElementById(`d${id}`)?.remove();
   }
+}
+
+/**
+ * Visarium's palette as a PlantUML style block (canvas/diagrams).
+ *
+ * PlantUML otherwise draws with its own skins: neutral grays in dark, but
+ * lavender participants and yellow notes in light. The hex values are the
+ * same ones Mermaid gets, so both languages draw one palette per theme.
+ */
+export function plantUmlStyle(p: MermaidPalette): string[] {
+  return [
+    '<style>',
+    `root { FontColor ${p.ink}; LineColor ${p.lineStrong}; BackGroundColor ${p.item} }`,
+    'document { BackGroundColor transparent }',
+    `arrow { LineColor ${p.inkDim}; FontColor ${p.ink} }`,
+    `note { BackGroundColor ${p.surface}; LineColor ${p.lineStrong} }`,
+    `lifeLine { LineColor ${p.inkDim} }`,
+    `group { BackGroundColor transparent }`,
+    '</style>',
+  ];
+}
+
+/**
+ * The source with the palette's style block just after its `@start…` line.
+ * Before the person's own lines, so a `<style>` or `skinparam` of theirs still
+ * wins; a source with no start line is left alone for PlantUML to refuse.
+ */
+export function withPlantUmlStyle(lines: string[], p: MermaidPalette): string[] {
+  const start = lines.findIndex((l) => /^\s*@start\w+/i.test(l));
+  if (start < 0) return lines;
+  return [...lines.slice(0, start + 1), ...plantUmlStyle(p), ...lines.slice(start + 1)];
 }
 
 /** The engine keeps shared state between renders, so they run one at a time. */
@@ -505,7 +541,13 @@ function plantUmlSvg(source: string): Promise<string> {
         });
         observer.observe(target, { childList: true, subtree: true });
         try {
-          engine.render(source.split(/\r\n|\r|\n/), target.id, { dark: true });
+          engine.render(
+            withPlantUmlStyle(source.split(/\r\n|\r|\n/), palette().mermaid),
+            target.id,
+            {
+              dark: resolvedTheme() === 'dark',
+            },
+          );
         } catch (e) {
           done(() => reject(e));
         }

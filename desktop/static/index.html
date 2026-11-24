@@ -19,9 +19,14 @@
     <meta charset="UTF-8" />
     <title>Visarium</title>
     <style>
-      /* Native controls (select popups, scrollbars) stay dark whatever the OS is set to. */
+      /*
+       * Follows the system's light or dark setting (appearance/theme). This
+       * page has no Settings of its own, and a server opened in this window
+       * keeps its own choice, because a stored choice is per origin. The
+       * values are app.css's, copied because this page cannot import it.
+       */
       :root {
-        color-scheme: dark;
+        color-scheme: light dark;
         --surface-sunken: oklch(0.14 0.006 265);
         --surface-raised: oklch(0.22 0.006 265);
         --line: oklch(0.3 0.008 265);
@@ -35,6 +40,23 @@
         --wordmark-peach: #f9c59a;
         --wordmark-coral: #f87562;
         --wordmark-turquoise: #31c5b7;
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          --surface-sunken: oklch(0.955 0.004 265);
+          --surface-raised: oklch(0.945 0.004 265);
+          --line: oklch(0.9 0.006 265);
+          --line-strong: oklch(0.6 0.008 265);
+          --ink: oklch(0.24 0.008 265);
+          --ink-dim: oklch(0.48 0.008 265);
+          --ink-disabled: oklch(0.57 0.006 265);
+          --accent: oklch(0.5 0.12 215);
+          --wordmark-white: oklch(0.24 0.008 265);
+          --wordmark-cream: oklch(0.58 0.11 80);
+          --wordmark-peach: oklch(0.58 0.13 55);
+          --wordmark-coral: oklch(0.58 0.17 30);
+          --wordmark-turquoise: oklch(0.56 0.1 182);
+        }
       }
       * { box-sizing: border-box; }
       html, body { height: 100%; margin: 0; }

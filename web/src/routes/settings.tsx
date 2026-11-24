@@ -18,6 +18,7 @@ import {
 } from '~/api/accounts';
 import { type LocalPort, localPort, setLocalPort } from '~/api/desktop';
 import { type Account, providerStart, useSession } from '~/api/session';
+import { setThemeChoice, type ThemeChoice, themeChoice } from '~/app/theme';
 import { CopyField, GhostButton, SectionHeading, TextField } from '~/components/settings-ui';
 import { useShortcutLegend } from '~/features/canvas/shortcut-legend';
 import { About, Diagnostics } from '~/features/settings/about';
@@ -33,9 +34,10 @@ export const Route = createFileRoute('/settings')({ component: Settings });
  * settings page, and nothing on it is urgent.
  *
  * There is no picture here and nothing to upload, preview or crop. The display
- * name is the ONLY appearance control a person has, because in this product what
- * a person looks like is their name drawn in the identity face over their
- * presence colour — see docs/product/DESIGN_SYSTEM.md.
+ * name is the ONLY control over how a person looks to others, because in this
+ * product what a person looks like is their name drawn in the identity face over
+ * their presence colour — see docs/product/DESIGN_SYSTEM.md. (Appearance below
+ * is how Visarium looks to them: light or dark, on this device.)
  */
 function Settings() {
   const session = useSession();
@@ -48,6 +50,7 @@ function Settings() {
     ['profile', 'Profile', !!me],
     ['security', 'Security', !!me && shared],
     ['agents', 'Agents', !!me],
+    ['appearance', 'Appearance', true],
     ['canvas', 'Canvas', true],
     ['diagnostics', 'Diagnostics', !!me],
     ['about', 'About', !!me],
@@ -87,6 +90,7 @@ function Settings() {
           </div>
         ) : null}
         {me ? <AgentsSection singleUser={!shared} /> : null}
+        <AppearanceSection />
         <CanvasSection />
         {me?.role && me.role !== 'member' && shared ? (
           <p className="mb-6 border-b border-line pb-6 text-ink-dim">
@@ -109,6 +113,59 @@ function Settings() {
         ) : null}
       </div>
     </div>
+  );
+}
+
+const THEME_CHOICES: [choice: ThemeChoice, label: string][] = [
+  ['system', 'System'],
+  ['light', 'Light'],
+  ['dark', 'Dark'],
+];
+
+/**
+ * Light or dark, on this device (appearance/theme).
+ *
+ * Native radios drawn as a segmented control, so arrow keys move the choice
+ * and a screen reader announces a radio group. The chosen segment is marked in
+ * ink on the raised step, never the accent: a stored preference is not
+ * focused, selected or active in the accent's sense. Focus is the accent ring,
+ * drawn on the segment because the radio itself is hidden.
+ */
+function AppearanceSection() {
+  const [choice, setChoice] = useState(themeChoice);
+  return (
+    <section id="appearance" className="mb-6 scroll-mt-6 border-b border-line pb-6">
+      <SectionHeading>Appearance</SectionHeading>
+      <fieldset data-testid="theme-setting">
+        <legend className="mb-2 text-ink">Theme</legend>
+        <div className="inline-flex rounded-sm border border-line p-0.5">
+          {THEME_CHOICES.map(([value, label]) => (
+            <label
+              key={value}
+              className={`cursor-pointer rounded-sm px-3 py-0.5 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-accent has-[:focus-visible]:outline-offset-1 ${
+                choice === value ? 'bg-surface-raised text-ink' : 'text-ink-dim hover:text-ink'
+              }`}
+            >
+              <input
+                type="radio"
+                name="theme"
+                value={value}
+                checked={choice === value}
+                onChange={() => {
+                  setChoice(value);
+                  setThemeChoice(value);
+                }}
+                className="sr-only"
+              />
+              {label}
+            </label>
+          ))}
+        </div>
+        <p className="mt-2 text-ink-dim">
+          On this device. System follows your computer's light or dark setting.
+        </p>
+      </fieldset>
+    </section>
   );
 }
 

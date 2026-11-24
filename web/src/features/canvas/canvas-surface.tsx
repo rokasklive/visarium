@@ -92,6 +92,7 @@ import { assetsById } from '~/api/assets';
 import { loadSnapshotInto, reportElements } from '~/api/boards';
 import { type SessionState, sessionKey } from '~/api/session';
 import { loadSharedSnapshotInto } from '~/api/sharing';
+import { useTheme } from '~/app/theme';
 import { useUiStore } from '~/app/ui-store';
 import { DEVTOOLS, INSPECTOR_WIDTH } from '~/devtools';
 import { Inspector } from '../inspector/load';
@@ -397,6 +398,8 @@ export function CanvasSurface({
   /** Items this gesture claimed, released once its operations are durable. */
   const claimed = useRef<ItemId[]>([]);
 
+  // Re-renders the board on a theme switch; canvasTheme() then reads the new set.
+  useTheme();
   const theme = canvasTheme();
   const history = useMemo(() => new CanvasHistory(doc), [doc]);
   /** Notes, diagrams and checklists, laid out for drawing (design D2). */
