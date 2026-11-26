@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Expected vs actual</title>
+</head>
+<body>
+<!-- A canvas app (ADR-0034): reads another app's outputs ({ premium, expected }),
+     says whether they agree, and sets task t1 of the checklist it updates:
+     done when they match, blocked when they do not.
+     Dressed by Visarium's app kit (/kit.css): no styles of its own. -->
+<div class="row">
+  <span class="badge is-pending" id="verdict">waiting</span>
+  <span class="muted" id="detail">waiting for a premium and a quote</span>
+</div>
+<ul class="bars" id="bars" hidden>
+  <li class="is-key" id="actual"><span>Premium</span><span class="num" id="actual-v"></span></li>
+  <li id="quoted"><span>Quoted</span><span class="num" id="quoted-v"></span></li>
+</ul>
+<script>
+let n = 0;
+const pending = {};
+const send = (m) => parent.postMessage({ jsonrpc: '2.0', ...m }, '*');
+const request = (method, params) =>
+  new Promise((resolve) => { const id = ++n; pending[id] = resolve; send({ id, method, params }); });
+
+const quote = (args) => {
+  const key = Object.keys(args || {}).find((k) => k.endsWith('.outputs'));
+  return key ? args[key] || {} : null;
+};
+const judge = (q) => {
+  if (!q || typeof q.premium !== 'number' || typeof q.expected !== 'number') return null;
+  return { verdict: q.premium === q.expected ? 'match' : 'mismatch', diff: q.premium - q.expected };
+};
+const show = (args) => {
+  const q = quote(args);
+  const v = judge(q);
+  const el = document.getElementById('verdict');
+  el.textContent = v ? v.verdict : 'waiting';
+  el.className = `badge ${v ? (v.verdict === 'match' ? 'is-good' : 'is-bad') : 'is-pending'}`;
+  document.getElementById('detail').textContent = v
+    ? `difference ${v.diff > 0 ? '+' : ''}${v.diff}`
+    : 'waiting for a premium and a quote';
+  document.getElementById('bars').hidden = !v;
+  if (!v) return;
+  const top = Math.max(q.premium, q.expected) || 1;
+  for (const [id, value] of [['actual', q.premium], ['quoted', q.expected]]) {
+    document.getElementById(id).style.setProperty('--v', String(value / top));
+    document.getElementById(`${id}-v`).textContent = value;
+  }
+};
+
+addEventListener('message', async (e) => {
+  const m = e.data;
+  if (m?.jsonrpc !== '2.0') return;
+  if (m.id !== undefined && !m.method) { pending[m.id]?.(m); delete pending[m.id]; return; }
+  if (m.method === 'ui/resource-teardown') return send({ id: m.id, result: {} });
+  if (m.method === 'ui/notifications/tool-input' || m.method === 'visarium/notifications/inputs-changed')
+    return show(m.params.arguments);
+  if (m.method !== 'visarium/notifications/run') return;
+  show(m.params.arguments);
+  const v = judge(quote(m.params.arguments));
+  if (!v) {
+    await request('visarium/outputs/publish', { outputs: {}, status: 'error', error: 'needs an app publishing premium and expected' });
+    return;
+  }
+  await request('visarium/outputs/publish', { outputs: v, text: `${v.verdict} (${v.diff})` });
+  await request('visarium/items/propose', {
+    changes: [{ type: 'task.set', taskId: 't1', state: v.verdict === 'match' ? 'done' : 'blocked' }],
+  });
+});
+
+(async () => {
+  await request('ui/initialize', {
+    appInfo: { name: 'expected-vs-actual', version: '1' },
+    appCapabilities: {},
+    protocolVersion: '2026-01-26',
+  });
+  send({ method: 'ui/notifications/initialized' });
+})();
+</script>
+</body>
+</html>

@@ -146,6 +146,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/boards/{id}/items/{item}/views/{view}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One read-only view of an item or group (canvas/item-views) */
+        get: operations["itemView"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/boards/{id}/items/{item}/mount": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Where to load an app's view from: the sandbox origin and a short-lived token (canvas/apps) */
+        post: operations["mountApp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/boards/{id}/operations": {
         parameters: {
             query?: never;
@@ -513,10 +547,10 @@ export interface components {
         CanvasOperationBody: {
             type: string;
         };
-        /** @description What an item shows. `kind` picks the fields: `asset` (image), `source` (note), `lang` + `source` (diagram), `title` + `tasks` (checklist). Absent kind is an image. */
+        /** @description What an item shows. `kind` picks the fields: `asset` (image), `source` (note), `lang` + `source` (diagram), `title` + `tasks` (checklist), `title` + `html` (app). Absent kind is an image. */
         Content: {
             /** @enum {string} */
-            kind?: "image" | "placeholder" | "note" | "diagram" | "checklist";
+            kind?: "image" | "placeholder" | "note" | "diagram" | "checklist" | "app";
             asset?: components["schemas"]["AssetRef"];
             /** @enum {string} */
             lang?: "mermaid" | "plantuml";
@@ -526,6 +560,8 @@ export interface components {
             title?: string;
             /** @description A checklist's tasks, at most 200. */
             tasks?: components["schemas"]["Task"][];
+            /** @description An app's HTML view; its body is at most 256 KiB. */
+            html?: string;
         };
         /** @description One task of a checklist. `by` and `at` are stamped by the server; a client's values are ignored. */
         Task: {
@@ -550,13 +586,15 @@ export interface components {
             element?: string | null;
         };
         /** @enum {string} */
-        LinkType: "describes" | "comments" | "implements" | "depends-on";
+        LinkType: "describes" | "comments" | "implements" | "depends-on" | "feeds" | "updates";
         Link: {
             /** Format: uuid */
             id: string;
             from: components["schemas"]["Anchor"];
             to: components["schemas"]["Anchor"];
             linkType: components["schemas"]["LinkType"];
+            /** @description A `feeds` link's view of its source; null on every other type. */
+            view?: string | null;
             /** Format: uuid */
             by?: string | null;
             /** @description The agent that acted for `by`, when one did (ADR-0031). Stamped by the server. */
@@ -807,6 +845,8 @@ export interface components {
             from?: components["schemas"]["Anchor"];
             to?: components["schemas"]["Anchor"];
             linkType?: components["schemas"]["LinkType"];
+            /** @description For `feeds`: the source's view the app reads. Absent on every other type. */
+            view?: string;
             /** @description Stamped by the server. */
             by?: string | null;
             /** @description The agent that acted for `by`, when one did (ADR-0031). Stamped by the server. */
@@ -824,6 +864,8 @@ export interface components {
             /** Format: uuid */
             linkId?: string;
             linkType?: components["schemas"]["LinkType"];
+            /** @description A `feeds` link's new view. */
+            view?: string;
         } & {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -851,12 +893,49 @@ export interface components {
              */
             type: "link.delete";
         };
+        AppOutput: Omit<components["schemas"]["CanvasOperationBody"], "type"> & {
+            /** Format: uuid */
+            itemId?: string;
+            /** @description Named values, at most 16 KiB of JSON. */
+            outputs?: {
+                [key: string]: unknown;
+            };
+            text?: string;
+            /** @enum {string} */
+            status?: "ok" | "error";
+            error?: string;
+            /** @description Stamped by the server. */
+            by?: string | null;
+            byAgent?: string | null;
+            at?: string | null;
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "app.output";
+        };
+        AppOutputRevert: Omit<components["schemas"]["CanvasOperationBody"], "type"> & {
+            /** Format: uuid */
+            itemId?: string;
+            /** Format: int64 */
+            toVersion?: number;
+            by?: string | null;
+            byAgent?: string | null;
+            at?: string | null;
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "app.output.revert";
+        };
         PostedOperation: {
             /** Format: uuid */
             operationId?: string;
             /** Format: int64 */
             baseRevision?: number;
-            body?: components["schemas"]["GroupCreate"] | components["schemas"]["GroupDelete"] | components["schemas"]["GroupFrame"] | components["schemas"]["GroupCollides"] | components["schemas"]["ItemCollides"] | components["schemas"]["GroupLabel"] | components["schemas"]["GroupMembers"] | components["schemas"]["ItemAppearance"] | components["schemas"]["ItemContent"] | components["schemas"]["ItemCreate"] | components["schemas"]["ItemDelete"] | components["schemas"]["ItemTransform"] | components["schemas"]["ItemZ"] | components["schemas"]["ItemSource"] | components["schemas"]["ChecklistTitle"] | components["schemas"]["TaskAdd"] | components["schemas"]["TaskSet"] | components["schemas"]["TaskRemove"] | components["schemas"]["LinkAdd"] | components["schemas"]["LinkSet"] | components["schemas"]["LinkDelete"] | components["schemas"]["BoardCenterpiece"];
+            body?: components["schemas"]["GroupCreate"] | components["schemas"]["GroupDelete"] | components["schemas"]["GroupFrame"] | components["schemas"]["GroupCollides"] | components["schemas"]["ItemCollides"] | components["schemas"]["GroupLabel"] | components["schemas"]["GroupMembers"] | components["schemas"]["ItemAppearance"] | components["schemas"]["ItemContent"] | components["schemas"]["ItemCreate"] | components["schemas"]["ItemDelete"] | components["schemas"]["ItemTransform"] | components["schemas"]["ItemZ"] | components["schemas"]["ItemSource"] | components["schemas"]["ChecklistTitle"] | components["schemas"]["TaskAdd"] | components["schemas"]["TaskSet"] | components["schemas"]["TaskRemove"] | components["schemas"]["LinkAdd"] | components["schemas"]["LinkSet"] | components["schemas"]["LinkDelete"] | components["schemas"]["BoardCenterpiece"] | components["schemas"]["AppOutput"] | components["schemas"]["AppOutputRevert"];
         };
         Transform: {
             /** Format: double */
@@ -982,6 +1061,17 @@ export interface components {
              * @description A note's or checklist's text scale; absent is 1.
              */
             textScale?: number;
+            /** Format: int64 */
+            /** @description Counts changes to what the item shows, not where it is (canvas/apps). */
+            contentRev?: number;
+            /** @description An app's latest output, or null when it never ran. */
+            output?: {
+                [key: string]: unknown;
+            } | null;
+            /** @description An app's state, derived by the server (canvas/apps). */
+            appState?: {
+                [key: string]: unknown;
+            } | null;
         };
         LibraryPage: {
             assets?: components["schemas"]["AssetView"][];
@@ -1311,6 +1401,83 @@ export interface operations {
                 content: {
                     "*/*": components["schemas"]["Applied"];
                 };
+            };
+        };
+    };
+    itemView: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                item: string;
+                view: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The view, stamped with the content revision it was derived from */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        ref: string;
+                        kind: string;
+                        /** Format: int64 */
+                        revision: number;
+                        view: string;
+                        value: unknown;
+                        warning?: string;
+                    };
+                };
+            };
+        };
+    };
+    mountApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                item: string;
+            };
+            cookie?: never;
+        };
+        /** @description The board's look as the person has it: the kit (`/kit.css`) is themed with it */
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    theme?: "light" | "dark";
+                    /** @description Colour tokens by kit name: surface, raised, sunken, line, line-strong, ink, ink-dim, ink-disabled, accent, accent-wash */
+                    tokens?: {
+                        [key: string]: string;
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Load the view from `url`; messages come from `origin` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        url: string;
+                        origin: string;
+                    };
+                };
+            };
+            /** @description No sandbox origin here (apps run in the desktop app), or no such app */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

@@ -1,0 +1,207 @@
+/*
+ * The Visarium app kit (canvas/apps): what every app's view is dressed in, so
+ * plain HTML already looks like it belongs on the board. Served from the
+ * sandbox origin as /kit.css and linked ahead of the app's own styles.
+ *
+ * - Every rule is :where(), zero specificity: the app's own CSS always wins.
+ * - No colour is chosen here. The host passes the board's tokens in as --vk-*
+ *   for the theme the person has (web/src/styles/app.css is the one place a
+ *   colour is chosen; docs/product/DESIGN_SYSTEM.md).
+ * - An app is an instrument on the board, so it speaks the tool's grammar at
+ *   the board's content scale: no weight and no italic, hierarchy by size, case
+ *   and ink; three sizes (12 labels, 15 text, 19 the figure that matters); the
+ *   one 4px radius; no shadow, no motion. The accent means "you": focus,
+ *   selection, what is checked or on. It never decorates.
+ *
+ * Classes an app may use: .row .stack .grid, .figure .unit, .muted .num,
+ * .badge (.is-good .is-pending .is-bad), .notice (.is-bad), .empty,
+ * .field, .bars (.is-key), svg.chart (.line .area .axis .mark).
+ */
+
+:where(*, *::before, *::after) { box-sizing: border-box; }
+/* The kit lays things out with display; `hidden` still hides them. */
+[hidden] { display: none !important; }
+
+:where(html) {
+  background: var(--vk-surface);
+  color: var(--vk-ink);
+  font: 15px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+  scrollbar-color: var(--vk-line-strong) transparent;
+  scrollbar-width: thin;
+}
+:where(body) { margin: 0; padding: 12px 14px 14px; }
+:where(::selection) { background: var(--vk-accent-wash); color: var(--vk-ink); }
+:where(:focus-visible) { outline: 2px solid var(--vk-accent); outline-offset: 1px; }
+
+/* Text */
+:where(h1, h2, h3, h4, h5, h6) { font-weight: 400; line-height: 1.25; margin: 0 0 8px; }
+:where(h1) { font-size: 19px; }
+:where(h2) { font-size: 15px; }
+:where(h3, h4, h5, h6, th, dt, legend, caption, .label) {
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+  color: var(--vk-ink-dim);
+}
+:where(p, ul, ol, dl, table, pre, blockquote, figure, fieldset, .bars, .notice) { margin: 0 0 12px; }
+:where(ul, ol) { padding-left: 20px; }
+:where(li + li) { margin-top: 2px; }
+:where(strong, b) { font-weight: 400; color: var(--vk-ink); }
+:where(em, i) { font-style: normal; color: var(--vk-ink); }
+:where(small, figcaption) { font-size: 12px; color: var(--vk-ink-dim); }
+:where(.muted) { color: var(--vk-ink-dim); }
+:where(a) {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--vk-line-strong);
+  text-underline-offset: 2px;
+}
+:where(a:hover) { text-decoration-color: currentColor; }
+:where(code, kbd, samp, pre) { font: 13px/1.45 ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+:where(pre) { padding: 8px 10px; background: var(--vk-sunken); border-radius: 4px; white-space: pre-wrap; overflow: auto; }
+:where(blockquote) { margin-left: 0; padding-left: 10px; border-left: 1px solid var(--vk-line-strong); color: var(--vk-ink-dim); }
+:where(hr) { border: 0; border-top: 1px solid var(--vk-line); margin: 12px 0; }
+
+/* Numbers that change while someone watches never shift width. */
+:where(table, dl, output, data, meter, progress, .num, .figure, .bars) { font-variant-numeric: tabular-nums; }
+
+/* The figure: the one number the app exists to produce. */
+:where(.figure) { display: block; font-size: 19px; line-height: 1.2; color: var(--vk-ink); }
+:where(.unit) { font-size: 12px; color: var(--vk-ink-dim); margin-left: 4px; }
+
+/* A readout: labels on the left, values on the right. */
+:where(dl) { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; align-items: baseline; }
+:where(dd) { margin: 0; overflow-wrap: anywhere; }
+
+/* Tables: hairlines between rows, labels in the head, numbers to the right. */
+:where(table) { width: 100%; border-collapse: collapse; }
+:where(th) { text-align: left; padding: 0 12px 4px 0; border-bottom: 1px solid var(--vk-line-strong); }
+:where(td) { padding: 5px 12px 5px 0; border-bottom: 1px solid var(--vk-line); vertical-align: baseline; }
+:where(th:last-child, td:last-child) { padding-right: 0; }
+:where(th.num, td.num) { text-align: right; }
+:where(tr[aria-selected="true"] > td) { background: var(--vk-accent-wash); }
+
+/* Layout */
+:where(.row) { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+:where(.stack) { display: grid; gap: 8px; }
+:where(.grid) { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 12px 16px; }
+:where(.row, .stack, .grid) > :where(*) { margin: 0; }
+
+/* Status in words. The line says how settled it is: a fill is settled, a dashed
+ * edge is pending, the brightest edge needs attention. No colour carries it. */
+:where(.badge) {
+  display: inline-block;
+  font-size: 12px;
+  line-height: 18px;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+  padding: 0 6px;
+  border: 1px solid var(--vk-line-strong);
+  border-radius: 4px;
+  color: var(--vk-ink);
+  white-space: nowrap;
+}
+:where(.badge.is-good) { background: var(--vk-raised); border-color: transparent; }
+:where(.badge.is-pending) { border-style: dashed; color: var(--vk-ink-dim); }
+:where(.badge.is-bad) { border-color: var(--vk-ink); }
+
+/* A message the app owes the person: what happened and what to do. */
+:where(.notice) { padding: 8px 10px; border: 1px solid var(--vk-line-strong); border-radius: 4px; }
+:where(.notice.is-bad) { border-color: var(--vk-ink); }
+:where(.empty) { padding: 16px 0; color: var(--vk-ink-dim); text-align: center; }
+
+/* Controls: the board's ghost button, bounded because it stands alone. */
+:where(button, .button, input[type="button"], input[type="submit"], input[type="reset"]) {
+  font: inherit;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--vk-ink-dim);
+  background: transparent;
+  border: 1px solid var(--vk-line-strong);
+  border-radius: 4px;
+  padding: 3px 10px;
+  cursor: pointer;
+  text-decoration: none;
+}
+:where(button, .button, input[type="button"], input[type="submit"], input[type="reset"]):where(:enabled:hover, [aria-pressed="true"]) {
+  background: var(--vk-raised);
+  color: var(--vk-ink);
+}
+:where(button, input):disabled { color: var(--vk-ink-disabled); cursor: default; }
+:where(.field) { display: grid; gap: 4px; }
+:where(label) { color: var(--vk-ink-dim); }
+:where(.field > label, .field > .label) { font-size: 12px; letter-spacing: 0.025em; text-transform: uppercase; }
+:where(input:not([type="checkbox"], [type="radio"], [type="range"], [type="button"], [type="submit"], [type="reset"]), select, textarea) {
+  font: inherit;
+  color: var(--vk-ink);
+  background: var(--vk-raised);
+  border: 1px solid var(--vk-line-strong);
+  border-radius: 4px;
+  padding: 4px 8px;
+  min-width: 0;
+}
+:where(input, textarea)::placeholder { color: var(--vk-ink-dim); }
+:where(textarea) { resize: vertical; }
+:where(select) {
+  appearance: none;
+  padding-right: 24px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--vk-ink-dim) 50%),
+    linear-gradient(135deg, var(--vk-ink-dim) 50%, transparent 50%);
+  background-position: right 12px top 55%, right 8px top 55%;
+  background-size: 4px 4px;
+  background-repeat: no-repeat;
+}
+:where(input[type="checkbox"], input[type="radio"]) { accent-color: var(--vk-accent); width: 15px; height: 15px; margin: 0 6px 0 0; vertical-align: -2px; }
+:where(input[type="range"]) { appearance: none; height: 16px; background: transparent; cursor: pointer; }
+:where(input[type="range"])::-webkit-slider-runnable-track { height: 2px; background: var(--vk-line-strong); }
+:where(input[type="range"])::-moz-range-track { height: 2px; background: var(--vk-line-strong); }
+:where(input[type="range"])::-moz-range-progress { height: 2px; background: var(--vk-ink-dim); }
+:where(input[type="range"])::-webkit-slider-thumb { appearance: none; width: 8px; height: 16px; margin-top: -7px; border: 0; border-radius: 4px; background: var(--vk-ink); }
+:where(input[type="range"])::-moz-range-thumb { width: 8px; height: 16px; border: 0; border-radius: 4px; background: var(--vk-ink); }
+:where(fieldset) { border: 1px solid var(--vk-line); border-radius: 4px; padding: 8px 12px 12px; }
+:where(legend) { padding: 0 4px; }
+:where(summary) { cursor: pointer; color: var(--vk-ink-dim); }
+:where(summary:hover, details[open] > summary) { color: var(--vk-ink); }
+:where(progress, meter) { appearance: none; width: 100%; height: 4px; border: 0; border-radius: 0; background: var(--vk-line); vertical-align: middle; }
+:where(progress)::-webkit-progress-bar { background: var(--vk-line); }
+:where(progress)::-webkit-progress-value { background: var(--vk-ink-dim); }
+:where(progress)::-moz-progress-bar { background: var(--vk-ink-dim); }
+:where(meter)::-webkit-meter-bar { background: var(--vk-line); border: 0; border-radius: 0; height: 4px; }
+:where(meter)::-webkit-meter-optimum-value,
+:where(meter)::-webkit-meter-suboptimum-value,
+:where(meter)::-webkit-meter-even-less-good-value { background: var(--vk-ink-dim); }
+:where(meter)::-moz-meter-bar { background: var(--vk-ink-dim); }
+
+/* Bars: a label, a value, and a 4px track under them, filled to --v (0 to 1).
+ *   <ul class="bars"><li style="--v:.6"><span>Ada</span><span class="num">60</span></li></ul>
+ * .is-key marks the bar the reading is about. */
+:where(.bars) { list-style: none; padding: 0; display: grid; gap: 8px; }
+:where(.bars > li) {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+  padding-bottom: 8px;
+  background:
+    linear-gradient(var(--vk-ink-dim), var(--vk-ink-dim)) 0 100% / calc(clamp(0, var(--v, 0), 1) * 100%) 4px no-repeat,
+    linear-gradient(var(--vk-line), var(--vk-line)) 0 100% / 100% 4px no-repeat;
+}
+:where(.bars > li.is-key) {
+  background:
+    linear-gradient(var(--vk-ink), var(--vk-ink)) 0 100% / calc(clamp(0, var(--v, 0), 1) * 100%) 4px no-repeat,
+    linear-gradient(var(--vk-line), var(--vk-line)) 0 100% / 100% 4px no-repeat;
+}
+
+/* Charts an app draws itself, as SVG with these parts. */
+:where(svg.chart) { display: block; width: 100%; overflow: visible; }
+:where(svg.chart .axis) { stroke: var(--vk-line-strong); stroke-width: 1; fill: none; }
+:where(svg.chart .grid) { stroke: var(--vk-line); stroke-width: 1; fill: none; }
+:where(svg.chart .line) { stroke: var(--vk-ink); stroke-width: 1.5; fill: none; }
+:where(svg.chart .area) { fill: var(--vk-line); stroke: none; }
+:where(svg.chart .mark) { fill: var(--vk-ink-dim); }
+:where(svg.chart .mark.is-key) { fill: var(--vk-ink); }
+:where(svg.chart text) { fill: var(--vk-ink-dim); font-size: 12px; }

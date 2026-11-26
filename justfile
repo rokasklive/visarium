@@ -45,7 +45,7 @@ frontend:
 licenses:
     node web/scripts/licenses.mjs
 
-# The desktop app
+# The desktop app, as "Visarium Dev": its own library, settings and storage, never the installed app's
 desktop:
     pnpm desktop
 
@@ -106,6 +106,21 @@ mcp-conformance:
     trap 'kill $pid 2>/dev/null; rm -rf "$dir"' EXIT
     for _ in $(seq 1 240); do curl -sf "http://127.0.0.1:$port/health" >/dev/null && break; sleep 0.5; done
     node server/tests/mcp-conformance.mjs "http://127.0.0.1:$port/mcp"
+
+# The canvas-apps scenario end to end: a real server with its app sandbox, the built bundle, an agent over /mcp
+e2e-apps:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    pnpm --filter @visarium/web build
+    dir=$(mktemp -d)
+    port=18767
+    VISARIUM_PORT=$port VISARIUM_BIND=127.0.0.1 VISARIUM_SINGLE_USER=true VISARIUM_APPS_PORT=0 \
+      VISARIUM_DATABASE="$dir/visarium.db" VISARIUM_ASSETS_PATH="$dir/assets" \
+      VISARIUM_DERIVATIVES_PATH="$dir/derivatives" cargo run -q -p visarium-server &
+    pid=$!
+    trap 'kill $pid 2>/dev/null; rm -rf "$dir"' EXIT
+    for _ in $(seq 1 240); do curl -sf "http://127.0.0.1:$port/health" >/dev/null && break; sleep 0.5; done
+    VISARIUM_E2E_SERVER="http://127.0.0.1:$port" pnpm --filter @visarium/web exec playwright test e2e/canvas.apps.scenario.spec.ts
 
 # The agent eval: each task in server/tests/agent_eval/tasks.json run by Claude Code (args: --model M --only id,id --label name)
 agent-eval *args:

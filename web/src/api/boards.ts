@@ -206,6 +206,7 @@ function toLink(link: components['schemas']['Link']): Link[] {
       from: { itemId: asItemId(link.from.itemId), element: link.from.element ?? null },
       to: { itemId: asItemId(link.to.itemId), element: link.to.element ?? null },
       linkType: link.linkType,
+      ...(link.view ? { view: link.view } : {}),
       by: link.by ?? null,
       ...(link.byAgent ? { byAgent: link.byAgent } : {}),
       ...(link.at ? { at: link.at } : {}),
@@ -224,7 +225,10 @@ function toItem(item: components['schemas']['Item']): CanvasItem[] {
   const t = item.transform;
   // A note, diagram or checklist has no asset; an image without one is a broken
   // contract and `contentFrom` refuses it. An unrecognised kind is kept, inert.
-  const content = contentFrom(item.content);
+  // An app's latest output travels beside its content in the snapshot.
+  const content = contentFrom(
+    item.content?.kind === 'app' ? { ...item.content, output: item.output } : item.content,
+  );
   if (!item.id || !t || !content) return [];
   return [
     {
@@ -249,6 +253,7 @@ function toItem(item: components['schemas']['Item']): CanvasItem[] {
       crop: item.crop ?? FULL_CROP,
       content,
       ...(item.revision !== undefined ? { revision: item.revision } : {}),
+      ...(item.contentRev !== undefined ? { contentRev: item.contentRev } : {}),
       ...(item.groupId ? { groupId: asGroupId(item.groupId) } : {}),
       ...(item.collides ? { collides: true } : {}),
       ...(item.textScale !== undefined && item.textScale !== 1
@@ -271,4 +276,35 @@ function toGroup(group: components['schemas']['Group']): CanvasGroup[] {
       ...(group.collides ? { collides: true } : {}),
     },
   ];
+}
+
+/**
+ * Where to load an app's view from (canvas/apps): a URL on the sandbox origin
+ * with a short-lived token. Null when this server has none (apps run in the
+ * desktop app) or the app is gone.
+ */
+export async function mountApp(
+  boardId: string,
+  itemId: string,
+  look?: { theme: 'light' | 'dark'; tokens: Record<string, string> },
+): Promise<{ url: string; origin: string } | null> {
+  const { data, response } = await api.POST('/api/boards/{id}/items/{item}/mount', {
+    params: { path: { id: boardId, item: itemId } },
+    ...(look ? { body: look } : {}),
+  });
+  if (response.status === 404) return null;
+  if (!data) throw new Error(`could not open the app: ${response.status}`);
+  return data;
+}
+
+/** One view of an item (canvas/item-views), as the server derives it now. */
+export async function itemView(
+  boardId: string,
+  itemId: string,
+  view: string,
+): Promise<{ ref: string; value: unknown } | null> {
+  const { data } = await api.GET('/api/boards/{id}/items/{item}/views/{view}', {
+    params: { path: { id: boardId, item: itemId, view } },
+  });
+  return data ? { ref: data.ref, value: data.value } : null;
 }

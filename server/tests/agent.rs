@@ -461,7 +461,7 @@ async fn the_protocol_is_stateless_json_rpc() {
     assert!(text.starts_with("# Offline sync"), "{text}");
 
     let tools = w.rpc("tools/list", json!({})).await;
-    assert_eq!(tools["tools"].as_array().unwrap().len(), 15);
+    assert_eq!(tools["tools"].as_array().unwrap().len(), 18);
     assert!(tools["ttlMs"].as_u64().unwrap() > 0);
     for t in tools["tools"].as_array().unwrap() {
         assert!(
@@ -1032,6 +1032,74 @@ async fn images_are_viewed_and_everything_else_is_read() {
 }
 
 #[tokio::test]
+async fn items_are_read_as_data_through_their_views() {
+    let w = world().await;
+    let listed = w
+        .ok(
+            "item_views",
+            json!({ "board": "Offline sync", "ref": "d1" }),
+        )
+        .await;
+    assert!(
+        listed.contains("d1 (diagram) offers: text, graph."),
+        "{listed}"
+    );
+    let listed = w
+        .ok(
+            "item_views",
+            json!({ "board": "Offline sync", "ref": "n1" }),
+        )
+        .await;
+    assert!(
+        listed.contains("text, markdown, frontmatter, tables"),
+        "{listed}"
+    );
+
+    let graph = w
+        .ok(
+            "item_views",
+            json!({ "board": "Offline sync", "ref": "d1", "view": "graph" }),
+        )
+        .await;
+    let rev = w.data().await.resolve_item("d1").unwrap().revision;
+    assert!(
+        graph.starts_with(&format!("d1 graph at rev {rev}:")),
+        "{graph}"
+    );
+    assert!(
+        graph.contains("\"OpQueue\"") && graph.contains("\"edges\""),
+        "{graph}"
+    );
+
+    let tasks = w
+        .ok(
+            "item_views",
+            json!({ "board": "Offline sync", "ref": "c1", "view": "tasks" }),
+        )
+        .await;
+    assert!(tasks.contains("\"state\""), "{tasks}");
+
+    let members = w
+        .ok(
+            "item_views",
+            json!({ "board": "Offline sync", "ref": "g1", "view": "members" }),
+        )
+        .await;
+    assert!(members.contains("\"members\""), "{members}");
+
+    let err = w
+        .fails(
+            "item_views",
+            json!({ "board": "Offline sync", "ref": "n1", "view": "graph" }),
+        )
+        .await;
+    assert!(
+        err.contains("Its views: text, markdown, frontmatter, tables."),
+        "{err}"
+    );
+}
+
+#[tokio::test]
 async fn reading_changes_nothing() {
     let w = world().await;
     let before = w.revision().await;
@@ -1053,6 +1121,14 @@ async fn reading_changes_nothing() {
             json!({ "board": "Offline sync", "since_rev": 0 }),
         ),
         ("item_view", json!({ "board": "Offline sync", "ref": "i1" })),
+        (
+            "item_views",
+            json!({ "board": "Offline sync", "ref": "d1", "view": "graph" }),
+        ),
+        (
+            "item_views",
+            json!({ "board": "Offline sync", "ref": "g1", "view": "members" }),
+        ),
     ] {
         w.ok(tool, args).await;
     }
@@ -2971,4 +3047,208 @@ impl World {
         .id
         .clone()
     }
+}
+
+// --- apps (agents/apps) -----------------------------------------------------------
+
+const PREMIUM_HTML: &str = "<!doctype html><title>Premium</title><p>premium</p>";
+
+fn created_ref(text: &str) -> String {
+    text.strip_prefix("Created ")
+        .and_then(|t| t.split_whitespace().next())
+        .unwrap()
+        .to_string()
+}
+
+/// A viewer that has `app` open and, when granted its run, commits `outputs`
+/// the way a person's client does: through the same checks as a posted batch.
+fn fake_viewer(w: &World, app: uuid::Uuid, outputs: Value) -> tokio::task::JoinHandle<()> {
+    let board = uuid::Uuid::parse_str(&w.board).unwrap();
+    let viewer = uuid::Uuid::new_v4();
+    w.app.rooms.mount(&board, app, viewer, true);
+    let (state, user) = (w.app.clone(), w.user.clone());
+    tokio::spawn(async move {
+        while !state.rooms.running(&board, app) {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let actor = Actor {
+            user_id: user,
+            agent: None,
+        };
+        let mut ops: Vec<Op> = vec![
+            serde_json::from_value(
+                json!({ "type": "app.output", "itemId": app, "outputs": outputs, "status": "ok" }),
+            )
+            .unwrap(),
+        ];
+        for op in &mut ops {
+            op.stamp(&actor, "2026-11-26T10:00:00.000Z");
+        }
+        visarium::apps::check_runs(&state, &board, Some(viewer), &mut ops)
+            .await
+            .unwrap();
+        boards::apply(&state, &board, &mut ops, &actor)
+            .await
+            .unwrap();
+        visarium::apps::end_runs(&state, &board, &ops);
+    })
+}
+
+#[tokio::test]
+async fn an_agent_creates_connects_reads_and_runs_apps() {
+    let w = world().await;
+    let b = json!("Offline sync");
+    let err = w
+        .fails(
+            "app_create",
+            json!({ "board": b, "title": "Premium", "html": "not a page" }),
+        )
+        .await;
+    assert!(err.contains("whole HTML document"), "{err}");
+
+    let note = w
+        .ok(
+            "item_create",
+            json!({ "board": b, "kind": "note", "source": "---\npremium: 1200\n---\n# Inputs" }),
+        )
+        .await;
+    let n = created_ref(&note);
+    let made = w
+        .ok(
+            "app_create",
+            json!({ "board": b, "title": "Premium", "html": PREMIUM_HTML, "near": n }),
+        )
+        .await;
+    assert!(made.starts_with("Created a1 (app)"), "{made}");
+    let made = w
+        .ok(
+            "app_create",
+            json!({ "board": b, "title": "Compare", "html": PREMIUM_HTML, "near": "a1",
+            "link": { "type": "updates", "to": "c1" } }),
+        )
+        .await;
+    assert!(made.contains("Linked a2 updates c1."), "{made}");
+
+    // feeds needs a view, ends at an app, and closes no loop.
+    let err = w
+        .fails(
+            "link",
+            json!({ "board": b, "from": n, "to": "a1", "type": "feeds" }),
+        )
+        .await;
+    assert!(err.contains("frontmatter"), "{err}");
+    let linked = w
+        .ok(
+            "link",
+            json!({ "board": b, "from": n, "to": "a1", "type": "feeds", "view": "frontmatter" }),
+        )
+        .await;
+    assert!(
+        linked.contains(&format!("Linked {n}.frontmatter feeds a1.")),
+        "{linked}"
+    );
+    w.ok(
+        "link",
+        json!({ "board": b, "from": "a1", "to": "a2", "type": "feeds", "view": "outputs" }),
+    )
+    .await;
+    let err = w
+        .fails(
+            "link",
+            json!({ "board": b, "from": "a2", "to": "a1", "type": "feeds", "view": "outputs" }),
+        )
+        .await;
+    assert!(err.contains("a1 → a2 → a1"), "{err}");
+    let err = w
+        .fails(
+            "link",
+            json!({ "board": b, "from": "a2", "to": n, "type": "updates" }),
+        )
+        .await;
+    assert!(err.contains("from an app to a checklist"), "{err}");
+
+    let overview = w.ok("board_read", json!({ "board": b })).await;
+    assert!(
+        overview.contains("a1  app \"Premium\" · never run"),
+        "{overview}"
+    );
+    assert!(
+        overview.contains(&format!("← {n} feeds (frontmatter) a1")),
+        "{overview}"
+    );
+
+    // Nobody has it open: nothing runs, nothing changes.
+    let before = w.revision().await;
+    let ran = w.ok("app_run", json!({ "board": b, "ref": "a1" })).await;
+    assert!(ran.starts_with("needs_viewer"), "{ran}");
+    assert_eq!(w.revision().await, before);
+
+    // A viewer has it open: the run commits there, credited to the agent.
+    let a1 = uuid::Uuid::parse_str(&w.data().await.resolve_item("a1").unwrap().id).unwrap();
+    let viewer = fake_viewer(&w, a1, json!({ "premium": 1200, "tier": "gold" }));
+    let ran = w.ok("app_run", json!({ "board": b, "ref": "a1" })).await;
+    viewer.await.unwrap();
+    assert!(
+        ran.contains("Ran a1.") && ran.contains("premium=1200"),
+        "{ran}"
+    );
+    let (by, agent): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT run_by, run_by_agent FROM app_output WHERE item_id = ?")
+            .bind(a1.to_string())
+            .fetch_one(&w.app.db)
+            .await
+            .unwrap();
+    assert_eq!(by.as_deref(), Some(w.user.as_str()));
+    assert_eq!(agent.as_deref(), Some("Claude Code on laptop"));
+    let again = w.ok("app_run", json!({ "board": b, "ref": "a1" })).await;
+    assert!(again.contains("up to date"), "{again}");
+
+    let overview = w.ok("board_read", json!({ "board": b })).await;
+    assert!(
+        overview.contains("a1  app \"Premium\" · fresh · v1: premium=1200, tier=\"gold\""),
+        "{overview}"
+    );
+    assert!(
+        overview.contains("a2  app \"Compare\" · never run"),
+        "{overview}"
+    );
+
+    // The note changes: a1 is stale, and says why.
+    let rev = w.data().await.resolve_item(&n).unwrap().revision;
+    w.ok(
+        "item_edit",
+        json!({ "board": b, "ref": n, "base_rev": rev, "old": "1200", "new": "1300" }),
+    )
+    .await;
+    let overview = w.ok("board_read", json!({ "board": b })).await;
+    assert!(
+        overview.contains(&format!("stale ({n} rev 0→1) · v1")),
+        "{overview}"
+    );
+
+    let read = w.ok("item_read", json!({ "board": b, "ref": "a1" })).await;
+    assert!(
+        read.contains(&format!("- {n}.frontmatter (rev 1, last run read rev 0)")),
+        "{read}"
+    );
+    assert!(read.contains("Output v1 · ok — run by"), "{read}");
+    assert!(
+        read.contains("never shown") && !read.contains("<!doctype"),
+        "{read}"
+    );
+
+    // The run ends without an output (its view closed, or an input moved): superseded.
+    let board = uuid::Uuid::parse_str(&w.board).unwrap();
+    let a2 = uuid::Uuid::parse_str(&w.data().await.resolve_item("a2").unwrap().id).unwrap();
+    w.app.rooms.mount(&board, a2, uuid::Uuid::new_v4(), true);
+    let rooms = w.app.clone();
+    let closer = tokio::spawn(async move {
+        while !rooms.rooms.running(&board, a2) {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        rooms.rooms.end_run(&board, a2);
+    });
+    let ran = w.ok("app_run", json!({ "board": b, "ref": "a2" })).await;
+    closer.await.unwrap();
+    assert!(ran.starts_with("superseded"), "{ran}");
 }

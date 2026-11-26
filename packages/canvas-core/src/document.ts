@@ -14,18 +14,20 @@ import { type Rect, transformBounds, unionRects } from './geometry';
 import type { CanvasId, GroupId, ItemId, LinkId } from './ids';
 import {
   type Anchor,
+  type AppOutput,
   type CanvasGroup,
   type CanvasItem,
   type Centerpiece,
   DEFAULT_APPEARANCE,
   FULL_CROP,
   hasSource,
+  isDataLink,
   isFullCrop,
   type Link,
   sameAnchor,
   type Task,
 } from './model';
-import type { CanvasOperationBody } from './operations';
+import type { AppOutputRecord, CanvasOperationBody } from './operations';
 import { SpatialIndex } from './spatial-index';
 
 /**
@@ -202,10 +204,66 @@ export class CanvasDocument {
     };
   }
 
+  /** What the item shows changed: its revision and its content revision bump. */
+  #contentChanged(item: CanvasItem, content: CanvasItem['content']): CanvasItem {
+    return {
+      ...this.#bumped(item, { content }),
+      ...(item.contentRev !== undefined ? { contentRev: item.contentRev + 1 } : {}),
+    };
+  }
+
   /** A checklist's tasks replaced; the item's revision bumps once. */
   #setTasks(item: CanvasItem, tasks: readonly Task[]): void {
     if (item.content.kind !== 'checklist') return;
-    this.#items.set(item.id, this.#bumped(item, { content: { ...item.content, tasks } }));
+    this.#items.set(item.id, this.#contentChanged(item, { ...item.content, tasks }));
+  }
+
+  /**
+   * An app's next output, as the server stores it (canvas/apps): its version
+   * after the last, its inputs stamped with their content revisions now, and
+   * the app's own content revision bumped only when the values changed. A
+   * record from the server is taken as it is.
+   */
+  #output(
+    app: CanvasItem,
+    next: Omit<AppOutput, 'version' | 'inputRevs'>,
+    inputRevs?: AppOutput['inputRevs'],
+    record?: AppOutputRecord,
+  ): AppOutput | undefined {
+    if (app.content.kind !== 'app') return undefined;
+    const last = app.content.output;
+    let output: AppOutput;
+    let contentRev = app.contentRev;
+    if (record) {
+      const { contentRev: rev, ...stored } = record;
+      output = stored;
+      contentRev = rev;
+    } else {
+      output = {
+        ...next,
+        version: (last?.version ?? 0) + 1,
+        inputRevs: inputRevs ?? this.#inputRevs(app.id),
+      };
+      const changed =
+        !last ||
+        JSON.stringify(last.outputs) !== JSON.stringify(output.outputs) ||
+        (last.text ?? null) !== (output.text ?? null);
+      if (changed && contentRev !== undefined) contentRev += 1;
+    }
+    this.#items.set(app.id, {
+      ...this.#bumped(app, { content: { ...app.content, output } }),
+      ...(contentRev !== undefined ? { contentRev } : {}),
+    });
+    return last;
+  }
+
+  /** Every item feeding an app, with its content revision now. */
+  #inputRevs(app: ItemId): Record<string, number> {
+    const revs: Record<string, number> = {};
+    for (const l of this.#links.values())
+      if (l.linkType === 'feeds' && l.to.itemId === app)
+        revs[l.from.itemId] = this.#items.get(l.from.itemId)?.contentRev ?? 0;
+    return revs;
   }
 
   #checklist(id: ItemId) {
@@ -312,7 +370,7 @@ export class CanvasDocument {
       case 'item.content': {
         const existing = this.#items.get(body.itemId);
         if (!existing) return undefined;
-        this.#put(this.#bumped(existing, { content: body.content }));
+        this.#put(this.#contentChanged(existing, body.content));
         return { type: 'item.content', itemId: body.itemId, content: existing.content };
       }
 
@@ -439,7 +497,7 @@ export class CanvasDocument {
         // client that measured it, as its own transform.
         this.#items.set(
           body.itemId,
-          this.#bumped(existing, { content: { ...existing.content, source: body.source } }),
+          this.#contentChanged(existing, { ...existing.content, source: body.source }),
         );
         return { type: 'item.source', itemId: body.itemId, source: previous };
       }
@@ -449,7 +507,7 @@ export class CanvasDocument {
         if (!found) return undefined;
         this.#items.set(
           body.itemId,
-          this.#bumped(found.item, { content: { ...found.list, title: body.title } }),
+          this.#contentChanged(found.item, { ...found.list, title: body.title }),
         );
         return { type: 'checklist.title', itemId: body.itemId, title: found.list.title };
       }
@@ -467,8 +525,10 @@ export class CanvasDocument {
         const found = this.#checklist(body.itemId);
         const task = found?.list.tasks.find((t) => t.id === body.taskId);
         if (!found || !task) return undefined;
+        const { byApp: _, ...rest } = task;
         const next: Task = {
-          ...task,
+          ...rest,
+          ...(body.byApp !== undefined ? { byApp: body.byApp } : {}),
           ...(body.text !== undefined ? { text: body.text } : {}),
           ...(body.state !== undefined ? { state: body.state } : {}),
           ...(body.by !== undefined ? { by: body.by } : {}),
@@ -510,6 +570,7 @@ export class CanvasDocument {
           from: body.from,
           to: body.to,
           linkType: body.linkType,
+          ...(body.view !== undefined ? { view: body.view } : {}),
           ...(body.by !== undefined ? { by: body.by } : {}),
           ...(body.byAgent !== undefined ? { byAgent: body.byAgent } : {}),
           ...(body.at !== undefined ? { at: body.at } : {}),
@@ -520,8 +581,77 @@ export class CanvasDocument {
       case 'link.set': {
         const existing = this.#links.get(body.linkId);
         if (!existing) return undefined;
-        this.#links.set(body.linkId, { ...existing, linkType: body.linkType });
-        return { type: 'link.set', linkId: body.linkId, linkType: existing.linkType };
+        // The server refuses these; a client never applies one either.
+        if (isDataLink(existing.linkType) !== isDataLink(body.linkType)) return undefined;
+        if (isDataLink(existing.linkType) && existing.linkType !== body.linkType) return undefined;
+        this.#links.set(body.linkId, {
+          ...existing,
+          linkType: body.linkType,
+          ...(body.view !== undefined ? { view: body.view } : {}),
+        });
+        return {
+          type: 'link.set',
+          linkId: body.linkId,
+          linkType: existing.linkType,
+          ...(body.view !== undefined && existing.view ? { view: existing.view } : {}),
+        };
+      }
+
+      case 'app.output': {
+        const app = this.#items.get(body.itemId);
+        if (app?.content.kind !== 'app') return undefined;
+        // A failed run with no values keeps the last ones, as the server does.
+        const keep = body.status === 'error' && Object.keys(body.outputs).length === 0;
+        const last = app.content.output;
+        const was = this.#output(
+          app,
+          {
+            outputs: keep && last ? last.outputs : body.outputs,
+            text: body.text ?? (keep ? (last?.text ?? null) : null),
+            status: body.status,
+            error: body.error ?? null,
+            by: body.by ?? null,
+            byAgent: body.byAgent ?? null,
+            at: body.at ?? null,
+          },
+          undefined,
+          body.record,
+        );
+        // Undo is the last values committed again, never history rewritten.
+        // The first run's undo is "never run" (version 0): local only, a run is
+        // never on a person's undo stack (canvas/apps).
+        return was
+          ? { type: 'app.output.revert', itemId: body.itemId, toVersion: was.version, was }
+          : { type: 'app.output.revert', itemId: body.itemId, toVersion: 0 };
+      }
+
+      case 'app.output.revert': {
+        const app = this.#items.get(body.itemId);
+        if (app?.content.kind !== 'app') return undefined;
+        if (body.toVersion === 0 && !body.record && app.content.output) {
+          const { output: _, ...never } = app.content;
+          this.#items.set(app.id, this.#bumped(app, { content: never }));
+          return undefined;
+        }
+        if (!body.record && !body.was) return undefined;
+        const restored = body.was;
+        const was = this.#output(
+          app,
+          {
+            outputs: restored?.outputs ?? {},
+            text: restored?.text ?? null,
+            status: restored?.status ?? 'ok',
+            error: restored?.error ?? null,
+            by: body.by ?? null,
+            byAgent: body.byAgent ?? null,
+            at: body.at ?? null,
+          },
+          restored?.inputRevs,
+          body.record,
+        );
+        return was
+          ? { type: 'app.output.revert', itemId: body.itemId, toVersion: was.version, was }
+          : undefined;
       }
 
       case 'board.centerpiece': {
@@ -540,6 +670,7 @@ export class CanvasDocument {
           from: existing.from,
           to: existing.to,
           linkType: existing.linkType,
+          ...(existing.view ? { view: existing.view } : {}),
           ...(existing.by !== undefined ? { by: existing.by } : {}),
           ...(existing.byAgent !== undefined ? { byAgent: existing.byAgent } : {}),
           ...(existing.at !== undefined ? { at: existing.at } : {}),

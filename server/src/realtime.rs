@@ -35,6 +35,10 @@ use crate::{AppState, PROTOCOL_VERSION};
 const COLOUR_SLOTS: usize = 6;
 const MAX_FRAME_ITEMS: usize = 1024;
 const LOCK_TTL_MS: u64 = 10_000;
+/// How long one client may hold an app's run (canvas/apps) before it lapses.
+const RUN_TTL_MS: u64 = 30_000;
+/// Task changes one run may propose to the checklists its app updates.
+pub const MAX_PROPOSALS: u32 = 20;
 /// Frames queued for one connection before it is cut off as too slow.
 const SEND_QUEUE: usize = 512;
 /// An agent leaves a board's participants after this long without a call
@@ -54,6 +58,9 @@ fn now_ms() -> u64 {
 
 struct Actor {
     id: Uuid,
+    /// The account this socket belongs to: what a posted batch naming the
+    /// socket must match (apps::check_runs).
+    user: String,
     display_name: String,
     colour: usize,
     tx: mpsc::Sender<Message>,
@@ -89,6 +96,28 @@ struct Lock {
     expires_at: u64,
 }
 
+/// One client's right to run an app now (canvas/apps): the only one whose
+/// outputs and task proposals commit, for the inputs as they were when granted.
+struct RunLease {
+    holder: Uuid,
+    input_revs: serde_json::Map<String, Value>,
+    until: u64,
+    proposals: u32,
+    /// The account and agent the run is credited to, when an agent asked for it.
+    credit: Option<(String, Option<String>)>,
+}
+
+/// What a request to run an app came to.
+#[derive(Debug, PartialEq, Eq)]
+pub enum RunGrant {
+    /// Granted to this client, which has the app open.
+    Leased(Uuid),
+    /// Someone is running it already.
+    Busy(Uuid),
+    /// Nobody has the app open, so nobody can run it.
+    NoViewer,
+}
+
 /// An agent working on a board: a participant with no socket, present while
 /// its tool calls keep coming (agents/presence).
 struct AgentPresence {
@@ -111,6 +140,10 @@ struct Room {
     viewers: Vec<Viewer>,
     locks: HashMap<Uuid, Lock>,
     agents: Vec<AgentPresence>,
+    /// App id → the clients with its view open, most recent last.
+    mounts: HashMap<Uuid, Vec<Uuid>>,
+    /// App id → who is running it.
+    runs: HashMap<Uuid, RunLease>,
 }
 
 impl Room {
@@ -145,6 +178,23 @@ impl Room {
     fn send_to(&self, actor: Uuid, frame: &Value) {
         if let Some(a) = self.actors.iter().find(|a| a.id == actor) {
             a.send(&Utf8Bytes::from(frame.to_string()));
+        }
+    }
+    /// Ends a run, telling everyone, so nobody waits on it.
+    fn end_run(&mut self, app: Uuid) {
+        if self.runs.remove(&app).is_some() {
+            self.broadcast(None, &json!({ "t": "run.end", "itemId": app }));
+        }
+    }
+    fn lapse_runs(&mut self, now: u64) {
+        let lapsed: Vec<Uuid> = self
+            .runs
+            .iter()
+            .filter(|(_, r)| r.until <= now)
+            .map(|(id, _)| *id)
+            .collect();
+        for app in lapsed {
+            self.end_run(app);
         }
     }
 }
@@ -263,6 +313,165 @@ impl Rooms {
         }
     }
 
+    /// Grants the run of `app` to one client that has it open: the requester
+    /// when it does, else whoever opened it last. Everyone hears who holds it.
+    pub fn request_run(
+        &self,
+        board: &Uuid,
+        app: Uuid,
+        requester: Option<Uuid>,
+        input_revs: serde_json::Map<String, Value>,
+    ) -> RunGrant {
+        self.request_run_at(board, app, requester, input_revs, now_ms())
+    }
+
+    fn request_run_at(
+        &self,
+        board: &Uuid,
+        app: Uuid,
+        requester: Option<Uuid>,
+        input_revs: serde_json::Map<String, Value>,
+        now: u64,
+    ) -> RunGrant {
+        self.lease(board, app, requester, input_revs, now, None)
+    }
+
+    /// The lease is made whole, credit included, before anyone hears of it:
+    /// the holder may post its output the moment `run.lease` arrives.
+    fn lease(
+        &self,
+        board: &Uuid,
+        app: Uuid,
+        requester: Option<Uuid>,
+        input_revs: serde_json::Map<String, Value>,
+        now: u64,
+        credit: Option<(String, Option<String>)>,
+    ) -> RunGrant {
+        self.with(board, |r| {
+            r.lapse_runs(now);
+            if let Some(run) = r.runs.get(&app) {
+                return RunGrant::Busy(run.holder);
+            }
+            let open = r.mounts.get(&app).cloned().unwrap_or_default();
+            let Some(holder) = requester
+                .filter(|q| open.contains(q))
+                .or_else(|| open.last().copied())
+            else {
+                return RunGrant::NoViewer;
+            };
+            let until = now + RUN_TTL_MS;
+            r.runs.insert(
+                app,
+                RunLease {
+                    holder,
+                    input_revs,
+                    until,
+                    proposals: 0,
+                    credit,
+                },
+            );
+            r.broadcast(
+                None,
+                &json!({ "t": "run.lease", "itemId": app, "holder": holder, "until": until }),
+            );
+            RunGrant::Leased(holder)
+        })
+    }
+
+    /// An agent's run (agents/apps): granted to whoever has `app` open, and
+    /// credited to the agent and its person, not to the viewer running it.
+    pub fn request_run_for(
+        &self,
+        board: &Uuid,
+        app: Uuid,
+        credit: (String, Option<String>),
+        input_revs: serde_json::Map<String, Value>,
+    ) -> RunGrant {
+        self.lease(board, app, None, input_revs, now_ms(), Some(credit))
+    }
+
+    /// Who `actor`'s run of `app` is credited to, when an agent asked for it.
+    pub fn run_credit(
+        &self,
+        board: &Uuid,
+        app: Uuid,
+        actor: Uuid,
+    ) -> Option<(String, Option<String>)> {
+        self.with(board, |r| {
+            r.runs
+                .get(&app)
+                .filter(|l| l.holder == actor)
+                .and_then(|l| l.credit.clone())
+        })
+    }
+
+    /// The account a socket on this board belongs to, while it is connected.
+    pub fn socket_user(&self, board: &Uuid, actor: Uuid) -> Option<String> {
+        self.with(board, |r| {
+            r.actors
+                .iter()
+                .find(|a| a.id == actor)
+                .map(|a| a.user.clone())
+        })
+    }
+
+    /// Whether anyone holds `app`'s run now.
+    pub fn running(&self, board: &Uuid, app: Uuid) -> bool {
+        let now = now_ms();
+        self.with(board, |r| {
+            r.lapse_runs(now);
+            r.runs.contains_key(&app)
+        })
+    }
+
+    /// The inputs `actor`'s run of `app` was granted for, when it holds it.
+    pub fn held_run(
+        &self,
+        board: &Uuid,
+        app: Uuid,
+        actor: Uuid,
+    ) -> Option<serde_json::Map<String, Value>> {
+        let now = now_ms();
+        self.with(board, |r| {
+            r.lapse_runs(now);
+            r.runs
+                .get(&app)
+                .filter(|l| l.holder == actor)
+                .map(|l| l.input_revs.clone())
+        })
+    }
+
+    /// Counts `n` task proposals against `actor`'s run of `app`; false past the limit.
+    pub fn propose(&self, board: &Uuid, app: Uuid, actor: Uuid, n: u32) -> bool {
+        self.with(board, |r| match r.runs.get_mut(&app) {
+            Some(l) if l.holder == actor && l.proposals + n <= MAX_PROPOSALS => {
+                l.proposals += n;
+                true
+            }
+            _ => false,
+        })
+    }
+
+    pub fn end_run(&self, board: &Uuid, app: Uuid) {
+        self.with(board, |r| r.end_run(app));
+    }
+
+    /// `actor` opened (or closed) `app`'s view; the last to open is first to run it.
+    pub fn mount(&self, board: &Uuid, app: Uuid, actor: Uuid, open: bool) {
+        self.with(board, |r| {
+            let list = r.mounts.entry(app).or_default();
+            list.retain(|a| *a != actor);
+            if open {
+                list.push(actor);
+            }
+        });
+    }
+
+    /// Whether anyone has `app` open: an agent's run needs a viewer (canvas/apps).
+    pub fn has_viewer(&self, board: &Uuid, app: Uuid) -> bool {
+        self.with(board, |r| r.mounts.get(&app).is_some_and(|m| !m.is_empty()))
+    }
+
     fn with<R>(&self, board: &Uuid, f: impl FnOnce(&mut Room) -> R) -> R {
         let mut rooms = self.0.lock().unwrap();
         f(rooms.entry(*board).or_default())
@@ -274,6 +483,18 @@ impl Rooms {
             return;
         };
         room.actors.retain(|a| a.id != actor);
+        for open in room.mounts.values_mut() {
+            open.retain(|a| *a != actor);
+        }
+        let held: Vec<Uuid> = room
+            .runs
+            .iter()
+            .filter(|(_, l)| l.holder == actor)
+            .map(|(id, _)| *id)
+            .collect();
+        for app in held {
+            room.end_run(app);
+        }
         let released: Vec<Uuid> = room
             .locks
             .iter()
@@ -386,7 +607,7 @@ pub async fn upgrade(
     ws.max_message_size(1024 * 1024).on_upgrade(move |socket| {
         let span =
             tracing::info_span!("ws", conn = %Uuid::now_v7(), board = %board, user = %user.id);
-        run(app, socket, board, user.display_name, session).instrument(span)
+        run(app, socket, board, user.id, user.display_name, session).instrument(span)
     })
 }
 
@@ -413,6 +634,7 @@ async fn run(
     app: AppState,
     socket: WebSocket,
     board: String,
+    user: String,
     display_name: String,
     session: Option<String>,
 ) {
@@ -439,6 +661,7 @@ async fn run(
     let mut connection = Connection {
         app: app.clone(),
         board,
+        user,
         display_name,
         actor: None,
         tx: tx.clone(),
@@ -665,6 +888,7 @@ fn close_message(code: u16, reason: &str) -> Message {
 struct Connection {
     app: AppState,
     board: Uuid,
+    user: String,
     display_name: String,
     actor: Option<Uuid>,
     tx: mpsc::Sender<Message>,
@@ -767,6 +991,36 @@ impl Connection {
                     }
                 });
             }
+            "app.mounted" | "app.unmounted" => {
+                for app in item_ids(&frame, "itemIds")? {
+                    rooms.mount(&self.board, app, actor, t == "app.mounted");
+                }
+            }
+            "run.request" => {
+                for app in item_ids(&frame, "itemIds")? {
+                    let state = crate::apps::run_state(&self.app.db, &self.board, &app)
+                        .await
+                        .map_err(|_| Close(SERVER_ERROR, "database unavailable".into()))?;
+                    // Not an app on this board: nothing to run, and nothing to say.
+                    let Some((input_revs, fresh)) = state else {
+                        continue;
+                    };
+                    let reply = if fresh {
+                        Some(json!({ "t": "run.done", "itemId": app }))
+                    } else {
+                        match rooms.request_run(&self.board, app, Some(actor), input_revs) {
+                            RunGrant::Leased(_) => None,
+                            RunGrant::Busy(holder) => {
+                                Some(json!({ "t": "run.busy", "itemId": app, "holder": holder }))
+                            }
+                            RunGrant::NoViewer => Some(json!({ "t": "run.none", "itemId": app })),
+                        }
+                    };
+                    if let Some(reply) = reply {
+                        rooms.with(&self.board, |r| r.send_to(actor, &reply));
+                    }
+                }
+            }
             other => tracing::debug!(frame = other, "ignoring an unknown frame type"),
         }
         Ok(())
@@ -795,6 +1049,7 @@ impl Connection {
             let colour = r.free_colour(letter_of(&name));
             r.actors.push(Actor {
                 id,
+                user: self.user.clone(),
                 display_name: name,
                 colour,
                 tx: self.tx.clone(),
@@ -912,6 +1167,82 @@ mod tests {
             let (name, letter) = (case[0].as_str().unwrap(), case[1].as_str().unwrap());
             assert_eq!(letter_of(name).to_string(), letter, "{name:?}");
         }
+    }
+
+    #[test]
+    fn one_client_runs_an_app_at_a_time() {
+        let rooms = Rooms::default();
+        let (board, app) = (Uuid::new_v4(), Uuid::new_v4());
+        let (ada, bo) = (Uuid::new_v4(), Uuid::new_v4());
+        let revs = serde_json::Map::new;
+        let t = now_ms();
+        assert_eq!(
+            rooms.request_run_at(&board, app, Some(ada), revs(), t),
+            RunGrant::NoViewer
+        );
+        rooms.mount(&board, app, ada, true);
+        rooms.mount(&board, app, bo, true);
+        // Two press Run at once: the first is granted, the second hears who has it.
+        assert_eq!(
+            rooms.request_run_at(&board, app, Some(ada), revs(), t),
+            RunGrant::Leased(ada)
+        );
+        assert_eq!(
+            rooms.request_run_at(&board, app, Some(bo), revs(), t + 1),
+            RunGrant::Busy(ada)
+        );
+        assert!(rooms.held_run(&board, app, ada).is_some());
+        assert!(rooms.held_run(&board, app, bo).is_none());
+        // A requester without the app open (an agent) gets whoever opened it last.
+        rooms.end_run(&board, app);
+        assert_eq!(
+            rooms.request_run_at(&board, app, None, revs(), t + 2),
+            RunGrant::Leased(bo)
+        );
+    }
+
+    #[test]
+    fn a_run_lapses_and_leaves_with_its_holder() {
+        let rooms = Rooms::default();
+        let (board, app, ada, bo) = (
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        let t = now_ms();
+        rooms.mount(&board, app, ada, true);
+        rooms.mount(&board, app, bo, true);
+        assert_eq!(
+            rooms.request_run_at(&board, app, Some(ada), serde_json::Map::new(), t),
+            RunGrant::Leased(ada)
+        );
+        // Past its time it is anyone's again.
+        assert_eq!(
+            rooms.request_run_at(
+                &board,
+                app,
+                Some(bo),
+                serde_json::Map::new(),
+                t + RUN_TTL_MS + 1
+            ),
+            RunGrant::Leased(bo)
+        );
+        // A holder who leaves the board takes the run with it.
+        assert!(rooms.held_run(&board, app, bo).is_some());
+        rooms.leave(&board, bo);
+        assert!(rooms.held_run(&board, app, bo).is_none());
+    }
+
+    #[test]
+    fn a_run_proposes_a_bounded_number_of_task_changes() {
+        let rooms = Rooms::default();
+        let (board, app, ada) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        rooms.mount(&board, app, ada, true);
+        rooms.request_run_at(&board, app, Some(ada), serde_json::Map::new(), now_ms());
+        assert!(rooms.propose(&board, app, ada, MAX_PROPOSALS));
+        assert!(!rooms.propose(&board, app, ada, 1));
+        assert!(!rooms.propose(&board, app, Uuid::new_v4(), 1));
     }
 
     fn agent(name: &str, colour: usize) -> AgentPresence {

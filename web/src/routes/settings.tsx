@@ -18,6 +18,7 @@ import {
 } from '~/api/accounts';
 import { type LocalPort, localPort, setLocalPort } from '~/api/desktop';
 import { type Account, providerStart, useSession } from '~/api/session';
+import { useCanvasApps } from '~/app/labs';
 import { setThemeChoice, type ThemeChoice, themeChoice } from '~/app/theme';
 import { CopyField, GhostButton, SectionHeading, TextField } from '~/components/settings-ui';
 import { useShortcutLegend } from '~/features/canvas/shortcut-legend';
@@ -52,6 +53,7 @@ function Settings() {
     ['agents', 'Agents', !!me],
     ['appearance', 'Appearance', true],
     ['canvas', 'Canvas', true],
+    ['labs', 'Labs', true],
     ['diagnostics', 'Diagnostics', !!me],
     ['about', 'About', !!me],
   ];
@@ -92,6 +94,7 @@ function Settings() {
         {me ? <AgentsSection singleUser={!shared} /> : null}
         <AppearanceSection />
         <CanvasSection />
+        <LabsSection />
         {me?.role && me.role !== 'member' && shared ? (
           <p className="mb-6 border-b border-line pb-6 text-ink-dim">
             Accounts, invitations and sign-in for this instance are in{' '}
@@ -179,6 +182,21 @@ function CanvasSection() {
         <input type="checkbox" checked={legend} onChange={(e) => setLegend(e.target.checked)} />
         Show shortcut legend
         <span className="text-ink-dim">(lower-left of the board, on this device)</span>
+      </label>
+    </section>
+  );
+}
+
+/** Experiments, off by default, on this device (app/labs.ts). */
+function LabsSection() {
+  const [apps, setApps] = useCanvasApps();
+  return (
+    <section id="labs" className="mb-6 scroll-mt-6 border-b border-line pb-6">
+      <SectionHeading>Labs</SectionHeading>
+      <label className="flex items-center gap-2 text-ink" data-testid="canvas-apps-setting">
+        <input type="checkbox" checked={apps} onChange={(e) => setApps(e.target.checked)} />
+        Canvas apps
+        <span className="text-ink-dim">(interactive app items; they run in the desktop app)</span>
       </label>
     </section>
   );

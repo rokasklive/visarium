@@ -61,6 +61,13 @@ pub fn body(source: &str) -> &str {
     }
 }
 
+/// The frontmatter's text between its fences, when the source opens with
+/// frontmatter that closes in time (the same rule as [`body`]).
+pub fn frontmatter(source: &str) -> Option<String> {
+    let lines: Vec<&str> = source.split('\n').collect();
+    frontmatter_end(&lines).map(|end| lines[1..end].join("\n"))
+}
+
 pub fn status_of(source: &str) -> Option<Status> {
     let lines: Vec<&str> = source.lines().collect();
     if let Some(end) = frontmatter_end(&lines) {

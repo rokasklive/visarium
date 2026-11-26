@@ -16,7 +16,7 @@ use crate::agent::status::{Status, status_of};
 use crate::agent::{Caller, Out, arg_i64, arg_str, opt_str};
 use crate::boards::{self, Anchor, Content, ItemRow, Op, Task, Transform};
 
-const LINK_TYPES: [&str; 4] = ["describes", "comments", "implements", "depends-on"];
+use crate::boards::LINK_TYPES;
 const TASK_STATES: [&str; 4] = ["todo", "doing", "done", "blocked"];
 
 pub async fn run(
@@ -37,9 +37,16 @@ pub async fn run(
     }
     let step = match tool {
         "item_create" => item_create(app, caller, args, params).await?,
+        "app_create" => {
+            let mut a = args.clone();
+            a["kind"] = json!("app");
+            item_create(app, caller, &a, params).await?
+        }
         "item_edit" => item_edit(app, caller, args, params).await?,
         "item_delete" => item_delete(app, caller, args, params).await?,
         "tasks" => Step::Done(tasks(app, caller, args).await?),
+        // A run writes (an output, task changes): it counts like any write.
+        "app_run" => Step::Done(app_run(app, caller, args).await?),
         "link" => Step::Done(link(app, caller, args).await?),
         "unlink" => Step::Done(unlink(app, caller, args).await?),
         "arrange" => Step::Done(arrange(app, caller, args).await?),
@@ -690,7 +697,11 @@ async fn item_create(
     let link = match args.get("link").filter(|l| l.is_object()) {
         Some(l) => {
             let (to, element) = b.resolve_anchor(arg_str(l, "to")?, true)?;
-            Some((link_type(l, "type")?, anchor(to, element)))
+            Some((
+                link_type(l, "type")?,
+                anchor(to, element),
+                opt_str(l, "view").map(String::from),
+            ))
         }
         None => None,
     };
@@ -705,6 +716,7 @@ async fn item_create(
                     source: Some(source.into()),
                     title: None,
                     tasks: None,
+                    html: None,
                 },
                 place::estimate("note", source, 0),
             )
@@ -725,6 +737,7 @@ async fn item_create(
                     source: Some(source.into()),
                     title: None,
                     tasks: None,
+                    html: None,
                 },
                 place::estimate("diagram", source, 0),
             )
@@ -748,6 +761,7 @@ async fn item_create(
                     state: "todo".into(),
                     by: None,
                     by_agent: None,
+                    by_app: None,
                     at: None,
                 })
                 .collect();
@@ -760,6 +774,7 @@ async fn item_create(
                     source: None,
                     title: Some(title),
                     tasks: Some(tasks),
+                    html: None,
                 },
                 place::estimate("checklist", "", texts.len()),
             )
@@ -790,8 +805,46 @@ async fn item_create(
                     source: None,
                     title: None,
                     tasks: None,
+                    html: None,
                 },
                 (w, h),
+            )
+        }
+        "app" => {
+            let title = arg_str(args, "title")?;
+            let html = arg_str(args, "html")?;
+            let head = html
+                .trim_start()
+                .get(..200)
+                .unwrap_or(html.trim_start())
+                .to_ascii_lowercase();
+            if !(head.starts_with("<!doctype html") || head.starts_with("<html")) {
+                return Err("html must be a whole HTML document, starting with <!doctype html> or <html>. Nothing was created.".into());
+            }
+            let size = serde_json::to_string(&crate::apps::AppBody {
+                title: title.into(),
+                html: html.into(),
+            })
+            .map_or(0, |b| b.len());
+            if size > boards::MAX_APP_BODY {
+                return Err(format!(
+                    "The app is {} KiB; an app's HTML and title may be at most {} KiB. Nothing was created.",
+                    size / 1024,
+                    boards::MAX_APP_BODY / 1024
+                ));
+            }
+            (
+                Content {
+                    kind: Some("app".into()),
+                    asset: None,
+                    lang: None,
+                    source: None,
+                    title: Some(title.into()),
+                    tasks: None,
+                    html: Some(html.into()),
+                },
+                // ponytail: one default size; an app fills whatever box it is given.
+                (360.0, 240.0),
             )
         }
         other => {
@@ -825,7 +878,7 @@ async fn item_create(
     };
     let l = layout(&b, &[], at.group.as_deref());
     let ends: Vec<(LinkEnd, String)> = match &link {
-        Some((_, to)) => {
+        Some((_, to, _)) => {
             let other = b
                 .item(&to.item_id.to_string())
                 .ok_or("The link's other end is gone.")?;
@@ -877,7 +930,7 @@ async fn item_create(
             member_ids: Some(group_members(&b, g, &[item_id.to_string()], &[])),
         });
     }
-    if let Some((ty, to)) = &link {
+    if let Some((ty, to, view)) = &link {
         ops.push(Op::LinkAdd {
             link_id: Uuid::now_v7(),
             from: Anchor {
@@ -886,6 +939,7 @@ async fn item_create(
             },
             to: to.clone(),
             link_type: ty.clone(),
+            view: view.clone(),
             by: None,
             by_agent: None,
             at: None,
@@ -906,7 +960,7 @@ async fn item_create(
             &l
         )
     );
-    if let Some((ty, to)) = &link {
+    if let Some((ty, to, _)) = &link {
         text.push_str(&format!(
             " Linked {} {ty} {}.",
             made.short_ref(),
@@ -1210,6 +1264,7 @@ async fn tasks(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, Fai
             state,
             by: None,
             by_agent: None,
+            by_app: None,
             at: None,
         });
     }
@@ -1265,6 +1320,7 @@ async fn tasks(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, Fai
                 state: state.into(),
                 by: None,
                 by_agent: None,
+                by_app: None,
                 at: None,
             },
             index,
@@ -1316,8 +1372,16 @@ async fn link(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, Fail
     let (from, from_el) = b.resolve_anchor(arg_str(args, "from")?, true)?;
     let (to, to_el) = b.resolve_anchor(arg_str(args, "to")?, true)?;
     let ty = link_type(args, "type")?;
+    let view = opt_str(args, "view").map(String::from);
     if from.id == to.id && from_el == to_el {
         return Err("A link needs two different ends.".into());
+    }
+    if ty == "feeds" && view.is_none() {
+        return Err(format!(
+            "A feeds link carries one of {}'s views: {}. Pass view.",
+            b.ref_of(&from.id),
+            crate::views::offered(&from.kind).join(", ")
+        ));
     }
     let existing = b.links.iter().find(|l| {
         l.from_item == from.id
@@ -1326,12 +1390,13 @@ async fn link(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, Fail
             && l.to_element == to_el
     });
     let label = format!(
-        "{} {ty} {}",
+        "{}{} {ty} {}",
         b.anchor_text(&from.id, from_el.as_deref()),
+        view.as_deref().map(|v| format!(".{v}")).unwrap_or_default(),
         b.anchor_text(&to.id, to_el.as_deref())
     );
     let (op, said) = match existing {
-        Some(l) if l.link_type == ty => {
+        Some(l) if l.link_type == ty && l.view == view => {
             return Ok(Out::text(format!(
                 "{label} already exists; nothing changed."
             )));
@@ -1340,11 +1405,9 @@ async fn link(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, Fail
             Op::LinkSet {
                 link_id: Uuid::parse_str(&l.id).unwrap(),
                 link_type: ty.clone(),
+                view: view.clone(),
             },
-            format!(
-                "Changed the link's type from {} to {ty}: {label}.",
-                l.link_type
-            ),
+            format!("Changed the link from {} to {ty}: {label}.", link_word(l)),
         ),
         None => (
             Op::LinkAdd {
@@ -1352,6 +1415,7 @@ async fn link(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, Fail
                 from: anchor(from, from_el.clone()),
                 to: anchor(to, to_el.clone()),
                 link_type: ty.clone(),
+                view: view.clone(),
                 by: None,
                 by_agent: None,
                 at: None,
@@ -1363,6 +1427,119 @@ async fn link(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, Fail
     Ok(Out::text(format!("{said} Board at rev {revision}."))
         .with(json!({ "boardRevision": revision }))
         .touch(b.id, Some(from.id.clone()), "editing"))
+}
+
+// --- running an app (agents/apps) ----------------------------------------------
+
+/// How long `app_run` waits for the view running the app to report back.
+const RUN_WAIT_MS: u64 = 30_000;
+
+pub async fn app_run(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, Fail> {
+    let board = find_board(&app.db, arg_str(args, "board")?).await?;
+    let b = BoardData::load(&app.db, &board).await?;
+    let item = b.resolve_item(arg_str(args, "ref")?)?;
+    let r = item.short_ref();
+    if item.kind != "app" {
+        return Err(format!("{r} is a {}; only an app runs.", item.kind));
+    }
+    let id = Uuid::parse_str(&item.id).unwrap();
+    let (stamps, fresh) = crate::apps::run_state(&app.db, &b.id, &id)
+        .await
+        .map_err(db_fail)?
+        .ok_or("The app is gone.")?;
+    let report = |b: &BoardData, head: String, status: &str| -> Out {
+        let o = b.outputs.get(&item.id);
+        let text = match o {
+            Some(o) => format!(
+                "{head} Output v{} · {}{}: {}",
+                o.version,
+                o.status,
+                o.error
+                    .as_deref()
+                    .map(|e| format!(" ({e})"))
+                    .unwrap_or_default(),
+                crate::agent::read::output_values(o, 16)
+            ),
+            None => head,
+        };
+        Out::text(text)
+            .with(json!({ "status": status, "output": o.map(|o| o.to_json()) }))
+            .touch(b.id, Some(item.id.clone()), "editing")
+    };
+    if fresh {
+        return Ok(report(
+            &b,
+            format!("{r} is up to date: nothing it reads changed since its last run."),
+            "fresh",
+        ));
+    }
+    let needs_viewer = || {
+        Out::text(format!(
+            "needs_viewer: nobody has {r} open, so it cannot run. An app runs in a person's view: ask your person to open {r} on the board (double-click it, in the desktop app), then call app_run again. Nothing changed."
+        ))
+        .with(json!({ "status": "needs_viewer" }))
+    };
+    if !app.rooms.has_viewer(&b.id, id) {
+        return Ok(needs_viewer());
+    }
+    let before = b.outputs.get(&item.id).map_or(0, |o| o.version);
+    let actor = caller.actor();
+    let busy = match app
+        .rooms
+        .request_run_for(&b.id, id, (actor.user_id, actor.agent), stamps)
+    {
+        crate::realtime::RunGrant::NoViewer => return Ok(needs_viewer()),
+        crate::realtime::RunGrant::Busy(_) => true,
+        crate::realtime::RunGrant::Leased(_) => false,
+    };
+    let started = std::time::Instant::now();
+    loop {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let version: i64 = sqlx::query_scalar(
+            "SELECT coalesce(max(version), 0) FROM app_output WHERE item_id = ?",
+        )
+        .bind(&item.id)
+        .fetch_one(&app.db)
+        .await
+        .map_err(db_fail)?;
+        if version > before {
+            let after = reload(app, &b).await?;
+            let errored = after
+                .outputs
+                .get(&item.id)
+                .is_some_and(|o| o.status == "error");
+            let head = format!(
+                "Ran {r}{}.",
+                if busy {
+                    " (a run already under way finished)"
+                } else {
+                    ""
+                }
+            );
+            return Ok(report(&after, head, if errored { "error" } else { "ok" }));
+        }
+        if !app.rooms.running(&b.id, id) {
+            return Ok(Out::text(format!(
+                "superseded: {r}'s run ended without an output, because what it reads changed during the run or its view closed. Read the board and run it again."
+            ))
+            .with(json!({ "status": "superseded" })));
+        }
+        if started.elapsed().as_millis() as u64 > RUN_WAIT_MS {
+            return Ok(Out::text(format!(
+                "{r} is still running after {} s. Its output lands on the board when it is done; read {r} later.",
+                RUN_WAIT_MS / 1000
+            ))
+            .with(json!({ "status": "running" })));
+        }
+    }
+}
+
+/// `describes`, or `feeds (frontmatter)`.
+fn link_word(l: &crate::boards::LinkRow) -> String {
+    match &l.view {
+        Some(v) => format!("{} ({v})", l.link_type),
+        None => l.link_type.clone(),
+    }
 }
 
 async fn unlink(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, Fail> {

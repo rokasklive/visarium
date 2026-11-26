@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { objectCss } from './style';
 
-const css = objectCss({ ink: 'INK', inkDim: 'DIM', accent: 'ACC', line: 'LINE', ground: 'GROUND' });
+const css = objectCss({
+  ink: 'INK',
+  inkDim: 'DIM',
+  accent: 'ACC',
+  line: 'LINE',
+  ground: 'GROUND',
+  surface: 'SURF',
+  raised: 'RAISED',
+  itemEdge: 'EDGE',
+});
 
 describe('the object stylesheet', () => {
   it('positions and transforms nothing (WebKit misplaces those in a scaled foreignObject)', () => {
@@ -16,6 +25,7 @@ describe('the object stylesheet', () => {
     const withoutUrls = css.replace(/url\([^)]*\)/g, '');
     expect(withoutUrls).not.toMatch(/#[0-9a-f]{3,8}\b/i);
     expect(withoutUrls).not.toMatch(/\b(?:oklch|hsl)\(/);
-    for (const token of ['INK', 'DIM', 'ACC', 'LINE', 'GROUND']) expect(css).toContain(token);
+    for (const token of ['INK', 'DIM', 'ACC', 'LINE', 'GROUND', 'SURF', 'RAISED', 'EDGE'])
+      expect(css).toContain(token);
   });
 });

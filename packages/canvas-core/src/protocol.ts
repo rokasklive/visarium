@@ -119,7 +119,12 @@ export type ClientMessage =
    */
   | { readonly t: 'transform.preview'; readonly items: readonly PreviewItem[] }
   | { readonly t: 'lock.acquire'; readonly itemIds: readonly ItemId[] }
-  | { readonly t: 'lock.release'; readonly itemIds: readonly ItemId[] };
+  | { readonly t: 'lock.release'; readonly itemIds: readonly ItemId[] }
+  /** This client opened or closed these apps' views (canvas/apps): it can run them. */
+  | { readonly t: 'app.mounted'; readonly itemIds: readonly ItemId[] }
+  | { readonly t: 'app.unmounted'; readonly itemIds: readonly ItemId[] }
+  /** Asks to run these apps: one client at a time may, for the inputs as they are. */
+  | { readonly t: 'run.request'; readonly itemIds: readonly ItemId[] };
 
 /** Server → browser. */
 export type ServerMessage =
@@ -162,6 +167,21 @@ export type ServerMessage =
       readonly heldBy: ActorId | null;
       readonly expiresAt: number;
     }
+  /** Who runs an app now (canvas/apps): only that client's outputs commit, until `until`. */
+  | {
+      readonly t: 'run.lease';
+      readonly itemId: ItemId;
+      readonly holder: ActorId;
+      readonly until: number;
+    }
+  /** The run is over: committed, superseded, lapsed or its holder left. */
+  | { readonly t: 'run.end'; readonly itemId: ItemId }
+  /** To the requester: someone else is running it. */
+  | { readonly t: 'run.busy'; readonly itemId: ItemId; readonly holder: ActorId }
+  /** To the requester: nobody has the app open to run it. */
+  | { readonly t: 'run.none'; readonly itemId: ItemId }
+  /** To the requester: its output already matches its inputs; nothing to run. */
+  | { readonly t: 'run.done'; readonly itemId: ItemId }
   /** The client is too far behind to catch up. Refetch the snapshot over REST. */
   | { readonly t: 'resync'; readonly revision: number }
   /**

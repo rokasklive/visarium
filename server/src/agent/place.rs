@@ -495,6 +495,7 @@ mod tests {
             home_y: None,
             element_boxes: boxes.map(str::to_string),
             element_rev,
+            content_rev: 0,
         }
     }
 

@@ -43,6 +43,8 @@ export interface Task {
   readonly by?: string | null;
   /** The agent that acted for `by`, when one did (ADR-0031). Stamped by the server. */
   readonly byAgent?: string | null;
+  /** The app whose run made the last change (canvas/apps), when one did. */
+  readonly byApp?: string | null;
   readonly at?: string | null;
 }
 
@@ -66,11 +68,58 @@ export type CanvasItemContent =
   | { readonly kind: 'note'; readonly source: string }
   | { readonly kind: 'diagram'; readonly lang: DiagramLang; readonly source: string }
   | { readonly kind: 'checklist'; readonly title: string; readonly tasks: readonly Task[] }
+  /** An interactive HTML view run in a sandbox (canvas/apps, ADR-0034). */
+  | {
+      readonly kind: 'app';
+      readonly title: string;
+      readonly html: string;
+      /** The latest run's result; absent until the app has run. */
+      readonly output?: AppOutput;
+    }
   /**
    * A kind this client does not know: a newer server's. Kept so the item still
    * occupies its place and can be moved or deleted, never edited or rendered.
    */
   | { readonly kind: 'unknown'; readonly original: string };
+
+/**
+ * One run of an app, as the server stored it (canvas/apps): named values, the
+ * content revision of every input it read, and who ran it.
+ */
+export interface AppOutput {
+  readonly version: number;
+  readonly outputs: Readonly<Record<string, unknown>>;
+  readonly text?: string | null;
+  /** Input item id → its content revision when this run committed. */
+  readonly inputRevs: Readonly<Record<string, number>>;
+  readonly status: 'ok' | 'error';
+  readonly error?: string | null;
+  readonly by?: string | null;
+  readonly byAgent?: string | null;
+  readonly at?: string | null;
+}
+
+/** A stored output from the wire, or undefined when it is not one. */
+export function outputFrom(raw: unknown): AppOutput | undefined {
+  const o = (raw ?? null) as Record<string, unknown> | null;
+  if (!o || typeof o.version !== 'number' || typeof o.outputs !== 'object' || !o.outputs)
+    return undefined;
+  const revs: Record<string, number> = {};
+  for (const [k, v] of Object.entries((o.inputRevs ?? {}) as Record<string, unknown>))
+    if (typeof v === 'number') revs[k] = v;
+  const str = (v: unknown) => (typeof v === 'string' ? v : null);
+  return {
+    version: o.version,
+    outputs: o.outputs as Record<string, unknown>,
+    text: str(o.text),
+    inputRevs: revs,
+    status: o.status === 'error' ? 'error' : 'ok',
+    error: str(o.error),
+    by: str(o.by),
+    byAgent: str(o.byAgent),
+    at: str(o.at),
+  };
+}
 
 /** Content whose source text the person or an agent edits. */
 export function hasSource(
@@ -132,10 +181,20 @@ export function contentFrom(raw: unknown): CanvasItemContent | undefined {
               state,
               by: str(t.by) ?? null,
               ...(typeof t.byAgent === 'string' ? { byAgent: t.byAgent } : {}),
+              ...(typeof t.byApp === 'string' ? { byApp: t.byApp } : {}),
               at: str(t.at) ?? null,
             },
           ];
         }),
+      };
+    }
+    case 'app': {
+      const output = outputFrom(c.output);
+      return {
+        kind: 'app',
+        title: str(c.title) ?? '',
+        html: str(c.html) ?? '',
+        ...(output ? { output } : {}),
       };
     }
     default:
@@ -209,6 +268,13 @@ export interface CanvasItem {
    */
   readonly revision?: number;
   /**
+   * Counts changes to what the item shows (source, tasks, asset, an app's
+   * outputs), never where it is: an app's outputs are stamped with their inputs'
+   * content revisions, so moving a note does not make its apps stale
+   * (canvas/apps). Mirrors the server; absent until a snapshot says otherwise.
+   */
+  readonly contentRev?: number;
+  /**
    * Collision on: the board pushes this item aside when something overlaps it.
    * Off or absent: it never moves, though others keep clear of it
    * (canvas/collision). A group's setting wins for its members.
@@ -249,13 +315,25 @@ export interface Anchor {
   readonly element?: string | null;
 }
 
-export type LinkType = 'describes' | 'comments' | 'implements' | 'depends-on';
-export const LINK_TYPES: readonly LinkType[] = [
+/** What relates to what. Grants nothing. */
+export type SemanticLinkType = 'describes' | 'comments' | 'implements' | 'depends-on';
+/**
+ * A connection that grants an app access (canvas/links): `feeds` lets the app
+ * read one view of its source, `updates` lets it propose changes to a checklist.
+ */
+export type DataLinkType = 'feeds' | 'updates';
+export type LinkType = SemanticLinkType | DataLinkType;
+export const SEMANTIC_LINK_TYPES: readonly SemanticLinkType[] = [
   'describes',
   'comments',
   'implements',
   'depends-on',
 ];
+export const LINK_TYPES: readonly LinkType[] = [...SEMANTIC_LINK_TYPES, 'feeds', 'updates'];
+
+export function isDataLink(type: LinkType): type is DataLinkType {
+  return type === 'feeds' || type === 'updates';
+}
 
 /** What relates to what. Its own record, not part of either item. */
 export interface Link {
@@ -263,6 +341,8 @@ export interface Link {
   readonly from: Anchor;
   readonly to: Anchor;
   readonly linkType: LinkType;
+  /** A `feeds` link's view of its source (canvas/item-views); absent otherwise. */
+  readonly view?: string | null;
   readonly by?: string | null;
   /** The agent that acted for `by`, when one did (ADR-0031). Stamped by the server. */
   readonly byAgent?: string | null;

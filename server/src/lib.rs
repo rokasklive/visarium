@@ -8,6 +8,7 @@
 //!     to loopback, and no sign-in screen.
 
 pub mod agent;
+pub mod apps;
 pub mod assets;
 pub mod auth;
 pub mod boards;
@@ -24,6 +25,7 @@ pub mod realtime;
 pub mod sharing;
 pub mod storage;
 pub mod telemetry;
+pub mod views;
 pub mod vision;
 
 use std::path::PathBuf;
@@ -78,6 +80,10 @@ pub struct Config {
     /// A decode budget shared with other instances in this process (every
     /// demo sandbox draws from one); a budget of its own when None.
     pub decode_permits: Option<Arc<tokio::sync::Semaphore>>,
+    /// Where app views load from (canvas/apps): an origin other than this
+    /// instance's, served by [`apps::sandbox_router`]. None: apps show as
+    /// cards only, and say they run in the desktop app.
+    pub apps_origin: Option<String>,
 }
 
 pub struct App {
@@ -105,6 +111,8 @@ pub struct App {
     /// Serialises claiming a fresh instance, so two first requests cannot both
     /// become its admin.
     pub setup_lock: tokio::sync::Mutex<()>,
+    /// Short-lived grants to load one app's view from the sandbox origin.
+    pub mounts: apps::Mounts,
     /// The single-user account's id, when `single_user`.
     pub local_user: Option<String>,
     /// Lets agents import images from private addresses. Off, and only ever
@@ -224,6 +232,7 @@ pub async fn open(config: Config) -> anyhow_lite::Result<AppState> {
         image_permits,
         undrawable: Default::default(),
         setup_lock: Default::default(),
+        mounts: Default::default(),
         local_user,
         allow_private_imports: Default::default(),
         closing: Default::default(),
@@ -418,9 +427,19 @@ pub async fn serve_until(
         .await
 }
 
+/// Serves app views on their own origin (canvas/apps) until the process ends:
+/// [`apps::sandbox_router`] and nothing else, so nothing there carries a session.
+pub async fn serve_sandbox(
+    state: AppState,
+    listener: tokio::net::TcpListener,
+) -> std::io::Result<()> {
+    axum::serve(listener, apps::sandbox_router(state)).await
+}
+
 async fn meta(State(app): State<AppState>) -> Json<serde_json::Value> {
     Json(
-        json!({ "name": "visarium", "version": app.config.version, "protocolVersion": PROTOCOL_VERSION }),
+        json!({ "name": "visarium", "version": app.config.version, "protocolVersion": PROTOCOL_VERSION,
+                "appsOrigin": app.config.apps_origin }),
     )
 }
 

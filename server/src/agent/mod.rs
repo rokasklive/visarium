@@ -682,12 +682,15 @@ async fn run_tool(app: &AppState, caller: &Caller, params: &Value) -> Value {
         "search" => read::search(app, &args).await,
         "changes" => read::changes(app, &args).await,
         "item_view" => read::item_view(app, &args).await,
-        "item_create" | "item_edit" | "tasks" | "link" | "unlink" | "arrange" | "group_create"
-        | "item_delete" => match write::run(app, caller, name, params).await {
-            Ok(boards::Step::Ask(result)) => return result,
-            Ok(boards::Step::Done(out)) => Ok(out),
-            Err(e) => Err(e),
-        },
+        "item_views" => read::item_views(app, &args).await,
+        "item_create" | "app_create" | "app_run" | "item_edit" | "tasks" | "link" | "unlink"
+        | "arrange" | "group_create" | "item_delete" => {
+            match write::run(app, caller, name, params).await {
+                Ok(boards::Step::Ask(result)) => return result,
+                Ok(boards::Step::Done(out)) => Ok(out),
+                Err(e) => Err(e),
+            }
+        }
         _ => Err(format!(
             "There is no tool '{name}'. The tools: {}.",
             TOOL_NAMES.join(", ")
@@ -729,7 +732,7 @@ fn answer(app: &AppState, caller: &Caller, outcome: Result<Out, String>) -> Valu
 
 // --- what the agent is told ----------------------------------------------------------
 
-const TOOL_NAMES: [&str; 15] = [
+const TOOL_NAMES: [&str; 18] = [
     "desk",
     "board_read",
     "item_read",
@@ -737,7 +740,10 @@ const TOOL_NAMES: [&str; 15] = [
     "search",
     "changes",
     "item_view",
+    "item_views",
     "item_create",
+    "app_create",
+    "app_run",
     "item_edit",
     "tasks",
     "link",
@@ -806,13 +812,26 @@ fn tools(manage_boards: bool) -> Value {
             "title": r("For a checklist."),
             "tasks": { "type": "array", "items": { "type": "string" }, "description": "For a checklist: task texts, in order." },
             "link": { "type": "object", "description": "Optional link from the new item, e.g. { \"type\": \"describes\", \"to\": \"d1#OpQueue\" }.",
-                "properties": { "type": { "type": "string", "enum": ["describes", "comments", "implements", "depends-on"] }, "to": r("A ref or element ref.") },
+                "properties": { "type": { "type": "string", "enum": ["describes", "comments", "implements", "depends-on", "feeds", "updates"] }, "to": r("A ref or element ref."), "view": r("For feeds into an app: the view of the new item it reads, e.g. frontmatter.") },
                 "required": ["type", "to"] },
             "collides": { "type": "boolean", "description": "Optional, default true: the board moves the item aside when something lands on it. False fixes it in place." },
             "request_id": request_id,
         },
         "required": ["board", "kind"],
     });
+    let mut app_create = json!({
+        "type": "object",
+        "properties": {
+            "board": board, "title": r("The app's title, shown on its card."),
+            "html": r("The whole HTML document, at most 256 KiB, starting with <!doctype html>. It speaks the MCP Apps bridge; scripts and styles inline, no network. Visarium dresses it in its app kit, themed to the board: plain HTML (headings, p, dl readouts, tables, buttons, inputs, select, range, progress) already looks right, so write semantic HTML and add few or no styles of your own. Kit classes: .figure (the key number), .unit, .label, .muted, .num, .row/.stack/.grid, .badge with .is-good/.is-pending/.is-bad, .notice, .empty, .field, .bars (li style=\"--v:0.6\", .is-key), svg.chart with .line/.area/.axis/.mark."),
+            "link": { "type": "object", "description": "Optional link from the new app, e.g. { \"type\": \"updates\", \"to\": \"c1\" }.",
+                "properties": { "type": { "type": "string", "enum": ["describes", "comments", "implements", "depends-on", "feeds", "updates"] }, "to": r("A ref."), "view": r("For feeds: outputs.") },
+                "required": ["type", "to"] },
+            "request_id": request_id,
+        },
+        "required": ["board", "title", "html"],
+    });
+    placement(&mut app_create);
     placement(&mut create);
     let layout = |schema: &mut Value| {
         schema["properties"]["layout"] = json!({ "type": "string", "enum": ["row", "column", "grid"], "description": "Line the items up in reading order, as one block." });
@@ -871,9 +890,19 @@ fn tools(manage_boards: bool) -> Value {
         { "name": "item_view", "title": "Look at an image",
           "description": "An image item's pixels, as the board shows it (cropped if cropped), at about the width you ask for, after its text description when the server has one. Only images: read everything else with item_read.",
           "inputSchema": { "type": "object", "properties": { "board": board, "ref": r("An image ref, e.g. i1."), "width": { "type": "integer", "description": "Pixels wide, default 1024." } }, "required": ["board", "ref"] }, "annotations": read_only },
+        { "name": "item_views", "title": "Read an item as data",
+          "description": "An item as structured data rather than source: a note's text, markdown, frontmatter (an object) or tables (rows keyed by their headers); a diagram's text or graph (elements and edges); a checklist's text or tasks; an image's text (its description) or asset (type, size, URL); a group's members. Without view, lists the views the item offers. Each answer carries the revision it was derived from.",
+          "inputSchema": { "type": "object", "properties": { "board": board, "ref": r("An item or group ref, e.g. n3 or g2."), "view": r("Optional: e.g. frontmatter, tables, graph, tasks, members.") }, "required": ["board", "ref"] }, "annotations": read_only },
         { "name": "item_create", "title": "Add a note, diagram, checklist or image",
           "description": "Adds an item, placed by the server next to (near, below, right_of) or inside (in) something you name, optionally with a link from it, all in one step. Example: a note that explains a node — kind \"note\", source \"…\", near \"d1\", link { type \"describes\", to \"d1#OpQueue\" }. Returns the new ref.",
           "inputSchema": create, "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false } },
+        { "name": "app_create", "title": "Add an app",
+          "description": "Adds an app: a self-contained HTML document that runs in a sandboxed view on the board, reads the items that feed it and publishes outputs. Placed like item_create, optionally with a link from it (e.g. { type \"updates\", to \"c1\" }). Connect its inputs afterwards with link(type: \"feeds\", view: …). Returns the new ref.",
+          "inputSchema": app_create, "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false } },
+        { "name": "app_run", "title": "Run an app",
+          "description": "Runs an app on what feeds it now and waits up to 30 seconds for its outputs. An app runs in a person's open view of it: when nobody has it open the result is needs_viewer and nothing changes. An app already up to date returns its current output without running. Its output and any tasks it sets are credited to you for your person.",
+          "inputSchema": { "type": "object", "properties": { "board": board, "ref": r("The app, e.g. a1."), "request_id": request_id }, "required": ["board", "ref"] },
+          "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false } },
         { "name": "item_edit", "title": "Edit a note's or diagram's source",
           "description": "Changes source, either by replacing one exact passage (old → new; old must occur exactly once) or with the whole new source. base_rev is the revision you read; if someone changed the item since, the edit is refused and you are told what changed. For diagrams the result lists elements added and removed and links broken or repaired. Changing an accepted decision, or moving a note's status anywhere but proposed or open, waits for your person's confirmation; when they cannot be asked, write a proposed decision that supersedes it instead.",
           "inputSchema": { "type": "object", "properties": {
@@ -894,9 +923,10 @@ fn tools(manage_boards: bool) -> Value {
             "required": ["board", "ref"] },
           "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false } },
         { "name": "link", "title": "Link two things",
-          "description": "A typed link from one ref to another; either end may be a diagram element (d1#OpQueue). from describes / comments on / implements / depends on to. If the two are already linked, the link's type is changed instead.",
+          "description": "A typed link from one ref to another; either end may be a diagram element (d1#OpQueue). from describes / comments on / implements / depends on to. Two link types carry data between whole items: from feeds an app (with view: the view of from it reads, e.g. frontmatter or outputs), and an app updates a checklist (its runs may set that checklist's tasks). A feeds link that would make an app read its own output is refused. If the two are already linked, the link's type is changed instead.",
           "inputSchema": { "type": "object", "properties": { "board": board, "from": r("e.g. n4"), "to": r("e.g. d3#RetryPolicy"),
-              "type": { "type": "string", "enum": ["describes", "comments", "implements", "depends-on"] }, "request_id": request_id },
+              "type": { "type": "string", "enum": ["describes", "comments", "implements", "depends-on", "feeds", "updates"] },
+              "view": r("For feeds: the view of from the app reads (item_views lists them)."), "request_id": request_id },
             "required": ["board", "from", "to", "type"] },
           "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
         { "name": "unlink", "title": "Remove a link",
@@ -950,12 +980,16 @@ fn guide() -> String {
 - changes {{ \"board\": \"Offline sync\", \"since_rev\": 412 }}\n\
 - item_read {{ \"board\": \"Offline sync\", \"ref\": \"i1\" }} (an image: its description and visible text, when the server has a vision model)\n\
 - item_view {{ \"board\": \"Offline sync\", \"ref\": \"i1\", \"width\": 1024 }}\n\
+- item_views {{ \"board\": \"Offline sync\", \"ref\": \"n2\", \"view\": \"tables\" }}\n\
 - item_create {{ \"board\": \"Offline sync\", \"kind\": \"note\", \"source\": \"OpQueue drains on reconnect.\", \"near\": \"d1\", \"link\": {{ \"type\": \"describes\", \"to\": \"d1#OpQueue\" }}, \"request_id\": \"note-opqueue-1\" }}\n\
 - item_create {{ \"board\": \"Offline sync\", \"kind\": \"image\", \"url\": \"https://example.com/light.jpg\", \"near\": \"n2\", \"link\": {{ \"type\": \"comments\", \"to\": \"n2\" }} }}\n\
 - item_create {{ \"board\": \"Offline sync\", \"kind\": \"checklist\", \"title\": \"Plan\", \"tasks\": [\"Spike\", \"Ship\"], \"below\": \"d2\", \"link\": {{ \"type\": \"implements\", \"to\": \"d2\" }} }}\n\
 - item_edit {{ \"board\": \"Offline sync\", \"ref\": \"d3\", \"base_rev\": 4, \"old\": \"RetryLoop[\", \"new\": \"RetryPolicy[\" }}\n\
 - tasks {{ \"board\": \"Offline sync\", \"ref\": \"c1\", \"set\": [{{ \"task\": \"t6\", \"state\": \"done\" }}], \"add\": [{{ \"text\": \"Write the runbook\" }}] }}\n\
 - link {{ \"board\": \"Offline sync\", \"from\": \"n4\", \"to\": \"d3#RetryPolicy\", \"type\": \"describes\" }}\n\
+- app_create {{ \"board\": \"Offline sync\", \"title\": \"Premium\", \"html\": \"<!doctype html>…\", \"near\": \"n3\", \"link\": {{ \"type\": \"updates\", \"to\": \"c1\" }} }}\n\
+- link {{ \"board\": \"Offline sync\", \"from\": \"n3\", \"to\": \"a1\", \"type\": \"feeds\", \"view\": \"frontmatter\" }}\n\
+- app_run {{ \"board\": \"Offline sync\", \"ref\": \"a1\" }}\n\
 - unlink {{ \"board\": \"Offline sync\", \"from\": \"n4\", \"to\": \"d3#Backoff\" }}\n\
 - arrange {{ \"board\": \"Offline sync\", \"refs\": [\"n3\", \"n4\"], \"in\": \"g2\" }}\n\
 - arrange {{ \"board\": \"Offline sync\", \"refs\": [\"i1\", \"i2\", \"i3\", \"i4\"], \"layout\": \"grid\", \"columns\": 2, \"below\": \"n1\" }}\n\

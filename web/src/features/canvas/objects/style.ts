@@ -19,7 +19,14 @@ export interface ObjectPalette {
   readonly line: string;
   /** The canvas ground: the tick drawn on an accent box. */
   readonly ground: string;
+  /** An app's frame (canvas/apps): its body, its host band and its edge. */
+  readonly surface: string;
+  readonly raised: string;
+  readonly itemEdge: string;
 }
+
+/** An app's host band, in world units: the card draws it, the open view keeps it. */
+export const APP_BAND = 32;
 
 export const SANS = 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif';
 /** System mono: Departure Mono's lane is group annotations only (ADR-0022). */
@@ -72,5 +79,26 @@ export function objectCss(p: ObjectPalette): string {
 .vo-chip.deprecated { border-style: dotted; }
 .vo-chip.question.open { color: ${p.ink}; border: 1.5px solid ${p.ink}; font-weight: 600; }
 .vo-chip.answered { border-color: ${p.inkDim}; }
+/*
+ * An app is a program on the board, so it is the one object with a frame: its
+ * own surface, a hairline in the canvas edge colour, and a host band that says
+ * what it is and where it stands. The band is the host's, the body the app's;
+ * opening the app swaps only the body (app-view.tsx draws the same band).
+ */
+.vo-app { display: flex; flex-direction: column; height: 100%; box-sizing: border-box; background: ${p.surface}; border: 1px solid ${p.itemEdge}; border-radius: 4px; overflow: hidden; }
+.vo-app-band { flex: none; display: flex; align-items: center; gap: 8px; box-sizing: border-box; height: ${APP_BAND}px; padding: 0 12px; background: ${p.raised}; border-bottom: 1px solid ${p.line}; font-size: 12px; letter-spacing: 0.025em; text-transform: uppercase; color: ${p.inkDim}; white-space: nowrap; }
+.vo-app-band .vo-title { flex: 1; min-width: 0; margin: 0; font-size: 15px; font-weight: 400; letter-spacing: 0; text-transform: none; color: ${p.ink}; overflow: hidden; text-overflow: ellipsis; }
+.vo-app-state { flex: none; display: flex; align-items: center; gap: 6px; }
+.vo-app-lamp { flex: none; box-sizing: border-box; width: 8px; height: 8px; border: 1px solid ${p.inkDim}; }
+.vo-app-state.fresh .vo-app-lamp { background: ${p.inkDim}; }
+.vo-app-state.stale .vo-app-lamp, .vo-app-state.upstream-stale .vo-app-lamp { border: 1px dashed ${p.ink}; }
+.vo-app-state.stale, .vo-app-state.upstream-stale, .vo-app-state.error, .vo-app-state.upstream-error { color: ${p.ink}; }
+.vo-app-state.error .vo-app-lamp, .vo-app-state.upstream-error .vo-app-lamp { background: ${p.ink}; border-color: ${p.ink}; }
+.vo-app-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; overflow: hidden; }
+.vo-app-out { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; align-items: baseline; margin: 0; }
+.vo-app-out dt { font-size: 12px; letter-spacing: 0.025em; text-transform: uppercase; color: ${p.inkDim}; }
+.vo-app-out dd { margin: 0; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vo-app-note { margin: 0; color: ${p.ink}; }
+.vo-app-hint { margin: auto 0 0; font-size: 12px; color: ${p.inkDim}; }
 `;
 }

@@ -5,6 +5,7 @@
  * Enforced by `pnpm test` (see boundaries.test.ts), not by good intentions.
  */
 
+export * from './apps';
 export * from './camera';
 export * from './classify';
 export * from './crop';

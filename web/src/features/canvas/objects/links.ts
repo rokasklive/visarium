@@ -12,11 +12,12 @@ import {
   type CanvasItem,
   type CanvasItemContent,
   type ItemId,
-  LINK_TYPES,
+  isDataLink,
   type Link,
   type LinkId,
   type LinkType,
   type Rect,
+  SEMANTIC_LINK_TYPES,
   type Transform,
   type Vec2,
 } from '@visarium/canvas-core';
@@ -31,9 +32,58 @@ export function defaultLinkType(source: CanvasItemContent): LinkType {
   return 'describes';
 }
 
-/** The next type when a selected link's label is clicked. */
+/**
+ * The next type when a selected link's label is clicked: around the semantic
+ * types only. A data link keeps its type; its label picks a view instead
+ * (canvas/links).
+ */
 export function nextLinkType(t: LinkType): LinkType {
-  return LINK_TYPES[(LINK_TYPES.indexOf(t) + 1) % LINK_TYPES.length] as LinkType;
+  if (isDataLink(t)) return t;
+  const i = SEMANTIC_LINK_TYPES.indexOf(t);
+  return SEMANTIC_LINK_TYPES[(i + 1) % SEMANTIC_LINK_TYPES.length] as LinkType;
+}
+
+/**
+ * The views each kind offers (canvas/item-views), in the order a `feeds` link
+ * cycles them. Kept equal to `server/src/views.rs::offered`, except that an app
+ * offers its outputs first: what another app usually reads from it.
+ */
+const VIEWS: Record<string, readonly string[]> = {
+  note: ['text', 'markdown', 'frontmatter', 'tables'],
+  diagram: ['text', 'graph'],
+  checklist: ['text', 'tasks'],
+  image: ['text', 'asset'],
+  app: ['outputs', 'text'],
+};
+
+export function viewsOf(content: CanvasItemContent): readonly string[] {
+  return VIEWS[content.kind] ?? [];
+}
+
+/**
+ * The data link a drag makes, when it makes one (canvas/links): anything onto
+ * an app feeds it its first view; an app onto a checklist may update it.
+ */
+export function dataLinkFor(
+  source: CanvasItem,
+  target: CanvasItem,
+): { linkType: 'feeds'; view: string } | { linkType: 'updates' } | undefined {
+  const view = viewsOf(source.content)[0];
+  if (target.content.kind === 'app' && view) return { linkType: 'feeds', view };
+  if (source.content.kind === 'app' && target.content.kind === 'checklist')
+    return { linkType: 'updates' };
+  return undefined;
+}
+
+/** The view after this one, for a click on a `feeds` link's label. */
+export function nextView(content: CanvasItemContent, view: string): string {
+  const views = viewsOf(content);
+  return views[(views.indexOf(view) + 1) % views.length] ?? view;
+}
+
+/** What a link's label says: its type, and for `feeds` the view it carries. */
+export function linkLabel(link: Link): string {
+  return link.linkType === 'feeds' && link.view ? `feeds · ${link.view}` : link.linkType;
 }
 
 /** The smallest named element of a diagram under a layout-unit point. */
@@ -329,7 +379,7 @@ export function linkNear(
 /** The type label's box at a link's midpoint, for a click that cycles it. */
 export function labelBox(d: DrawnLink, zoom: number): Rect {
   const m = midpoint(d.segment);
-  const w = (d.link.linkType.length * 6.6 + 8) / zoom;
+  const w = (linkLabel(d.link).length * 6.6 + 8) / zoom;
   const h = 16 / zoom;
   return { minX: m.x - w / 2, minY: m.y - h, maxX: m.x + w / 2, maxY: m.y };
 }

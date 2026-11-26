@@ -226,6 +226,21 @@ function operation(value: unknown): unknown | null {
       return str(value.linkId) && LINK_TYPES.includes(value.linkType as LinkType) ? value : null;
     case 'link.delete':
       return str(value.linkId) ? value : null;
+    case 'app.output':
+      return str(value.itemId) &&
+        isObject(value.outputs) &&
+        (value.status === 'ok' || value.status === 'error') &&
+        (value.record === undefined || isObject(value.record)) &&
+        stamp(value)
+        ? value
+        : null;
+    case 'app.output.revert':
+      return str(value.itemId) &&
+        int(value.toVersion) &&
+        (value.record === undefined || isObject(value.record)) &&
+        stamp(value)
+        ? value
+        : null;
     case 'board.centerpiece':
       return value.target === null ||
         (typeof value.target === 'string' && /^(item|group):./.test(value.target))
@@ -284,6 +299,8 @@ function content(value: unknown): boolean {
       const { assetId, intrinsicWidth, intrinsicHeight } = value.asset;
       return str(assetId) && num(intrinsicWidth) && num(intrinsicHeight);
     }
+    case 'app':
+      return typeof value.title === 'string' && typeof value.html === 'string';
     default:
       return false;
   }
@@ -374,6 +391,23 @@ export function parseServerMessage(raw: string): ServerMessage | null {
         expiresAt: value.expiresAt,
       } as ServerMessage;
     }
+    case 'run.lease':
+      return str(value.itemId) && str(value.holder) && num(value.until)
+        ? ({
+            t: 'run.lease',
+            itemId: value.itemId,
+            holder: value.holder,
+            until: value.until,
+          } as ServerMessage)
+        : null;
+    case 'run.busy':
+      return str(value.itemId) && str(value.holder)
+        ? ({ t: 'run.busy', itemId: value.itemId, holder: value.holder } as ServerMessage)
+        : null;
+    case 'run.end':
+    case 'run.none':
+    case 'run.done':
+      return str(value.itemId) ? ({ t: value.t, itemId: value.itemId } as ServerMessage) : null;
     case 'resync':
       return int(value.revision)
         ? ({ t: 'resync', revision: value.revision } as ServerMessage)

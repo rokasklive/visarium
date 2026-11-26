@@ -52,6 +52,9 @@ describe('links', () => {
     expect(
       ['describes', 'comments', 'implements', 'depends-on'].map((t) => nextLinkType(t as never)),
     ).toEqual(['comments', 'implements', 'depends-on', 'describes']);
+    // A data link keeps its type: switching would grant or revoke access.
+    expect(nextLinkType('feeds')).toBe('feeds');
+    expect(nextLinkType('updates')).toBe('updates');
   });
 
   it('find the smallest element under a point', () => {

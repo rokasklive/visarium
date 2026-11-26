@@ -235,6 +235,17 @@ fn item_line(b: &BoardData, i: &ItemRow) -> String {
                 _ => size,
             }
         }
+        "app" => {
+            let mut s = app_state_text(b, i);
+            if let Some(o) = b.outputs.get(&i.id) {
+                s.push_str(&format!(" · v{}", o.version));
+                let values = output_values(o, 5);
+                if !values.is_empty() {
+                    s.push_str(&format!(": {values}"));
+                }
+            }
+            s
+        }
         _ => String::new(),
     };
     let mut line = format!(
@@ -270,7 +281,7 @@ fn links_of_item(b: &BoardData, i: &ItemRow) -> Vec<String> {
                 .unwrap_or_default();
             entries.push((
                 (
-                    format!("{from}→ {} ", l.link_type),
+                    format!("{from}→ {} ", link_kind(l)),
                     l.to_item.as_str(),
                     l.to_element.is_none(),
                     broken,
@@ -284,7 +295,7 @@ fn links_of_item(b: &BoardData, i: &ItemRow) -> Vec<String> {
                     format!(
                         "← {} {} ",
                         b.anchor_text(&l.from_item, l.from_element.as_deref()),
-                        l.link_type
+                        link_kind(l)
                     ),
                     l.to_item.as_str(),
                     l.to_element.is_none(),
@@ -319,6 +330,59 @@ fn links_of_item(b: &BoardData, i: &ItemRow) -> Vec<String> {
             format!("{head}{end}{}", if broken { " ⚠ broken" } else { "" })
         })
         .collect()
+}
+
+/// A link's type, with the view a `feeds` link reads: `feeds (frontmatter)`.
+fn link_kind(l: &crate::boards::LinkRow) -> String {
+    match &l.view {
+        Some(v) => format!("{} ({v})", l.link_type),
+        None => l.link_type.clone(),
+    }
+}
+
+/// Where an app stands, in words: `stale (n3 rev 7→9)`, `never run`.
+pub(crate) fn app_state_text(b: &BoardData, i: &ItemRow) -> String {
+    use crate::apps::State;
+    let refs = |ids: &[String]| {
+        ids.iter()
+            .map(|id| b.ref_of(id))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    match b.app_states.get(&i.id) {
+        None | Some(State::NeverRun) => "never run".into(),
+        Some(State::Fresh) => "fresh".into(),
+        Some(State::Stale(moved)) => {
+            let why: Vec<String> = moved
+                .iter()
+                .map(|m| match (m.was, m.now) {
+                    (Some(w), Some(n)) => format!("{} rev {w}→{n}", b.ref_of(&m.item)),
+                    (None, _) => format!("{} connected", b.ref_of(&m.item)),
+                    (Some(_), None) => format!("{} disconnected", b.ref_of(&m.item)),
+                })
+                .collect();
+            format!("stale ({})", why.join(", "))
+        }
+        Some(State::Error(e)) => format!("error: {}", clip(e, 80)),
+        Some(State::UpstreamStale(from)) => format!("upstream stale ({})", refs(from)),
+        Some(State::UpstreamError(from)) => format!("upstream error ({})", refs(from)),
+    }
+}
+
+/// `premium=1200, verdict="ok"`: up to `n` of an output's values, compact.
+pub(crate) fn output_values(o: &crate::apps::Output, n: usize) -> String {
+    let Ok(Value::Object(map)) = serde_json::from_str::<Value>(&o.outputs) else {
+        return String::new();
+    };
+    let mut shown: Vec<String> = map
+        .iter()
+        .take(n)
+        .map(|(k, v)| format!("{k}={}", clip(&v.to_string(), 40)))
+        .collect();
+    if map.len() > n {
+        shown.push(format!("+{}", map.len() - n));
+    }
+    shown.join(", ")
 }
 
 /// `note "Why OpQueue is per tab"`: what an item is, in a few words.
@@ -742,7 +806,12 @@ pub async fn item_read(app: &AppState, args: &Value) -> Result<Out, Fail> {
                     t.by.as_ref()
                         .map(|by| {
                             format!(
-                                " — {}, {}",
+                                " — {}{}, {}",
+                                // A run's change names the app that made it.
+                                t.by_app
+                                    .as_deref()
+                                    .map(|a| format!("{} run by ", b.ref_of(a)))
+                                    .unwrap_or_default(),
                                 b.credit(Some(by), t.by_agent.as_deref()),
                                 short_time(t.at.as_deref().unwrap_or(""))
                             )
@@ -775,6 +844,65 @@ pub async fn item_read(app: &AppState, args: &Value) -> Result<Out, Fail> {
                 None => {
                     text.push_str(&crate::vision::missing(app, stored));
                     text.push('\n');
+                }
+            }
+        }
+        "app" => {
+            let html =
+                serde_json::from_str::<crate::apps::AppBody>(i.body.as_deref().unwrap_or(""))
+                    .map(|a| a.html)
+                    .unwrap_or_default();
+            use sha2::{Digest, Sha256};
+            let hash = hex::encode(Sha256::digest(html.as_bytes()));
+            text.push_str(&format!(
+                "Status: {}. HTML {} bytes, sha256 {} (never shown here). Run it with app_run(ref: \"{}\").\n",
+                app_state_text(&b, i),
+                html.len(),
+                &hash[..12],
+                i.short_ref()
+            ));
+            let out = b.outputs.get(&i.id);
+            let stamped = out.map(|o| o.revs()).unwrap_or_default();
+            let inputs: Vec<String> = b
+                .links
+                .iter()
+                .filter(|l| l.link_type == "feeds" && l.to_item == i.id)
+                .map(|l| {
+                    let now = b.item(&l.from_item).map_or(0, |x| x.content_rev);
+                    let at = match stamped.get(&l.from_item) {
+                        Some(r) if *r == now => format!("rev {now}, as last run"),
+                        Some(r) => format!("rev {now}, last run read rev {r}"),
+                        None => format!("rev {now}, not read yet"),
+                    };
+                    format!(
+                        "- {}.{} ({at})",
+                        b.ref_of(&l.from_item),
+                        l.view.as_deref().unwrap_or("")
+                    )
+                })
+                .collect();
+            if inputs.is_empty() {
+                text.push_str("Inputs: none. Connect one with link(type: \"feeds\", view: …).\n");
+            } else {
+                text.push_str(&format!("Inputs:\n{}\n", inputs.join("\n")));
+            }
+            match out {
+                None => text.push_str("Never run: no outputs yet.\n"),
+                Some(o) => {
+                    text.push_str(&format!(
+                        "Output v{} · {} — run by {}, {}\n",
+                        o.version,
+                        o.status,
+                        b.credit(o.run_by.as_deref(), o.run_by_agent.as_deref()),
+                        short_time(&o.run_at)
+                    ));
+                    if let Some(e) = &o.error {
+                        text.push_str(&format!("Error: {e}\n"));
+                    }
+                    text.push_str(&format!("```json\n{}\n```\n", o.outputs));
+                    if let Some(t) = o.text.as_deref().filter(|t| !t.is_empty()) {
+                        text.push_str(&format!("{t}\n"));
+                    }
                 }
             }
         }
@@ -1468,6 +1596,64 @@ pub async fn item_view(app: &AppState, args: &Value) -> Result<Out, Fail> {
     ));
     let item_id = i.id.clone();
     Ok(out.touch(b.id, Some(item_id), "reading"))
+}
+
+/// The most of one view a result carries; a longer one says where it stops.
+const VIEW_BUDGET: usize = 32 * 1024;
+
+/// `item_views`: the views an item offers, or one of them as compact JSON
+/// (canvas/item-views, agents/apps).
+pub async fn item_views(app: &AppState, args: &Value) -> Result<Out, Fail> {
+    let board = find_board(&app.db, arg_str(args, "board")?).await?;
+    let b = BoardData::load(&app.db, &board).await?;
+    let target = crate::views::resolve(&b, arg_str(args, "ref")?)?;
+    let item_id = match &target {
+        crate::views::Target::Item(i) => Some(i.id.clone()),
+        crate::views::Target::Group(_) => None,
+    };
+    let Some(name) = args.get("view").and_then(Value::as_str) else {
+        let offers = crate::views::offered(target.kind());
+        let text = if offers.is_empty() {
+            format!(
+                "{} is a {}, which offers no views.",
+                target.short_ref(),
+                target.kind()
+            )
+        } else {
+            format!(
+                "{} ({}) offers: {}.",
+                target.short_ref(),
+                target.kind(),
+                offers.join(", ")
+            )
+        };
+        return Ok(Out::text(text).touch(b.id, item_id, "reading"));
+    };
+    let v = crate::views::view(&b, &target, name)?;
+    let json = v["value"].to_string();
+    let mut text = format!(
+        "{} {name} at rev {}:\n{}",
+        target.short_ref(),
+        v["revision"],
+        if json.len() > VIEW_BUDGET {
+            let mut cut = VIEW_BUDGET;
+            while !json.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            format!(
+                "{}\n… cut at {VIEW_BUDGET} of {} bytes. Read the source with item_read(ref: \"{}\") instead.",
+                &json[..cut],
+                json.len(),
+                target.short_ref()
+            )
+        } else {
+            json
+        }
+    );
+    if let Some(w) = v["warning"].as_str() {
+        text.push_str(&format!("\nWarning: {w}"));
+    }
+    Ok(Out::text(text).touch(b.id, item_id, "reading"))
 }
 
 #[cfg(test)]

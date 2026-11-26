@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Premium calculator</title>
+</head>
+<body>
+<!-- A canvas app (ADR-0034): reads a note's frontmatter (age, expected_premium),
+     prices the policy, and publishes { premium, expected } on each run.
+     Dressed by Visarium's app kit (/kit.css): no styles of its own. -->
+<p class="label">Annual premium</p>
+<p><span class="figure" id="premium">–</span></p>
+<dl>
+  <dt>Age</dt><dd id="age">–</dd>
+  <dt>Rate</dt><dd>30 per year of age</dd>
+  <dt>Quoted</dt><dd id="expected">–</dd>
+</dl>
+<script>
+const RATE = 30; // per year of age
+let n = 0;
+const pending = {};
+const send = (m) => parent.postMessage({ jsonrpc: '2.0', ...m }, '*');
+const request = (method, params) =>
+  new Promise((resolve) => { const id = ++n; pending[id] = resolve; send({ id, method, params }); });
+
+/** The fed note's frontmatter, whatever its ref: the first `*.frontmatter` input. */
+const policy = (args) => {
+  const key = Object.keys(args || {}).find((k) => k.endsWith('.frontmatter'));
+  return key ? args[key] || {} : null;
+};
+const price = (p) => (typeof p.age === 'number' ? p.age * RATE : null);
+
+const show = (args) => {
+  const p = policy(args) || {};
+  document.getElementById('age').textContent = p.age ?? '–';
+  document.getElementById('premium').textContent = price(p) ?? '–';
+  document.getElementById('expected').textContent = p.expected_premium ?? '–';
+};
+
+addEventListener('message', async (e) => {
+  const m = e.data;
+  if (m?.jsonrpc !== '2.0') return;
+  if (m.id !== undefined && !m.method) { pending[m.id]?.(m); delete pending[m.id]; return; }
+  if (m.method === 'ui/resource-teardown') return send({ id: m.id, result: {} });
+  if (m.method === 'ui/notifications/tool-input' || m.method === 'visarium/notifications/inputs-changed')
+    return show(m.params.arguments);
+  if (m.method !== 'visarium/notifications/run') return;
+  show(m.params.arguments);
+  const p = policy(m.params.arguments);
+  const premium = p && price(p);
+  await request(
+    'visarium/outputs/publish',
+    premium === null || premium === undefined
+      ? { outputs: {}, status: 'error', error: 'needs a note with age in its frontmatter' }
+      : { outputs: { premium, expected: p.expected_premium ?? null }, text: `Premium ${premium}` },
+  );
+});
+
+(async () => {
+  await request('ui/initialize', {
+    appInfo: { name: 'premium-calculator', version: '1' },
+    appCapabilities: {},
+    protocolVersion: '2026-01-26',
+  });
+  send({ method: 'ui/notifications/initialized' });
+})();
+</script>
+</body>
+</html>

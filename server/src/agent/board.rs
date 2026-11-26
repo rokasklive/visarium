@@ -42,6 +42,10 @@ pub struct BoardData {
     pub filenames: HashMap<String, String>,
     /// Asset id → its image description, where one was ever attempted.
     pub descriptions: HashMap<String, crate::vision::Stored>,
+    /// Item id → its app's latest output (canvas/apps).
+    pub outputs: HashMap<String, crate::apps::Output>,
+    /// Item id → where its app's outputs stand, derived on read.
+    pub app_states: HashMap<String, crate::apps::State>,
     structures: HashMap<String, Extracted>,
 }
 
@@ -168,6 +172,9 @@ impl BoardData {
         .fetch_all(&mut *tx)
         .await
         .map_err(db_fail)?;
+        let outputs = crate::apps::latest_outputs(&mut tx, &id)
+            .await
+            .map_err(db_fail)?;
         let descriptions = crate::vision::on_board(&mut tx, &id)
             .await
             .map_err(db_fail)?;
@@ -185,6 +192,23 @@ impl BoardData {
                 )
             })
             .collect();
+        let app_states = {
+            let apps: Vec<&str> = items
+                .iter()
+                .filter(|i| i.kind == "app")
+                .map(|i| i.id.as_str())
+                .collect();
+            let revs: HashMap<&str, i64> = items
+                .iter()
+                .map(|i| (i.id.as_str(), i.content_rev))
+                .collect();
+            let feeds: Vec<(&str, &str)> = links
+                .iter()
+                .filter(|l| l.link_type == "feeds")
+                .map(|l| (l.from_item.as_str(), l.to_item.as_str()))
+                .collect();
+            crate::apps::status(&apps, &revs, &feeds, &outputs)
+        };
         Ok(BoardData {
             id: board.id,
             title,
@@ -208,6 +232,8 @@ impl BoardData {
                 .filter_map(|(id, f)| f.map(|f| (id, f)))
                 .collect(),
             descriptions,
+            outputs,
+            app_states,
             structures,
         })
     }
@@ -291,9 +317,10 @@ impl BoardData {
             "d" => "diagrams",
             "c" => "checklists",
             "i" => "images",
+            "a" => "apps",
             _ => {
                 return Err(format!(
-                    "'{r}' is not a ref. Refs are a kind letter and a number: n (note), d (diagram), c (checklist), i (image), g (group); for example d2."
+                    "'{r}' is not a ref. Refs are a kind letter and a number: n (note), d (diagram), c (checklist), i (image), a (app), g (group); for example d2."
                 ));
             }
         };
@@ -528,6 +555,10 @@ impl BoardData {
                 .as_ref()
                 .and_then(|a| self.filenames.get(a))
                 .map_or_else(|| "image".into(), |f| clip(f)),
+            "app" => {
+                serde_json::from_str::<crate::apps::AppBody>(item.body.as_deref().unwrap_or(""))
+                    .map_or_else(|_| "app".into(), |a| clip(&a.title))
+            }
             other => other.to_string(),
         }
     }
