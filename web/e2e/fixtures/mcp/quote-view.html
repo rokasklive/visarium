@@ -21,7 +21,7 @@ const request = (method, params) =>
 addEventListener('message', (e) => {
   const m = e.data;
   if (m?.jsonrpc !== '2.0') return;
-  if (m.id !== undefined && !m.method) { pending.get(m.id)?.(m); pending.delete(m.id); return; }
+  if (m.id !== undefined && !m.method) { const reply = pending.get(m.id); pending.delete(m.id); if (typeof reply === 'function') reply(m); return; }
   if (m.method === 'ui/resource-teardown') return send({ id: m.id, result: {} });
   if (m.method === 'ui/notifications/tool-result') {
     const p = m.params?.structuredContent?.premium;
