@@ -11,13 +11,20 @@
  * here is drawn by the browser; the canvas draws the bitmap.
  */
 
-import { type CanvasItem, type DiagramLang, textScaleOf } from '@visarium/canvas-core';
+import {
+  type AppOutput,
+  type AppState,
+  type CanvasItem,
+  type DiagramLang,
+  textScaleOf,
+} from '@visarium/canvas-core';
 import { resolvedTheme, type Theme } from '~/app/theme';
 import { measureIn, textIndex } from '../search';
+import { cardPicture } from './app-card';
 import { slug } from './blocks';
 import { loadMarkdown, loadMermaid, loadPlantUml, type MermaidPalette } from './loaders';
 import { noteStatus, statusLabel, stripFrontmatter } from './status';
-import { type ObjectPalette, objectCss } from './style';
+import { APP_BAND, type ObjectPalette, objectCss } from './style';
 
 export interface LocalRect {
   readonly x: number;
@@ -120,6 +127,9 @@ function palette() {
       accent: token('accent'),
       line: token('line'),
       ground: token('surface-sunken'),
+      surface: token('surface'),
+      raised: token('surface-raised'),
+      itemEdge: token('item-edge'),
     },
     mermaid: {
       ink: resolved('ink'),
@@ -133,7 +143,7 @@ function palette() {
   return read;
 }
 
-export async function layoutItem(item: CanvasItem): Promise<Layout> {
+export async function layoutItem(item: CanvasItem, appState?: AppState): Promise<Layout> {
   const width = laidWidth(item);
   const c = item.content;
   switch (c.kind) {
@@ -143,9 +153,95 @@ export async function layoutItem(item: CanvasItem): Promise<Layout> {
       return layoutHtml(checklistHtml(c.title, c.tasks), width);
     case 'diagram':
       return layoutDiagram(c.lang, c.source, width);
+    case 'app': {
+      // The card fills the app's box: the box is the frame its view mounts in.
+      const height = item.transform.height;
+      const picture = c.output?.card
+        ? await cardPicture(c.output.card, {
+            x: 1,
+            y: APP_BAND + 1,
+            width: width - 2,
+            height: height - APP_BAND - 2,
+          }).catch(() => undefined)
+        : undefined;
+      const card = await layoutHtml(
+        appCardHtml(c.title, c.output, appState, picture !== undefined),
+        width,
+        (root) => {
+          root.style.height = `${height}px`;
+          root.style.boxSizing = 'border-box';
+        },
+      );
+      // Its frame is what is drawn, so links meet the frame, not its text.
+      // The app's own picture goes over the empty body, inside the same image.
+      const svg = picture
+        ? (scale: number) => card.svg(scale).replace(/<\/svg>$/, `${picture}</svg>`)
+        : card.svg;
+      return { ...card, svg, ink: undefined };
+    }
     default:
       throw new Error(`no layout for ${c.kind}`);
   }
+}
+
+/** How a state reads on the card, and its class. */
+export function appStateLabel(s: AppState | undefined): { text: string; cls: string } {
+  switch (s?.state) {
+    case undefined:
+    case 'never run':
+      return { text: 'never run', cls: 'never' };
+    case 'fresh':
+      return { text: 'fresh', cls: 'fresh' };
+    case 'stale':
+      return {
+        text: `stale · ${s.moved.length} input${s.moved.length === 1 ? '' : 's'} changed`,
+        cls: 'stale',
+      };
+    case 'error':
+      return { text: 'error', cls: 'error' };
+    case 'upstream stale':
+      return { text: 'upstream stale', cls: 'upstream-stale' };
+    case 'upstream error':
+      return { text: 'upstream error', cls: 'upstream-error' };
+  }
+}
+
+const MAX_SHOWN = 6;
+
+/** An app's host band: what it is, its title, and where it stands (canvas/apps). */
+export function appBandHtml(title: string, state?: AppState): string {
+  const label = appStateLabel(state);
+  return `<div class="vo-app-band"><span>App</span><div class="vo-title">${escapeHtml(title || 'App')}</div><span class="vo-app-state ${label.cls}"><span class="vo-app-lamp"></span><span class="vo-app-word">${escapeHtml(label.text)}</span></span></div>`;
+}
+
+/** An app at rest (canvas/apps): its band, then its latest outputs. No app code runs. */
+export function appCardHtml(
+  title: string,
+  output: AppOutput | undefined,
+  state?: AppState,
+  /** Its body is the app's own picture, drawn over it: leave it empty. */
+  pictured = false,
+): string {
+  if (pictured)
+    return `<div class="vo-app">${appBandHtml(title, state)}<div class="vo-app-body"></div></div>`;
+  const entries = Object.entries(output?.outputs ?? {});
+  const short = (v: unknown) => {
+    const t = typeof v === 'string' ? v : JSON.stringify(v);
+    return t.length > 60 ? `${t.slice(0, 59)}…` : t;
+  };
+  const rows = entries
+    .slice(0, MAX_SHOWN)
+    .map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(short(v))}</dd>`)
+    .join('');
+  const more =
+    entries.length > MAX_SHOWN ? `<dt></dt><dd>+${entries.length - MAX_SHOWN} more</dd>` : '';
+  const out = rows ? `<dl class="vo-app-out">${rows}${more}</dl>` : '';
+  const error =
+    state?.state === 'error' && state.error
+      ? `<p class="vo-app-note">${escapeHtml(state.error)}</p>`
+      : '';
+  const hint = output ? '' : '<p class="vo-app-hint">Double-click to open and run it.</p>';
+  return `<div class="vo-app">${appBandHtml(title, state)}<div class="vo-app-body">${out}${error}${hint}</div></div>`;
 }
 
 /**

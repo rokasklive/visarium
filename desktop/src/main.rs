@@ -441,12 +441,22 @@ fn main() {
             about::setup(app)?;
             let data = app.path().app_data_dir()?;
             let cache = app.path().app_cache_dir()?;
+            // App views load from a second loopback origin, never the library's
+            // (canvas/apps): another port is another origin to the webview.
+            // ponytail: a fresh port each launch; app views keep nothing in
+            // browser storage that matters (outputs live in the library).
+            let sandbox =
+                tauri::async_runtime::block_on(tokio::net::TcpListener::bind(("127.0.0.1", 0)))
+                    .map_err(|e| e.to_string())?;
             let config = visarium::Config {
                 database: data.join("visarium.db"),
                 assets: data.join("assets"),
                 derivatives: cache.join("derivatives"),
                 version: app.package_info().version.to_string(),
                 single_user: true,
+                apps_origin: Some(format!("http://127.0.0.1:{}", sandbox.local_addr()?.port())),
+                // The person's own machine: their MCP servers, local ones included.
+                mcp_local: true,
                 ..Default::default()
             };
             // A stable port keeps the SPA's origin (and the browser storage
@@ -474,6 +484,7 @@ fn main() {
             drag_out::allow(app.handle(), &library)?;
             about::allow_client_errors(app.handle(), &library)?;
             local_port::allow(app.handle(), &library)?;
+            tauri::async_runtime::spawn(visarium::serve_sandbox(state.clone(), sandbox));
             app.manage(local_port::LocalPort::start(state, port_file, listener)?);
 
             let server = Submenu::with_items(

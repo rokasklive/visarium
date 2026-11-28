@@ -17,6 +17,18 @@
 //!                                                    the vision model that describes images
 //!   VISARIUM_LOG_LEVEL         info                  error, warn, info, debug, trace
 //!   VISARIUM_LOG_FORMAT        text                  json: one JSON object per line
+//!   VISARIUM_APPS_ORIGIN       (none)                https://apps.example.net: where canvas
+//!                                                    apps' views load from, a hostname of
+//!                                                    their own; needs VISARIUM_PUBLIC_URL
+//!   VISARIUM_APPS_BIND         {VISARIUM_BIND}:8081  where that origin is served; put it
+//!                                                    behind the same proxy as the board
+//!   VISARIUM_MCP_ALLOW         (none)                hosts canvas apps' MCP servers may be
+//!                                                    reached at, comma-separated; a name
+//!                                                    resolving to a private address needs
+//!                                                    that IP listed too
+//!   VISARIUM_APPS_PORT         (none)                development and tests only: serve
+//!                                                    canvas apps' views from 127.0.0.1 on
+//!                                                    this port (0: any free one)
 //!
 //! Demo mode serves a public sandbox per visitor instead (src/demo.rs); the
 //! settings above about accounts, providers and data paths do not apply:
@@ -88,7 +100,7 @@ async fn main() -> visarium::anyhow_lite::Result<()> {
         );
     }
 
-    let config = visarium::Config {
+    let mut config = visarium::Config {
         database: PathBuf::from(env("VISARIUM_DATABASE", "data/visarium.db")),
         assets: PathBuf::from(env("VISARIUM_ASSETS_PATH", "data/assets")),
         derivatives: PathBuf::from(env("VISARIUM_DERIVATIVES_PATH", "data/derivatives")),
@@ -108,6 +120,52 @@ async fn main() -> visarium::anyhow_lite::Result<()> {
         providers: visarium::oidc::providers_from_env(std::env::vars())?,
         demo: None,
         decode_permits: None,
+        apps_origin: None,
+        mcp_allow: std::env::var("VISARIUM_MCP_ALLOW")
+            .unwrap_or_default()
+            .split(',')
+            .map(|h| h.trim().to_ascii_lowercase())
+            .filter(|h| !h.is_empty())
+            .collect(),
+        mcp_local: false,
+    };
+    // Canvas apps' views load from an origin of their own (ADR-0034): a
+    // hostname the operator gives them, served on its own listener behind the
+    // same proxy as the board.
+    let apps_origin = std::env::var("VISARIUM_APPS_ORIGIN")
+        .ok()
+        .filter(|o| !o.is_empty());
+    let sandbox = if let Some(origin) = apps_origin {
+        let origin = match visarium::apps::check_apps_origin(&origin, config.public_url.as_deref())
+        {
+            Ok(o) => o,
+            Err(e) => {
+                eprintln!("\n{e}\n");
+                std::process::exit(1);
+            }
+        };
+        let at: SocketAddr = env(
+            "VISARIUM_APPS_BIND",
+            &SocketAddr::new(bind, 8081).to_string(),
+        )
+        .parse()
+        .map_err(|_| "VISARIUM_APPS_BIND must be an address and port, like 0.0.0.0:8081")?;
+        config.apps_origin = Some(origin);
+        Some(tokio::net::TcpListener::bind(at).await?)
+    } else {
+        // ponytail: a loopback origin, as the desktop has, so development and
+        // the e2e scenario can run apps; reachable only from this machine.
+        match std::env::var("VISARIUM_APPS_PORT")
+            .ok()
+            .filter(|p| !p.is_empty())
+        {
+            Some(p) => {
+                let l = tokio::net::TcpListener::bind(("127.0.0.1", p.parse::<u16>()?)).await?;
+                config.apps_origin = Some(format!("http://127.0.0.1:{}", l.local_addr()?.port()));
+                Some(l)
+            }
+            None => None,
+        }
     };
     // A refusal to start is written for the person reading the container log,
     // so it goes out as plain lines, not as a debug-quoted string.
@@ -121,6 +179,10 @@ async fn main() -> visarium::anyhow_lite::Result<()> {
     };
     let listener = tokio::net::TcpListener::bind(SocketAddr::new(bind, port)).await?;
     tracing::info!(address = %listener.local_addr()?, "listening");
+    if let Some(l) = sandbox {
+        tracing::info!(address = %l.local_addr()?, "serving app views");
+        tokio::spawn(visarium::serve_sandbox(state.clone(), l));
+    }
 
     axum::serve(listener, visarium::router(state))
         .with_graceful_shutdown(shutdown_signal())

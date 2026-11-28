@@ -143,3 +143,17 @@ test('on System, an open board and its diagrams follow the computer to light', a
   expect(flowLight.svg).not.toBe(flowDark.svg);
   expect(pumlLight.svg).not.toBe(pumlDark.svg);
 });
+
+test('canvas apps are a Labs experiment, off until turned on on this device', async ({ page }) => {
+  await signedIn(page);
+  await stubSettings(page);
+  await page.goto('/settings');
+  const toggle = page.getByTestId('canvas-apps-setting').getByRole('checkbox');
+  await expect(toggle).not.toBeChecked();
+  await toggle.check();
+  await page.reload();
+  await expect(page.getByTestId('canvas-apps-setting').getByRole('checkbox')).toBeChecked();
+  expect(await page.evaluate(() => localStorage.getItem('visarium.labs.canvasApps'))).toBe('on');
+  await page.getByTestId('canvas-apps-setting').getByRole('checkbox').uncheck();
+  expect(await page.evaluate(() => localStorage.getItem('visarium.labs.canvasApps'))).toBeNull();
+});

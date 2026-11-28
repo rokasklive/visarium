@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Battery autonomy</title></head>
+<body>
+<script type="application/json" id="visarium-inputs">
+[{ "name": "battery_kwh", "description": "The battery's capacity, kWh" },
+ { "name": "load_wh", "description": "Energy a day, Wh" },
+ { "name": "reserve", "description": "The share of charge never used, 0 to 1 (a literal)" }]
+</script>
+<span class="label">Days without sun</span>
+<span class="figure" id="days">–</span>
+<svg class="chart" id="cell" role="img" aria-label="Battery, a segment per day of autonomy"><title>Battery</title></svg>
+<dl id="facts"></dl>
+<script>
+function compute(a) {
+  const kwh = num(a.battery_kwh), load = num(a.load_wh);
+  const reserve = a.reserve === undefined ? 0.2 : num(a.reserve);
+  if (!kwh) return { missing: 'link the site\'s battery_kwh' };
+  if (!load) return { missing: 'link Daily load\'s loadWh as load_wh' };
+  const usable = kwh * 1000 * (1 - reserve);
+  const days = Math.round((usable / load) * 10) / 10;
+  return { kwh, load, reserve, usable, days, outputs: { days, usableWh: Math.round(usable) },
+    text: `${fmt(days, 1)} days on a full battery, keeping ${Math.round(reserve * 100)}% in reserve` };
+}
+function draw(r) {
+  if (!r || r.missing) { document.getElementById('facts').innerHTML = `<dt>Waiting</dt><dd>${esc(r?.missing ?? '')}</dd>`; return; }
+  document.getElementById('days').innerHTML = `${fmt(r.days, 1)}<span class="unit">days</span>`;
+  // The battery: one cell per day it lasts, the last one partial, the reserve hatched off.
+  const W = 300, H = 56, cap = 4, max = Math.max(3, Math.ceil(r.days / (1 - r.reserve)));
+  const inner = W - 12, cw = inner / max;
+  let s = `<title>Battery</title><rect x="1" y="1" width="${W - 10}" height="${H - 2}" rx="4" style="fill:none;stroke:var(--vk-line-strong)"/>`;
+  s += `<rect x="${W - 8}" y="${H / 2 - 10}" width="${cap + 2}" height="20" rx="2" style="fill:var(--vk-line-strong)"/>`;
+  const full = Math.floor(r.days), part = r.days - full;
+  for (let i = 0; i < max; i++) {
+    const w = i < full ? cw - 3 : i === full ? (cw - 3) * part : 0;
+    if (w > 0) s += `<rect class="mark series-3" x="${4 + i * cw}" y="5" width="${w}" height="${H - 10}" rx="2"/>`;
+  }
+  const rx = 4 + (max * (1 - r.reserve)) * cw;
+  s += `<line class="axis" x1="${rx}" x2="${rx}" y1="3" y2="${H - 3}" style="stroke-dasharray:3 3"/>`;
+  document.getElementById('cell').setAttribute('viewBox', `0 0 ${W} ${H}`);
+  document.getElementById('cell').innerHTML = s;
+  document.getElementById('facts').innerHTML =
+    `<dt>Battery</dt><dd class="num">${fmt(r.kwh, 1)} kWh</dd>` +
+    `<dt>Usable</dt><dd class="num">${fmt(r.usable / 1000, 1)} kWh (keeps ${Math.round(r.reserve * 100)}%)</dd>` +
+    `<dt>Uses a day</dt><dd class="num">${fmt(r.load / 1000, 1)} kWh</dd>`;
+}
+</script>
+<script>
+// The MCP Apps bridge every demo app shares: inputs arrive as tool-input or
+// inputs-changed; a run computes, publishes outputs and may propose tasks.
+let n = 0;
+const pending = new Map();
+const send = (m) => parent.postMessage({ jsonrpc: '2.0', ...m }, '*');
+const request = (method, params) =>
+  new Promise((resolve) => { const id = ++n; pending.set(id, resolve); send({ id, method, params }); });
+let args = {};
+const num = (v) => { const x = Number(String(v ?? '').replace(/[^0-9.-]/g, '')); return Number.isFinite(x) ? x : 0; };
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const fmt = (x, d = 0) => x.toLocaleString('en-US', { maximumFractionDigits: d, minimumFractionDigits: d });
+addEventListener('message', async (e) => {
+  const m = e.data;
+  if (m?.jsonrpc !== '2.0') return;
+  if (m.id !== undefined && !m.method) { const reply = pending.get(m.id); pending.delete(m.id); if (typeof reply === 'function') reply(m); return; }
+  if (m.method === 'ui/resource-teardown') return send({ id: m.id, result: {} });
+  if (m.method === 'ui/notifications/tool-input' || m.method === 'visarium/notifications/inputs-changed') {
+    args = m.params.arguments || {}; draw(compute(args)); return;
+  }
+  if (m.method !== 'visarium/notifications/run') return;
+  args = m.params.arguments || {};
+  const r = compute(args);
+  draw(r);
+  if (!r || r.missing) {
+    await request('visarium/outputs/publish', { outputs: {}, status: 'error', error: r?.missing ?? 'nothing to compute from' });
+    return;
+  }
+  await request('visarium/outputs/publish', { outputs: r.outputs, text: r.text });
+  if (r.changes) await request('visarium/items/propose', { changes: r.changes });
+});
+(async () => {
+  await request('ui/initialize', { appInfo: { name: document.title, version: '1' }, appCapabilities: {}, protocolVersion: '2026-01-26' });
+  send({ method: 'ui/notifications/initialized' });
+})();
+</script>
+</body>
+</html>

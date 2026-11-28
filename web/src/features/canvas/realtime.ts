@@ -68,6 +68,8 @@ export interface RemotePresence {
   >;
   /** Who holds what. Includes our own claims, so the renderer can tell them apart. */
   readonly locks: ReadonlyMap<ItemId, string>;
+  /** App id → the actor running it now (canvas/apps). */
+  readonly runs: ReadonlyMap<ItemId, string>;
   /** What each agent last read or changed, for FOCUS_MS (ADR-0031). */
   readonly focus: ReadonlyMap<string, { readonly itemId: ItemId; readonly verb: string }>;
 }
@@ -84,6 +86,7 @@ const EMPTY_PRESENCE: RemotePresence = {
   previews: new Map(),
   locks: new Map(),
   focus: new Map(),
+  runs: new Map(),
 };
 
 export { EMPTY_PRESENCE };
@@ -125,6 +128,11 @@ export interface RealtimeOptions {
   onLockRefused?: (itemIds: readonly ItemId[]) => void;
   /** How many share-link viewers have the board open (ADR-0026). */
   onViewers?: (count: number) => void;
+  /**
+   * What became of a run (canvas/apps): granted (to whom), over, or, to this
+   * client's own request, busy, nobody to run it, or already up to date.
+   */
+  onRun?: (event: RunEvent) => void;
   /** Someone renamed the board while it was open. */
   onRenamed?: (title: string, by: string) => void;
   /** Someone deleted the board while it was open. */
@@ -137,6 +145,13 @@ export interface RealtimeOptions {
   /** Test seam. */
   socketFactory?: (url: string) => WebSocket;
 }
+
+export type RunEvent =
+  | { readonly kind: 'lease'; readonly itemId: ItemId; readonly holder: string }
+  | { readonly kind: 'end'; readonly itemId: ItemId }
+  | { readonly kind: 'busy'; readonly itemId: ItemId; readonly holder: string }
+  | { readonly kind: 'none'; readonly itemId: ItemId }
+  | { readonly kind: 'done'; readonly itemId: ItemId };
 
 export class BoardRealtime {
   readonly #options: RealtimeOptions;
@@ -159,6 +174,11 @@ export class BoardRealtime {
 
   /** Items this client currently claims, re-stated on the heartbeat. */
   #held = new Set<ItemId>();
+  #runs = new Map<ItemId, string>();
+  /** Apps whose views this client has open, re-stated on every welcome. */
+  #mounted = new Set<ItemId>();
+  /** Whether this client runs apps in hidden views, re-stated on every welcome. */
+  #ready = false;
 
   #lastCursorAt = 0;
   #lastPreviewAt = 0;
@@ -185,6 +205,7 @@ export class BoardRealtime {
       previews: this.#previews,
       focus: this.#focus,
       locks: this.#locks,
+      runs: this.#runs,
     };
   }
 
@@ -313,6 +334,30 @@ export class BoardRealtime {
   }
 
   /** Whoever holds this item, if it is not us. `undefined` means it is grabbable. */
+  /** This client opened or closed an app's view (canvas/apps). */
+  mounted(itemId: ItemId, open: boolean): void {
+    if (open) this.#mounted.add(itemId);
+    else this.#mounted.delete(itemId);
+    this.#send({ t: open ? 'app.mounted' : 'app.unmounted', itemIds: [itemId] });
+  }
+
+  /** This client can (or no longer can) run apps in hidden views. */
+  ready(on: boolean): void {
+    if (on === this.#ready) return;
+    this.#ready = on;
+    this.#send({ t: 'apps.ready', ready: on });
+  }
+
+  /** Ask to run an app; the answer comes as a run event. */
+  requestRun(itemId: ItemId): void {
+    this.#send({ t: 'run.request', itemIds: [itemId] });
+  }
+
+  /** Whether this client holds the app's run now. */
+  runsHere(itemId: ItemId): boolean {
+    return this.#actorId !== undefined && this.#runs.get(itemId) === this.#actorId;
+  }
+
   heldByOther(itemId: ItemId): string | undefined {
     const holder = this.#locks.get(itemId);
     if (holder === undefined || holder === this.#actorId) return undefined;
@@ -345,9 +390,40 @@ export class BoardRealtime {
         // The board may have moved on while we were away. `welcome` carries
         // where it actually is, and anything other than agreement is a resync.
         if (frame.revision !== this.#options.doc.revision) void this.#options.resync();
+        // A new socket is a new actor: its open views say so again.
+        if (this.#mounted.size > 0) this.#send({ t: 'app.mounted', itemIds: [...this.#mounted] });
+        if (this.#ready) this.#send({ t: 'apps.ready', ready: true });
         this.#publish();
         return;
       }
+      case 'run.lease':
+        this.#runs = new Map(this.#runs).set(frame.itemId, frame.holder as string);
+        this.#publish();
+        this.#options.onRun?.({
+          kind: 'lease',
+          itemId: frame.itemId,
+          holder: frame.holder as string,
+        });
+        return;
+      case 'run.end':
+        this.#runs = new Map([...this.#runs].filter(([id]) => id !== frame.itemId));
+        this.#publish();
+        this.#options.onRun?.({ kind: 'end', itemId: frame.itemId });
+        return;
+      case 'run.busy':
+        this.#options.onRun?.({
+          kind: 'busy',
+          itemId: frame.itemId,
+          holder: frame.holder as string,
+        });
+        return;
+      case 'run.none':
+      case 'run.done':
+        this.#options.onRun?.({
+          kind: frame.t === 'run.none' ? 'none' : 'done',
+          itemId: frame.itemId,
+        });
+        return;
       case 'presence': {
         const actors = new Map(this.#actors);
         for (const joined of frame.joined ?? []) actors.set(joined.actorId as string, joined);
@@ -479,6 +555,7 @@ export class BoardRealtime {
     this.#previews = new Map([...this.#previews].filter(([, p]) => p.actorId !== actorId));
     this.#locks = new Map([...this.#locks].filter(([, holder]) => holder !== actorId));
     this.#focus = new Map([...this.#focus].filter(([id]) => id !== actorId));
+    this.#runs = new Map([...this.#runs].filter(([, holder]) => holder !== actorId));
   }
 
   #forgetEveryone(): void {
@@ -488,6 +565,7 @@ export class BoardRealtime {
     this.#previews = new Map();
     this.#locks = new Map();
     this.#focus = new Map();
+    this.#runs = new Map();
     this.#held.clear();
     this.#publish();
   }

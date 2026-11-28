@@ -19,6 +19,8 @@ import type { ActorId, CanvasId, GroupId, ItemId, LinkId, OperationId } from './
 import type {
   Anchor,
   Appearance,
+  AppOutput,
+  AppRunMode,
   CanvasItemContent,
   Centerpiece,
   Crop,
@@ -152,6 +154,11 @@ export type CanvasOperationBody =
       /** Stamped by the server; whatever a client sends is replaced. */
       readonly by?: string | null;
       readonly byAgent?: string | null;
+      /**
+       * The app whose run proposes this change (canvas/apps); accepted only from
+       * the client holding that run. Absent clears it, as the server does.
+       */
+      readonly byApp?: string;
       readonly at?: string | null;
     }
   | { readonly type: 'task.remove'; readonly itemId: ItemId; readonly taskId: string }
@@ -161,15 +168,99 @@ export type CanvasOperationBody =
       readonly from: Anchor;
       readonly to: Anchor;
       readonly linkType: LinkType;
+      /** A `feeds` link's view; required there, absent on every other type. */
+      readonly view?: string;
+      /** A `feeds` link's field within its view, and the input name the app sees. */
+      readonly path?: string;
+      readonly name?: string;
       /** Stamped by the server. */
       readonly by?: string | null;
       readonly byAgent?: string | null;
       readonly at?: string | null;
     }
-  | { readonly type: 'link.set'; readonly linkId: LinkId; readonly linkType: LinkType }
+  /**
+   * A semantic link's type, or a `feeds` link's view, field and input name.
+   * Absent leaves a field alone; an empty `path` or `name` clears it. Never
+   * moves a link between semantic and data types: that would grant or revoke
+   * access.
+   */
+  | {
+      readonly type: 'link.set';
+      readonly linkId: LinkId;
+      readonly linkType: LinkType;
+      readonly view?: string;
+      readonly path?: string;
+      readonly name?: string;
+    }
   | { readonly type: 'link.delete'; readonly linkId: LinkId }
   /** The board's centerpiece, or none (canvas/centerpiece). Absolute state. */
-  | { readonly type: 'board.centerpiece'; readonly target: Centerpiece | null };
+  | { readonly type: 'board.centerpiece'; readonly target: Centerpiece | null }
+  /**
+   * One run of an app ends in its next output version (canvas/apps). The
+   * server numbers it and stamps its inputs' content revisions.
+   */
+  | {
+      readonly type: 'app.output';
+      readonly itemId: ItemId;
+      readonly outputs: Readonly<Record<string, unknown>>;
+      readonly text?: string;
+      readonly status: 'ok' | 'error';
+      readonly error?: string;
+      /**
+       * What the server stored (version, input revisions, the app's content
+       * revision), written by it after applying. Absent on a client's own
+       * optimistic copy, which works the same out locally.
+       */
+      readonly record?: AppOutputRecord;
+      /** Stamped by the server. */
+      readonly by?: string | null;
+      readonly byAgent?: string | null;
+      readonly at?: string | null;
+    }
+  /**
+   * An app's title, source, literals or run mode (canvas/app-inspector).
+   * Absent fields are left alone; `literals` is the whole set. A new source
+   * or new literals make the app stale; neither changes its outputs.
+   */
+  | {
+      readonly type: 'app.set';
+      readonly itemId: ItemId;
+      readonly title?: string;
+      readonly html?: string;
+      readonly literals?: Readonly<Record<string, unknown>>;
+      readonly run?: AppRunMode;
+      /** An MCP app's view, moved to a newer fetched resource (an update, applied). */
+      readonly mcpSha256?: string;
+    }
+  /**
+   * The picture an output version leaves on the app's card: a snapshot of its
+   * view (canvas/apps). For the latest version only; never on an undo stack.
+   */
+  | {
+      readonly type: 'app.card';
+      readonly itemId: ItemId;
+      readonly version: number;
+      readonly html: string;
+    }
+  /** Undo of an output: an earlier version's values, committed as the next version. */
+  | {
+      readonly type: 'app.output.revert';
+      readonly itemId: ItemId;
+      readonly toVersion: number;
+      /** As on `app.output`. */
+      readonly record?: AppOutputRecord;
+      /**
+       * Client-side only: the output being restored, for applying an undo
+       * locally before the server answers. The server goes by `toVersion`.
+       */
+      readonly was?: AppOutput;
+      readonly by?: string | null;
+      readonly byAgent?: string | null;
+      readonly at?: string | null;
+    };
+
+/** A stored output plus the app's content revision after it. */
+export type AppOutputRecord = AppOutput & { readonly contentRev: number };
 
 export type CanvasOperationType = CanvasOperationBody['type'];
 

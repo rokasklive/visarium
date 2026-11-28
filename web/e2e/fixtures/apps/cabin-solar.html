@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Sun against need</title></head>
+<body>
+<script type="application/json" id="visarium-inputs">
+[{ "name": "site", "description": "The site's frontmatter: panels, panel_watts" },
+ { "name": "sun", "description": "A table: Month, Sun hours (peak sun hours a day)" },
+ { "name": "load", "description": "Daily load's outputs" }]
+</script>
+<div class="row" style="justify-content: space-between">
+  <span class="label">kWh a day, by month</span>
+  <span class="badge" id="verdict">–</span>
+</div>
+<svg class="chart" id="chart" role="img" aria-label="Solar yield by month against daily load"><title>Solar yield by month</title></svg>
+<ul class="legend">
+  <li class="series-4"><span class="swatch"></span>Solar, after losses</li>
+  <li class="series-2"><span class="swatch"></span>Daily load</li>
+</ul>
+<script>
+const DERATE = 0.78; // wiring, heat, dust, charge controller
+function compute(a) {
+  const panels = num(a.site?.panels), pw = num(a.site?.panel_watts);
+  const rows = a.sun?.rows ?? [];
+  const load = num(a.load?.loadWh);
+  if (!panels || !pw) return { missing: 'link the site note\'s frontmatter as site' };
+  if (!rows.length) return { missing: 'link the sun-hours table as sun' };
+  if (!load) return { missing: 'link Daily load\'s outputs as load' };
+  const months = rows.map((r) => ({ m: r.Month, wh: Math.round(panels * pw * num(r['Sun hours']) * DERATE) }));
+  const worst = months.reduce((a, x) => (x.wh < a.wh ? x : a));
+  const short = months.filter((x) => x.wh < load).map((x) => x.m);
+  const worstRatio = Math.round((worst.wh / load) * 100) / 100;
+  return {
+    months, load, worst, short,
+    outputs: { worstMonth: worst.m, worstRatio, shortMonths: short, arrayKw: (panels * pw) / 1000 },
+    text: short.length ? `Short in ${short.join(', ')}; ${worst.m} covers ${Math.round(worstRatio * 100)}%` : `Covers every month; ${worst.m} at ${Math.round(worstRatio * 100)}%`,
+  };
+}
+function draw(r) {
+  const svg = document.getElementById('chart');
+  if (!r || r.missing) { document.getElementById('verdict').textContent = r?.missing ?? ''; return; }
+  const W = 360, H = 116, L = 34, B = 18;
+  const top = Math.max(r.load, ...r.months.map((x) => x.wh)) * 1.1;
+  const y = (v) => H - B - (v / top) * (H - B - 6);
+  const step = (W - L) / r.months.length;
+  let s = `<title>Solar yield by month</title>`;
+  for (const f of [0, 0.5, 1]) {
+    s += `<line class="${f ? 'grid' : 'axis'}" x1="${L}" x2="${W}" y1="${y(top * f / 1.1)}" y2="${y(top * f / 1.1)}"/>`;
+    s += `<text x="${L - 4}" y="${y(top * f / 1.1) + 4}" text-anchor="end">${fmt(top * f / 1.1 / 1000, 1)}</text>`;
+  }
+  r.months.forEach((x, i) => {
+    const bx = L + i * step + 3, bw = step - 6;
+    s += `<rect class="mark series-4" x="${bx}" y="${y(x.wh)}" width="${bw}" height="${H - B - y(x.wh)}" rx="2"><title>${esc(x.m)}: ${fmt(x.wh)} Wh</title></rect>`;
+    s += `<text x="${bx + bw / 2}" y="${H - 4}" text-anchor="middle">${esc(String(x.m).slice(0, 1))}</text>`;
+  });
+  s += `<line class="line series-2" x1="${L}" x2="${W}" y1="${y(r.load)}" y2="${y(r.load)}"/>`;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.innerHTML = s;
+  const v = document.getElementById('verdict');
+  v.textContent = r.short.length ? `short ${r.short.length} mo` : 'covers the year';
+  v.className = `badge ${r.short.length ? 'is-bad' : 'is-good'}`;
+}
+</script>
+<script>
+// The MCP Apps bridge every demo app shares: inputs arrive as tool-input or
+// inputs-changed; a run computes, publishes outputs and may propose tasks.
+let n = 0;
+const pending = new Map();
+const send = (m) => parent.postMessage({ jsonrpc: '2.0', ...m }, '*');
+const request = (method, params) =>
+  new Promise((resolve) => { const id = ++n; pending.set(id, resolve); send({ id, method, params }); });
+let args = {};
+const num = (v) => { const x = Number(String(v ?? '').replace(/[^0-9.-]/g, '')); return Number.isFinite(x) ? x : 0; };
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const fmt = (x, d = 0) => x.toLocaleString('en-US', { maximumFractionDigits: d, minimumFractionDigits: d });
+addEventListener('message', async (e) => {
+  const m = e.data;
+  if (m?.jsonrpc !== '2.0') return;
+  if (m.id !== undefined && !m.method) { const reply = pending.get(m.id); pending.delete(m.id); if (typeof reply === 'function') reply(m); return; }
+  if (m.method === 'ui/resource-teardown') return send({ id: m.id, result: {} });
+  if (m.method === 'ui/notifications/tool-input' || m.method === 'visarium/notifications/inputs-changed') {
+    args = m.params.arguments || {}; draw(compute(args)); return;
+  }
+  if (m.method !== 'visarium/notifications/run') return;
+  args = m.params.arguments || {};
+  const r = compute(args);
+  draw(r);
+  if (!r || r.missing) {
+    await request('visarium/outputs/publish', { outputs: {}, status: 'error', error: r?.missing ?? 'nothing to compute from' });
+    return;
+  }
+  await request('visarium/outputs/publish', { outputs: r.outputs, text: r.text });
+  if (r.changes) await request('visarium/items/propose', { changes: r.changes });
+});
+(async () => {
+  await request('ui/initialize', { appInfo: { name: document.title, version: '1' }, appCapabilities: {}, protocolVersion: '2026-01-26' });
+  send({ method: 'ui/notifications/initialized' });
+})();
+</script>
+</body>
+</html>

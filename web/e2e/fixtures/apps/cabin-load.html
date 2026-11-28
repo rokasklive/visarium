@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Daily load</title></head>
+<body>
+<script type="application/json" id="visarium-inputs">
+[{ "name": "appliances", "description": "A table: Appliance, Category, Watts, Hours a day" }]
+</script>
+<div class="row" style="justify-content: space-between; align-items: baseline">
+  <div><span class="label">Energy a day</span><span class="figure" id="total">–</span></div>
+  <div style="text-align: right"><span class="label">Peak draw</span><span class="figure" id="peak">–</span></div>
+</div>
+<svg class="chart" id="share" role="img" aria-label="Share of the day's energy by category" style="margin: 14px 0 10px"><title>Share by category</title></svg>
+<ul class="legend" id="legend" style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px 18px"></ul>
+<script>
+const CATS = ['Kitchen', 'Comfort', 'Light', 'Work', 'Water'];
+function compute(a) {
+  const t = a.appliances;
+  if (!t?.rows?.length) return { missing: 'link the appliance table (view tables, path 0, name appliances)' };
+  const rows = t.rows.map((r) => ({
+    name: r.Appliance, cat: r.Category, watts: num(r.Watts), hours: num(r.Hours),
+  })).filter((r) => r.name);
+  const by = {};
+  for (const r of rows) by[r.cat] = (by[r.cat] ?? 0) + r.watts * r.hours;
+  const loadWh = Math.round(Object.values(by).reduce((s, x) => s + x, 0));
+  const peakW = rows.reduce((s, r) => s + r.watts, 0);
+  const largest = rows.reduce((a, r) => (r.watts > (a?.watts ?? 0) ? r : a), null);
+  return {
+    rows, by, loadWh, peakW, largest,
+    outputs: { loadWh, peakW, largest: { name: largest.name, watts: largest.watts }, byCategory: by },
+    text: `${fmt(loadWh / 1000, 1)} kWh a day; ${largest.name} draws most (${fmt(largest.watts)} W)`,
+  };
+}
+function draw(r) {
+  if (!r || r.missing) { document.getElementById('legend').innerHTML = `<li>${esc(r?.missing ?? '')}</li>`; return; }
+  document.getElementById('total').innerHTML = `${fmt(r.loadWh / 1000, 1)}<span class="unit">kWh</span>`;
+  document.getElementById('peak').innerHTML = `${fmt(r.peakW)}<span class="unit">W</span>`;
+  const cats = Object.entries(r.by).sort((a, b) => b[1] - a[1]);
+  // One bar of the day, a segment per category, 2px of ground between them.
+  const W = 330, H = 14;
+  let x = 0, s = '<title>Share by category</title>';
+  for (const [c, wh] of cats) {
+    const w = (wh / r.loadWh) * W;
+    s += `<rect class="mark series-${CATS.indexOf(c) + 1 || 6}" x="${x}" y="0" width="${Math.max(0, w - 2)}" height="${H}" rx="2"><title>${esc(c)}: ${fmt(wh)} Wh</title></rect>`;
+    x += w;
+  }
+  const svg = document.getElementById('share');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.innerHTML = s;
+  document.getElementById('legend').innerHTML = cats.map(([c, wh]) =>
+    `<li class="series-${CATS.indexOf(c) + 1 || 6}" style="justify-content: space-between"><span><span class="swatch"></span> ${esc(c)}</span><span class="num">${fmt(wh / 1000, 2)} kWh</span></li>`).join('');
+}
+</script>
+<script>
+// The MCP Apps bridge every demo app shares: inputs arrive as tool-input or
+// inputs-changed; a run computes, publishes outputs and may propose tasks.
+let n = 0;
+const pending = new Map();
+const send = (m) => parent.postMessage({ jsonrpc: '2.0', ...m }, '*');
+const request = (method, params) =>
+  new Promise((resolve) => { const id = ++n; pending.set(id, resolve); send({ id, method, params }); });
+let args = {};
+const num = (v) => { const x = Number(String(v ?? '').replace(/[^0-9.-]/g, '')); return Number.isFinite(x) ? x : 0; };
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const fmt = (x, d = 0) => x.toLocaleString('en-US', { maximumFractionDigits: d, minimumFractionDigits: d });
+addEventListener('message', async (e) => {
+  const m = e.data;
+  if (m?.jsonrpc !== '2.0') return;
+  if (m.id !== undefined && !m.method) { const reply = pending.get(m.id); pending.delete(m.id); if (typeof reply === 'function') reply(m); return; }
+  if (m.method === 'ui/resource-teardown') return send({ id: m.id, result: {} });
+  if (m.method === 'ui/notifications/tool-input' || m.method === 'visarium/notifications/inputs-changed') {
+    args = m.params.arguments || {}; draw(compute(args)); return;
+  }
+  if (m.method !== 'visarium/notifications/run') return;
+  args = m.params.arguments || {};
+  const r = compute(args);
+  draw(r);
+  if (!r || r.missing) {
+    await request('visarium/outputs/publish', { outputs: {}, status: 'error', error: r?.missing ?? 'nothing to compute from' });
+    return;
+  }
+  await request('visarium/outputs/publish', { outputs: r.outputs, text: r.text });
+  if (r.changes) await request('visarium/items/propose', { changes: r.changes });
+});
+(async () => {
+  await request('ui/initialize', { appInfo: { name: document.title, version: '1' }, appCapabilities: {}, protocolVersion: '2026-01-26' });
+  send({ method: 'ui/notifications/initialized' });
+})();
+</script>
+</body>
+</html>

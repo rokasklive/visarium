@@ -16,7 +16,7 @@
     "test": "pnpm -r test",
     "test:e2e": "pnpm --filter @visarium/web test:e2e",
     "verify": "pnpm typecheck && pnpm check && pnpm test && pnpm build",
-    "desktop": "tauri dev",
+    "desktop": "tauri dev --config desktop/tauri.dev.conf.json",
     "desktop:build": "tauri build"
   },
   "devDependencies": {

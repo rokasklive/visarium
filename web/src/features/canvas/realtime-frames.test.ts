@@ -141,6 +141,13 @@ describe('parseServerMessage', () => {
           z: 1,
           content: { kind: 'image', asset: { assetId: id, intrinsicWidth: 1, intrinsicHeight: 1 } },
         },
+        {
+          type: 'item.create',
+          itemId: id,
+          transform,
+          z: 1,
+          content: { kind: 'app', title: 'Premium', html: '<!doctype html>' },
+        },
         { type: 'item.delete', itemId: id },
         { type: 'item.transform', itemId: id, transform },
         { type: 'item.z', itemId: id, z: 3 },

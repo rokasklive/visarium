@@ -8,6 +8,7 @@
 //!     to loopback, and no sign-in screen.
 
 pub mod agent;
+pub mod apps;
 pub mod assets;
 pub mod auth;
 pub mod boards;
@@ -18,12 +19,14 @@ pub mod device;
 pub mod error;
 pub mod instance;
 pub mod invitations;
+pub mod mcp;
 pub mod oauth;
 pub mod oidc;
 pub mod realtime;
 pub mod sharing;
 pub mod storage;
 pub mod telemetry;
+pub mod views;
 pub mod vision;
 
 use std::path::PathBuf;
@@ -78,6 +81,17 @@ pub struct Config {
     /// A decode budget shared with other instances in this process (every
     /// demo sandbox draws from one); a budget of its own when None.
     pub decode_permits: Option<Arc<tokio::sync::Semaphore>>,
+    /// Where app views load from (canvas/apps): an origin other than this
+    /// instance's, served by [`apps::sandbox_router`]. None: apps show as
+    /// cards only, and say they run in the desktop app.
+    pub apps_origin: Option<String>,
+    /// Hosts (names or IPs) MCP connections may reach (`VISARIUM_MCP_ALLOW`).
+    /// A name that resolves to a loopback or private address is refused
+    /// unless that IP is listed too.
+    pub mcp_allow: Vec<String>,
+    /// The desktop: any host, private addresses included, and local stdio
+    /// servers the person names. Never for a shared or demo instance.
+    pub mcp_local: bool,
 }
 
 pub struct App {
@@ -105,6 +119,8 @@ pub struct App {
     /// Serialises claiming a fresh instance, so two first requests cannot both
     /// become its admin.
     pub setup_lock: tokio::sync::Mutex<()>,
+    /// Short-lived grants to load one app's view from the sandbox origin.
+    pub mounts: apps::Mounts,
     /// The single-user account's id, when `single_user`.
     pub local_user: Option<String>,
     /// Lets agents import images from private addresses. Off, and only ever
@@ -127,6 +143,15 @@ const SWEEP_EVERY: Duration = Duration::from_secs(3600);
 pub async fn open(config: Config) -> anyhow_lite::Result<AppState> {
     if !config.single_user && !config.providers.is_empty() && config.public_url.is_none() {
         return Err("VISARIUM_PUBLIC_URL is required when a sign-in provider is configured".into());
+    }
+    // App views never on the board's own origin (canvas/apps, ADR-0034).
+    if let (Some(apps), Some(public)) = (&config.apps_origin, &config.public_url)
+        && apps::origin_of(apps) == apps::origin_of(public)
+    {
+        return Err(format!(
+            "the app sandbox origin {apps} must differ from the board's origin {public}"
+        )
+        .into());
     }
     for dir in [&config.assets, &config.derivatives] {
         std::fs::create_dir_all(dir)?;
@@ -224,6 +249,7 @@ pub async fn open(config: Config) -> anyhow_lite::Result<AppState> {
         image_permits,
         undrawable: Default::default(),
         setup_lock: Default::default(),
+        mounts: Default::default(),
         local_user,
         allow_private_imports: Default::default(),
         closing: Default::default(),
@@ -321,6 +347,7 @@ pub fn router(state: AppState) -> Router {
         .merge(agent::member_routes())
         .merge(oauth::member_routes())
         .merge(boards::routes())
+        .merge(mcp::routes())
         .merge(collections::routes())
         .merge(assets::routes())
         .route_layer(require_user.clone());
@@ -339,6 +366,9 @@ pub fn router(state: AppState) -> Router {
                 .delete(auth::sign_out),
         )
         .route("/setup", post(auth::claim))
+        // The app kit, for drawing apps' cards in the board's own colours: a
+        // static style sheet, open to share-link viewers too (canvas/apps).
+        .route("/apps/kit.css", get(apps::serve_kit))
         .route("/shared/session", post(sharing::redeem))
         .merge(invitations::public_routes())
         .merge(device::public_routes())
@@ -418,9 +448,19 @@ pub async fn serve_until(
         .await
 }
 
+/// Serves app views on their own origin (canvas/apps) until the process ends:
+/// [`apps::sandbox_router`] and nothing else, so nothing there carries a session.
+pub async fn serve_sandbox(
+    state: AppState,
+    listener: tokio::net::TcpListener,
+) -> std::io::Result<()> {
+    axum::serve(listener, apps::sandbox_router(state)).await
+}
+
 async fn meta(State(app): State<AppState>) -> Json<serde_json::Value> {
     Json(
-        json!({ "name": "visarium", "version": app.config.version, "protocolVersion": PROTOCOL_VERSION }),
+        json!({ "name": "visarium", "version": app.config.version, "protocolVersion": PROTOCOL_VERSION,
+                "appsOrigin": app.config.apps_origin }),
     )
 }
 

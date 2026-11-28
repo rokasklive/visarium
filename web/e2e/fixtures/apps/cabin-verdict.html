@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Ready to order?</title></head>
+<body>
+<script type="application/json" id="visarium-inputs">
+[{ "name": "solar", "description": "Sun against need's outputs" },
+ { "name": "battery", "description": "Battery autonomy's outputs" },
+ { "name": "load", "description": "Daily load's outputs" },
+ { "name": "roof", "description": "Roof layout's outputs" },
+ { "name": "max_appliance_w", "description": "The largest single load the inverter takes (a literal)" }]
+</script>
+<div class="row" style="justify-content: space-between; align-items: baseline">
+  <span class="figure" id="answer">–</span>
+  <span class="muted" id="count"></span>
+</div>
+<table style="font-size: 13px">
+  <tbody id="checks"></tbody>
+</table>
+<script>
+function compute(a) {
+  if (!a.solar || !a.battery || !a.load || !a.roof) return { missing: 'link Sun against need, Battery autonomy, Daily load and Roof layout' };
+  const maxW = a.max_appliance_w === undefined ? 2000 : num(a.max_appliance_w);
+  const checks = [
+    { task: 't1', name: 'Darkest month covered', ok: num(a.solar.worstRatio) >= 1,
+      now: `${esc(a.solar.worstMonth)}, ${Math.round(num(a.solar.worstRatio) * 100)}%` },
+    { task: 't2', name: 'Two days without sun', ok: num(a.battery.days) >= 2, now: `${fmt(num(a.battery.days), 1)} days` },
+    { task: 't3', name: `Nothing over ${fmt(maxW / 1000, 1)} kW`, ok: num(a.load.largest?.watts) <= maxW,
+      now: `${fmt(num(a.load.largest?.watts) / 1000, 1)} kW`, why: esc(a.load.largest?.name ?? '') },
+    { task: 't4', name: 'Panels fit the roof', ok: !!a.roof.fits, now: `${num(a.roof.wanted)} of ${num(a.roof.max)} spaces` },
+  ];
+  const failing = checks.filter((c) => !c.ok).map((c) => c.name);
+  return { checks, ready: failing.length === 0,
+    outputs: { ready: failing.length === 0, failing },
+    text: failing.length ? `Not yet: ${failing.join('; ')}` : 'Ready to order',
+    changes: checks.map((c) => ({ type: 'task.set', taskId: c.task, state: c.ok ? 'done' : 'blocked' })) };
+}
+function draw(r) {
+  if (!r || r.missing) { document.getElementById('answer').textContent = 'Waiting'; document.getElementById('count').textContent = r?.missing ?? ''; return; }
+  document.getElementById('answer').textContent = r.ready ? 'Ready to order' : 'Not yet';
+  document.getElementById('count').textContent = `${r.checks.filter((c) => c.ok).length} of ${r.checks.length} checks pass`;
+  document.getElementById('checks').innerHTML = r.checks.map((c) =>
+    `<tr><td style="white-space: nowrap">${c.name}</td><td class="muted" style="white-space: nowrap" title="${c.why ?? ''}">${c.now}</td><td class="num"><span class="badge ${c.ok ? 'is-good' : 'is-bad'}">${c.ok ? 'pass' : 'fails'}</span></td></tr>`).join('');
+}
+</script>
+<script>
+// The MCP Apps bridge every demo app shares: inputs arrive as tool-input or
+// inputs-changed; a run computes, publishes outputs and may propose tasks.
+let n = 0;
+const pending = new Map();
+const send = (m) => parent.postMessage({ jsonrpc: '2.0', ...m }, '*');
+const request = (method, params) =>
+  new Promise((resolve) => { const id = ++n; pending.set(id, resolve); send({ id, method, params }); });
+let args = {};
+const num = (v) => { const x = Number(String(v ?? '').replace(/[^0-9.-]/g, '')); return Number.isFinite(x) ? x : 0; };
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const fmt = (x, d = 0) => x.toLocaleString('en-US', { maximumFractionDigits: d, minimumFractionDigits: d });
+addEventListener('message', async (e) => {
+  const m = e.data;
+  if (m?.jsonrpc !== '2.0') return;
+  if (m.id !== undefined && !m.method) { const reply = pending.get(m.id); pending.delete(m.id); if (typeof reply === 'function') reply(m); return; }
+  if (m.method === 'ui/resource-teardown') return send({ id: m.id, result: {} });
+  if (m.method === 'ui/notifications/tool-input' || m.method === 'visarium/notifications/inputs-changed') {
+    args = m.params.arguments || {}; draw(compute(args)); return;
+  }
+  if (m.method !== 'visarium/notifications/run') return;
+  args = m.params.arguments || {};
+  const r = compute(args);
+  draw(r);
+  if (!r || r.missing) {
+    await request('visarium/outputs/publish', { outputs: {}, status: 'error', error: r?.missing ?? 'nothing to compute from' });
+    return;
+  }
+  await request('visarium/outputs/publish', { outputs: r.outputs, text: r.text });
+  if (r.changes) await request('visarium/items/propose', { changes: r.changes });
+});
+(async () => {
+  await request('ui/initialize', { appInfo: { name: document.title, version: '1' }, appCapabilities: {}, protocolVersion: '2026-01-26' });
+  send({ method: 'ui/notifications/initialized' });
+})();
+</script>
+</body>
+</html>

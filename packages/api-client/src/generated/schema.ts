@@ -146,6 +146,143 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/boards/{id}/items/{item}/views/{view}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One read-only view of an item or group (canvas/item-views) */
+        get: operations["itemView"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/boards/{id}/mcp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The board's MCP connections, never their tokens (canvas/app-sources) */
+        get: operations["mcpConnections"];
+        put?: never;
+        /** Adds an MCP connection once its server answers; a host the operator does not allow is never contacted */
+        post: operations["mcpConnect"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/boards/{id}/mcp/{conn}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Removes a connection; its apps keep their views and outputs */
+        delete: operations["mcpDisconnect"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/boards/{id}/mcp/{conn}/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The tools a connection offers */
+        get: operations["mcpTools"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/boards/{id}/mcp/{conn}/resource": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Fetches and pins a ui:// view by hash */
+        post: operations["mcpPin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/boards/{id}/items/{item}/mcp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** An MCP app's view calls a tool visible to apps, or reads a resource, on its own connection */
+        post: operations["appMcp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/boards/{id}/items/{item}/inputs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What an app reads now, input by input, and the stamps a run is held to (canvas/apps) */
+        get: operations["appInputs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/boards/{id}/items/{item}/mount": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Where to load an app's view from: the sandbox origin and a short-lived token (canvas/apps) */
+        post: operations["mountApp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/boards/{id}/operations": {
         parameters: {
             query?: never;
@@ -513,10 +650,10 @@ export interface components {
         CanvasOperationBody: {
             type: string;
         };
-        /** @description What an item shows. `kind` picks the fields: `asset` (image), `source` (note), `lang` + `source` (diagram), `title` + `tasks` (checklist). Absent kind is an image. */
+        /** @description What an item shows. `kind` picks the fields: `asset` (image), `source` (note), `lang` + `source` (diagram), `title` + `tasks` (checklist), `title` + `html` (app). Absent kind is an image. */
         Content: {
             /** @enum {string} */
-            kind?: "image" | "placeholder" | "note" | "diagram" | "checklist";
+            kind?: "image" | "placeholder" | "note" | "diagram" | "checklist" | "app";
             asset?: components["schemas"]["AssetRef"];
             /** @enum {string} */
             lang?: "mermaid" | "plantuml";
@@ -526,6 +663,39 @@ export interface components {
             title?: string;
             /** @description A checklist's tasks, at most 200. */
             tasks?: components["schemas"]["Task"][];
+            /** @description An app's HTML view; its body is at most 256 KiB. */
+            html?: string;
+            /** @description An app's literal inputs: name → JSON value, each at most 4 KiB. */
+            literals?: {
+                [key: string]: unknown;
+            };
+            /**
+             * @description An app's run mode; absent is `auto`.
+             * @enum {string}
+             */
+            run?: "auto" | "manual";
+            /** @description Counts changes to an app's source; kept by the server. */
+            sourceRev?: number;
+            /** @description Counts changes to how an app's inputs are set up; kept by the server. */
+            setupRev?: number;
+            /** @description An app whose view comes from an MCP server instead of html. */
+            mcp?: components["schemas"]["McpSource"];
+        };
+        /** @description An app's MCP source: the board's connection, its ui:// view pinned by hash, and the tool that makes it run on the server. */
+        McpSource: {
+            connection: string;
+            resourceUri: string;
+            tool?: string;
+            sha256: string;
+        };
+        /** @description A tool an MCP server offers, as the add menu shows it. */
+        McpTool: {
+            name: string;
+            title?: string | null;
+            description?: string | null;
+            /** @description Its ui:// view, when it has one. */
+            resourceUri?: string | null;
+            headless: boolean;
         };
         /** @description One task of a checklist. `by` and `at` are stamped by the server; a client's values are ignored. */
         Task: {
@@ -550,13 +720,19 @@ export interface components {
             element?: string | null;
         };
         /** @enum {string} */
-        LinkType: "describes" | "comments" | "implements" | "depends-on";
+        LinkType: "describes" | "comments" | "implements" | "depends-on" | "feeds" | "updates";
         Link: {
             /** Format: uuid */
             id: string;
             from: components["schemas"]["Anchor"];
             to: components["schemas"]["Anchor"];
             linkType: components["schemas"]["LinkType"];
+            /** @description A `feeds` link's view of its source; null on every other type. */
+            view?: string | null;
+            /** @description A `feeds` link's field within its view; null is the whole view. */
+            path?: string | null;
+            /** @description The input name the app sees; null is `<source ref>.<view>`. */
+            name?: string | null;
             /** Format: uuid */
             by?: string | null;
             /** @description The agent that acted for `by`, when one did (ADR-0031). Stamped by the server. */
@@ -807,6 +983,12 @@ export interface components {
             from?: components["schemas"]["Anchor"];
             to?: components["schemas"]["Anchor"];
             linkType?: components["schemas"]["LinkType"];
+            /** @description For `feeds`: the source's view the app reads. Absent on every other type. */
+            view?: string;
+            /** @description For `feeds`: a field within the view, e.g. `age` or `rows.0.total`. */
+            path?: string;
+            /** @description For `feeds`: the input name the app sees, 1-64 of letters, digits, `_`, `-`, `.`. */
+            name?: string;
             /** @description Stamped by the server. */
             by?: string | null;
             /** @description The agent that acted for `by`, when one did (ADR-0031). Stamped by the server. */
@@ -824,6 +1006,12 @@ export interface components {
             /** Format: uuid */
             linkId?: string;
             linkType?: components["schemas"]["LinkType"];
+            /** @description A `feeds` link's new view. */
+            view?: string;
+            /** @description A `feeds` link's new field; empty clears it. */
+            path?: string;
+            /** @description A `feeds` link's new input name; empty clears it. */
+            name?: string;
         } & {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -851,12 +1039,84 @@ export interface components {
              */
             type: "link.delete";
         };
+        AppOutput: Omit<components["schemas"]["CanvasOperationBody"], "type"> & {
+            /** Format: uuid */
+            itemId?: string;
+            /** @description Named values, at most 16 KiB of JSON. */
+            outputs?: {
+                [key: string]: unknown;
+            };
+            text?: string;
+            /** @enum {string} */
+            status?: "ok" | "error";
+            error?: string;
+            /** @description Stamped by the server. */
+            by?: string | null;
+            byAgent?: string | null;
+            at?: string | null;
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "app.output";
+        };
+        AppSet: Omit<components["schemas"]["CanvasOperationBody"], "type"> & {
+            /** Format: uuid */
+            itemId?: string;
+            title?: string;
+            /** @description A whole HTML document. */
+            html?: string;
+            /** @description The whole set of literal inputs. */
+            literals?: {
+                [key: string]: unknown;
+            };
+            /** @enum {string} */
+            run?: "auto" | "manual";
+            /** @description An MCP app's view, moved to a newer fetched resource. */
+            mcpSha256?: string;
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "app.set";
+        };
+        AppCard: Omit<components["schemas"]["CanvasOperationBody"], "type"> & {
+            /** Format: uuid */
+            itemId?: string;
+            /** Format: int64 */
+            version?: number;
+            /** @description A snapshot of the view, at most 64 KiB. */
+            html?: string;
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "app.card";
+        };
+        AppOutputRevert: Omit<components["schemas"]["CanvasOperationBody"], "type"> & {
+            /** Format: uuid */
+            itemId?: string;
+            /** Format: int64 */
+            toVersion?: number;
+            by?: string | null;
+            byAgent?: string | null;
+            at?: string | null;
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "app.output.revert";
+        };
         PostedOperation: {
             /** Format: uuid */
             operationId?: string;
             /** Format: int64 */
             baseRevision?: number;
-            body?: components["schemas"]["GroupCreate"] | components["schemas"]["GroupDelete"] | components["schemas"]["GroupFrame"] | components["schemas"]["GroupCollides"] | components["schemas"]["ItemCollides"] | components["schemas"]["GroupLabel"] | components["schemas"]["GroupMembers"] | components["schemas"]["ItemAppearance"] | components["schemas"]["ItemContent"] | components["schemas"]["ItemCreate"] | components["schemas"]["ItemDelete"] | components["schemas"]["ItemTransform"] | components["schemas"]["ItemZ"] | components["schemas"]["ItemSource"] | components["schemas"]["ChecklistTitle"] | components["schemas"]["TaskAdd"] | components["schemas"]["TaskSet"] | components["schemas"]["TaskRemove"] | components["schemas"]["LinkAdd"] | components["schemas"]["LinkSet"] | components["schemas"]["LinkDelete"] | components["schemas"]["BoardCenterpiece"];
+            body?: components["schemas"]["GroupCreate"] | components["schemas"]["GroupDelete"] | components["schemas"]["GroupFrame"] | components["schemas"]["GroupCollides"] | components["schemas"]["ItemCollides"] | components["schemas"]["GroupLabel"] | components["schemas"]["GroupMembers"] | components["schemas"]["ItemAppearance"] | components["schemas"]["ItemContent"] | components["schemas"]["ItemCreate"] | components["schemas"]["ItemDelete"] | components["schemas"]["ItemTransform"] | components["schemas"]["ItemZ"] | components["schemas"]["ItemSource"] | components["schemas"]["ChecklistTitle"] | components["schemas"]["TaskAdd"] | components["schemas"]["TaskSet"] | components["schemas"]["TaskRemove"] | components["schemas"]["LinkAdd"] | components["schemas"]["LinkSet"] | components["schemas"]["LinkDelete"] | components["schemas"]["BoardCenterpiece"] | components["schemas"]["AppOutput"] | components["schemas"]["AppOutputRevert"] | components["schemas"]["AppSet"] | components["schemas"]["AppCard"];
         };
         Transform: {
             /** Format: double */
@@ -934,6 +1194,8 @@ export interface components {
             version?: string;
             /** Format: int32 */
             protocolVersion?: number;
+            /** @description Where canvas apps' views load from; null when this server has no sandbox origin. */
+            appsOrigin?: string | null;
         };
         BoardSnapshot: {
             /** Format: int64 */
@@ -982,6 +1244,17 @@ export interface components {
              * @description A note's or checklist's text scale; absent is 1.
              */
             textScale?: number;
+            /** Format: int64 */
+            /** @description Counts changes to what the item shows, not where it is (canvas/apps). */
+            contentRev?: number;
+            /** @description An app's latest output, or null when it never ran. */
+            output?: {
+                [key: string]: unknown;
+            } | null;
+            /** @description An app's state, derived by the server (canvas/apps). */
+            appState?: {
+                [key: string]: unknown;
+            } | null;
         };
         LibraryPage: {
             assets?: components["schemas"]["AssetView"][];
@@ -1311,6 +1584,242 @@ export interface operations {
                 content: {
                     "*/*": components["schemas"]["Applied"];
                 };
+            };
+        };
+    };
+    itemView: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                item: string;
+                view: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The view, stamped with the content revision it was derived from */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        ref: string;
+                        kind: string;
+                        /** Format: int64 */
+                        revision: number;
+                        view: string;
+                        value: unknown;
+                        warning?: string;
+                    };
+                };
+            };
+        };
+    };
+    mcpConnections: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: { id: string };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: { [name: string]: unknown };
+                content: { "application/json": { local: boolean; connections: { id: string; url: string | null; command: string | null; hasToken: boolean; createdAt: string }[] } };
+            };
+        };
+    };
+    mcpConnect: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: { id: string };
+            cookie?: never;
+        };
+        requestBody: { content: { "application/json": { url?: string; command?: string; token?: string } } };
+        responses: {
+            200: {
+                headers: { [name: string]: unknown };
+                content: { "application/json": { id: string; tools: components["schemas"]["McpTool"][] } };
+            };
+        };
+    };
+    mcpDisconnect: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: { id: string; conn: string };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: { 204: { headers: { [name: string]: unknown }; content?: never } };
+    };
+    mcpTools: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: { id: string; conn: string };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: { [name: string]: unknown };
+                content: { "application/json": { tools: components["schemas"]["McpTool"][] } };
+            };
+        };
+    };
+    mcpPin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: { id: string; conn: string };
+            cookie?: never;
+        };
+        requestBody: { content: { "application/json": { uri: string } } };
+        responses: {
+            200: {
+                headers: { [name: string]: unknown };
+                content: { "application/json": { sha256: string } };
+            };
+        };
+    };
+    appMcp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: { id: string; item: string };
+            cookie?: never;
+        };
+        requestBody: { content: { "application/json": { method: "tools/call" | "resources/read"; params?: unknown } } };
+        responses: {
+            200: {
+                headers: { [name: string]: unknown };
+                content: { "application/json": { [key: string]: unknown } };
+            };
+        };
+    };
+    appInputs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                item: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Each input's name, origin and value; declared inputs nothing supplies */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description Name → value: what the view receives. */
+                        values: {
+                            [key: string]: unknown;
+                        };
+                        inputs: {
+                            name: string;
+                            /** @enum {string} */
+                            origin: "link" | "literal";
+                            linkId?: string;
+                            itemId?: string;
+                            ref?: string;
+                            view?: string;
+                            path?: string | null;
+                            /** Format: int64 */
+                            revision?: number;
+                            value: unknown;
+                            /** @description The path names nothing in the view. */
+                            missing?: boolean;
+                            /** @description Field paths within the whole view, for a picker. */
+                            fields?: string[];
+                        }[];
+                        declared: {
+                            name: string;
+                            description?: string | null;
+                            schema?: unknown;
+                            connected: boolean;
+                        }[];
+                        /** @description Input item id → content revision, plus `#source` and `#setup`. */
+                        stamps: {
+                            [key: string]: number;
+                        };
+                        /** @description The apps this app's outputs feed. */
+                        feeds: { itemId: string; ref: string }[];
+                        /** @description The checklists this app may update. */
+                        updates: { itemId: string; ref: string }[];
+                        /** @description Who ran its latest output, e.g. "Agent for Rokas"; null when it never ran. */
+                        ranBy: string | null;
+                        /** Format: date-time */
+                        ranAt: string | null;
+                        /** @description Why it was not run automatically (a limit), until it runs again. */
+                        held?: string | null;
+                        /** @description An MCP app's source: its server (never a token), view, tool, and a newer view's hash when one was fetched. */
+                        mcp?: {
+                            connection: string;
+                            server: string | null;
+                            resourceUri: string;
+                            tool?: string | null;
+                            sha256: string;
+                            updateAvailable: string | null;
+                        };
+                    };
+                };
+            };
+        };
+    };
+    mountApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                item: string;
+            };
+            cookie?: never;
+        };
+        /** @description The board's look as the person has it: the kit (`/kit.css`) is themed with it */
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    theme?: "light" | "dark";
+                    /** @description Colour tokens by kit name: surface, raised, sunken, line, line-strong, ink, ink-dim, ink-disabled, accent, accent-wash */
+                    tokens?: {
+                        [key: string]: string;
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Load the view from `url`; messages come from `origin` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        url: string;
+                        origin: string;
+                    };
+                };
+            };
+            /** @description No sandbox origin here (apps run in the desktop app), or no such app */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

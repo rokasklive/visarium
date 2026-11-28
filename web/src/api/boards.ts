@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, type components } from '@visarium/api-client';
+import { api, type components, type paths } from '@visarium/api-client';
 import {
   asCanvasId,
   asGroupId,
@@ -206,6 +206,7 @@ function toLink(link: components['schemas']['Link']): Link[] {
       from: { itemId: asItemId(link.from.itemId), element: link.from.element ?? null },
       to: { itemId: asItemId(link.to.itemId), element: link.to.element ?? null },
       linkType: link.linkType,
+      ...(link.view ? { view: link.view } : {}),
       by: link.by ?? null,
       ...(link.byAgent ? { byAgent: link.byAgent } : {}),
       ...(link.at ? { at: link.at } : {}),
@@ -224,7 +225,10 @@ function toItem(item: components['schemas']['Item']): CanvasItem[] {
   const t = item.transform;
   // A note, diagram or checklist has no asset; an image without one is a broken
   // contract and `contentFrom` refuses it. An unrecognised kind is kept, inert.
-  const content = contentFrom(item.content);
+  // An app's latest output travels beside its content in the snapshot.
+  const content = contentFrom(
+    item.content?.kind === 'app' ? { ...item.content, output: item.output } : item.content,
+  );
   if (!item.id || !t || !content) return [];
   return [
     {
@@ -249,6 +253,7 @@ function toItem(item: components['schemas']['Item']): CanvasItem[] {
       crop: item.crop ?? FULL_CROP,
       content,
       ...(item.revision !== undefined ? { revision: item.revision } : {}),
+      ...(item.contentRev !== undefined ? { contentRev: item.contentRev } : {}),
       ...(item.groupId ? { groupId: asGroupId(item.groupId) } : {}),
       ...(item.collides ? { collides: true } : {}),
       ...(item.textScale !== undefined && item.textScale !== 1
@@ -271,4 +276,101 @@ function toGroup(group: components['schemas']['Group']): CanvasGroup[] {
       ...(group.collides ? { collides: true } : {}),
     },
   ];
+}
+
+/**
+ * Where to load an app's view from (canvas/apps): a URL on the sandbox origin
+ * with a short-lived token. Null when this server has none (apps run in the
+ * desktop app) or the app is gone.
+ */
+export async function mountApp(
+  boardId: string,
+  itemId: string,
+  look?: { theme: 'light' | 'dark'; tokens: Record<string, string> },
+): Promise<{ url: string; origin: string } | null> {
+  const { data, response } = await api.POST('/api/boards/{id}/items/{item}/mount', {
+    params: { path: { id: boardId, item: itemId } },
+    ...(look ? { body: look } : {}),
+  });
+  if (response.status === 404) return null;
+  if (!data) throw new Error(`could not open the app: ${response.status}`);
+  return data;
+}
+
+/** One view of an item (canvas/item-views), as the server derives it now. */
+/** What an app reads and where its outputs go, resolved by the server (canvas/apps). */
+export type AppInventory =
+  paths['/api/boards/{id}/items/{item}/inputs']['get']['responses'][200]['content']['application/json'];
+
+export async function appInventory(boardId: string, itemId: string): Promise<AppInventory | null> {
+  const { data } = await api.GET('/api/boards/{id}/items/{item}/inputs', {
+    params: { path: { id: boardId, item: itemId } },
+  });
+  return data ?? null;
+}
+
+/** What an app reads now, name → value: what its view receives. */
+/** A tool an MCP server offers, as the add menu lists it (canvas/app-sources). */
+export type McpTool = components['schemas']['McpTool'];
+
+/** The board's MCP connections, and whether local commands are allowed (the desktop). */
+export async function mcpConnections(boardId: string) {
+  const { data } = await api.GET('/api/boards/{id}/mcp', { params: { path: { id: boardId } } });
+  return data ?? { local: false, connections: [] };
+}
+
+/** Why the server said no, in its words. */
+function refusal(error: unknown, status: number): Error {
+  const detail = (error as { detail?: string } | undefined)?.detail;
+  return new Error(detail ?? `the server said ${status}`);
+}
+
+/** Adds a connection once its server answers; returns it with the tools it offers. */
+export async function mcpConnect(
+  boardId: string,
+  to: { url?: string; command?: string; token?: string },
+) {
+  const { data, error, response } = await api.POST('/api/boards/{id}/mcp', {
+    params: { path: { id: boardId } },
+    body: to,
+  });
+  if (!data) throw refusal(error, response.status);
+  return data;
+}
+
+export async function mcpTools(boardId: string, conn: string): Promise<McpTool[]> {
+  const { data, error, response } = await api.GET('/api/boards/{id}/mcp/{conn}/tools', {
+    params: { path: { id: boardId, conn } },
+  });
+  if (!data) throw refusal(error, response.status);
+  return data.tools;
+}
+
+/** Fetches and pins a tool's ui:// view; the app made from it names this hash. */
+export async function mcpPin(boardId: string, conn: string, uri: string): Promise<string> {
+  const { data, error, response } = await api.POST('/api/boards/{id}/mcp/{conn}/resource', {
+    params: { path: { id: boardId, conn } },
+    body: { uri },
+  });
+  if (!data) throw refusal(error, response.status);
+  return data.sha256;
+}
+
+/** An MCP app's view asks its own server: a tools/call or a resources/read. */
+export async function appMcp(
+  boardId: string,
+  itemId: string,
+  method: 'tools/call' | 'resources/read',
+  params: unknown,
+): Promise<Record<string, unknown>> {
+  const { data, error, response } = await api.POST('/api/boards/{id}/items/{item}/mcp', {
+    params: { path: { id: boardId, item: itemId } },
+    body: { method, params },
+  });
+  if (!data) throw refusal(error, response.status);
+  return data;
+}
+
+export async function appInputs(boardId: string, itemId: string): Promise<Record<string, unknown>> {
+  return (await appInventory(boardId, itemId))?.values ?? {};
 }

@@ -53,9 +53,13 @@ const tasks = (d: CanvasDocument) => {
   return c?.kind === 'checklist' ? c.tasks : [];
 };
 
-/** Everything an undo must restore, without the revision counter (it only counts up). */
+/** Everything an undo must restore, without the counters (they only count up). */
 const state = (d: CanvasDocument) => ({
-  items: [...d.items()].map(({ revision: _, ...rest }) => rest),
+  items: [...d.items()].map(({ revision: _, content, ...rest }) => {
+    if (content.kind !== 'app') return { ...rest, content };
+    const { sourceRev: _s, setupRev: _u, ...c } = content;
+    return { ...rest, content: c };
+  }),
   links: [...d.links()],
 });
 
@@ -336,5 +340,87 @@ describe('deleting items with their links', () => {
     expect(d.item(FLOW)?.content.kind).toBe('diagram');
     expect(d.item(LIST)?.content.kind).toBe('checklist');
     expect([...d.links()].sort((a, b) => a.id.localeCompare(b.id))).toEqual(before);
+  });
+});
+
+describe('apps and data links (canvas-apps-poc)', () => {
+  const APP = asItemId('app');
+  const app = () => {
+    const d = board();
+    d.apply(create(APP, { kind: 'app', title: 'Premium', html: '<!doctype html><p>calc</p>' }));
+    return d;
+  };
+
+  it('read an app from the wire, and keep a kind this client does not know', () => {
+    expect(contentFrom({ kind: 'app', title: 'Premium', html: '<p>x</p>' })).toEqual({
+      kind: 'app',
+      title: 'Premium',
+      html: '<p>x</p>',
+    });
+    expect(contentFrom({ kind: 'app' })).toEqual({ kind: 'app', title: '', html: '' });
+    // What an older client does with an app: keeps it inert.
+    expect(contentFrom({ kind: 'widget', html: '<p>x</p>' })).toEqual({
+      kind: 'unknown',
+      original: 'widget',
+    });
+  });
+
+  it('carry a feeds link view through add, view change and delete, and undo each', () => {
+    const d = app();
+    const feeds: CanvasOperationBody = {
+      type: 'link.add',
+      linkId: L1,
+      from: { itemId: NOTE },
+      to: { itemId: APP },
+      linkType: 'feeds',
+      view: 'text',
+    };
+    roundTrip(d, feeds);
+    d.apply(feeds);
+    expect(d.linksOf(APP)[0]?.view).toBe('text');
+    roundTrip(d, { type: 'link.set', linkId: L1, linkType: 'feeds', view: 'tables' });
+    d.apply({ type: 'link.set', linkId: L1, linkType: 'feeds', view: 'tables' });
+    expect(d.linksOf(APP)[0]?.view).toBe('tables');
+    roundTrip(d, { type: 'link.delete', linkId: L1 });
+  });
+
+  it('never turn a semantic link into a data link or back', () => {
+    const d = app();
+    d.apply({
+      type: 'link.add',
+      linkId: L1,
+      from: { itemId: NOTE },
+      to: { itemId: APP },
+      linkType: 'describes',
+    });
+    d.apply({
+      type: 'link.add',
+      linkId: L2,
+      from: { itemId: APP },
+      to: { itemId: LIST },
+      linkType: 'updates',
+    });
+    expect(d.apply({ type: 'link.set', linkId: L1, linkType: 'feeds' })).toBeUndefined();
+    expect(d.apply({ type: 'link.set', linkId: L2, linkType: 'implements' })).toBeUndefined();
+    expect(d.apply({ type: 'link.set', linkId: L2, linkType: 'feeds' })).toBeUndefined();
+    expect(
+      d
+        .linksOf(APP)
+        .map((l) => l.linkType)
+        .sort(),
+    ).toEqual(['describes', 'updates']);
+  });
+
+  it('take an output run as the next version; the first run undoes to never run', () => {
+    const d = app();
+    // Applied, so it reaches the sync queue: the inverse says "never run".
+    expect(
+      d.apply({ type: 'app.output', itemId: APP, outputs: { premium: 1240 }, status: 'ok' }),
+    ).toEqual({ type: 'app.output.revert', itemId: APP, toVersion: 0 });
+    const c = d.item(APP)?.content;
+    expect(c?.kind === 'app' && c.output).toMatchObject({ version: 1, outputs: { premium: 1240 } });
+    d.apply({ type: 'app.output.revert', itemId: APP, toVersion: 0 });
+    const back = d.item(APP)?.content;
+    expect(back?.kind === 'app' && back.output).toBeUndefined();
   });
 });

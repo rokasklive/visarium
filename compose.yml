@@ -41,6 +41,9 @@ services:
       # account, and the first request claims the instance — claim it before
       # you point a proxy at it.
       - "127.0.0.1:${APP_PORT:-8080}:8080"
+      # Canvas apps' views, when .env sets VISARIUM_APPS_ORIGIN: a hostname of
+      # their own, proxied here (DEPLOYMENT.md, "App sandbox hostname").
+      - "127.0.0.1:${APPS_PORT:-8081}:8081"
     volumes:
       # CANONICAL DATA. Back this up. A LOCAL disk, never an NFS/SMB mount:
       # SQLite's write-ahead log needs shared memory and working locks, which

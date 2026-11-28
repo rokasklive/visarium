@@ -219,6 +219,22 @@ export function useObjectEditing(d: EditingDeps) {
     setEditing({ kind: 'title', itemId });
   };
 
+  /** An app centred on a world point, selected: what "Add MCP app…" makes (canvas/app-sources). */
+  const newApp = (content: CanvasItemContent, at: Vec2) => {
+    if (!d.editable) return;
+    const itemId = newItemId();
+    // ponytail: one default size; an app fills whatever box it is given.
+    const [width, height] = [360, 240];
+    d.commit({
+      type: 'item.create',
+      itemId,
+      transform: { x: at.x, y: at.y, width, height, rotation: 0 },
+      z: topZ(d.doc),
+      content,
+    });
+    d.select([itemId]);
+  };
+
   const tasksOf = (itemId: ItemId): readonly Task[] => {
     const c = d.doc.item(itemId)?.content;
     return c?.kind === 'checklist' ? c.tasks : [];
@@ -535,6 +551,7 @@ export function useObjectEditing(d: EditingDeps) {
     doubleClick,
     startNewNote,
     newChecklist,
+    newApp,
     place,
     hover,
     overlays: (

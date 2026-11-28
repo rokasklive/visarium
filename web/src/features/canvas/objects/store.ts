@@ -17,20 +17,22 @@
  * The write is absolute, so two clients doing it at once agree.
  */
 
-import type {
-  CanvasDocument,
-  CanvasItem,
-  CanvasOperationBody,
-  ItemId,
-  OperationOrigin,
-  Transform,
+import {
+  type AppState,
+  appStates,
+  type CanvasDocument,
+  type CanvasItem,
+  type CanvasOperationBody,
+  type ItemId,
+  type OperationOrigin,
+  type Transform,
 } from '@visarium/canvas-core';
 import { resolvedTheme } from '~/app/theme';
 import { type Layout, laidWidth, layoutItem, layoutSource, SourceError } from './layout';
 
 export function isObject(item: CanvasItem): boolean {
   const k = item.content.kind;
-  return k === 'note' || k === 'diagram' || k === 'checklist';
+  return k === 'note' || k === 'diagram' || k === 'checklist' || k === 'app';
 }
 
 /**
@@ -41,7 +43,15 @@ export function isObject(item: CanvasItem): boolean {
  * `request` then lays each out again while its last drawing stays on screen,
  * and the bitmap cache, keyed off this, keeps one bitmap per theme.
  */
-export function layoutKey(item: CanvasItem): string {
+/** A short, stable stand-in for a card's picture in a layout key. */
+function cardKey(card: string | null | undefined): string {
+  if (!card) return '';
+  let h = 0x811c9dc5;
+  for (let i = 0; i < card.length; i++) h = Math.imul(h ^ card.charCodeAt(i), 0x01000193);
+  return `${card.length}:${(h >>> 0).toString(36)}`;
+}
+
+export function layoutKey(item: CanvasItem, appState?: AppState): string {
   const c = item.content;
   // The width it is laid out at: a corner resize that scales the text keeps
   // it, and with it the drawing (canvas/text-scaling).
@@ -53,6 +63,9 @@ export function layoutKey(item: CanvasItem): string {
       return `${w}|d|${c.lang}|${c.source}`;
     case 'checklist':
       return `${w}|c|${JSON.stringify([c.title, c.tasks.map((t) => [t.id, t.text, t.state])])}`;
+    case 'app':
+      // Its box is its frame, so its height is part of what is drawn.
+      return `${w}|a|${item.transform.height}|${c.title}|${c.output?.version ?? 0}|${cardKey(c.output?.card)}|${JSON.stringify(appState ?? null)}`;
     default:
       return `${w}|${c.kind}`;
   }
@@ -83,6 +96,8 @@ export class ObjectLayouts {
   readonly #doc: CanvasDocument;
   readonly #onReady: () => void;
   readonly #onElements: (itemId: ItemId, key: string, layout: Layout) => void;
+  /** Every app's state, until the next applied operation or revision. */
+  #states: { revision: number; states: Map<ItemId, AppState> } | undefined;
 
   /**
    * @param onElements a diagram laid out cleanly: where its named elements
@@ -103,22 +118,31 @@ export class ObjectLayouts {
     return this.#entries.get(item.id)?.view;
   }
 
+  /** An app's state now (canvas/apps), derived once per change to the board. */
+  appState(item: CanvasItem): AppState | undefined {
+    if (item.content.kind !== 'app') return undefined;
+    if (this.#states?.revision !== this.#doc.revision)
+      this.#states = { revision: this.#doc.revision, states: appStates(this.#doc) };
+    return this.#states.states.get(item.id);
+  }
+
   /** Lay the item out unless that layout is already here or coming. */
   request(item: CanvasItem): void {
     if (!isObject(item)) return;
-    const key = layoutKey(item);
+    const state = this.appState(item);
+    const key = layoutKey(item, state);
     const entry = this.#entries.get(item.id) ?? { key };
     this.#entries.set(item.id, entry);
     if (entry.view?.key === key || entry.inflight === key) return;
     entry.inflight = key;
     entry.key = key;
-    void this.#lay(item, entry, key);
+    void this.#lay(item, entry, key, state);
   }
 
-  async #lay(item: CanvasItem, entry: Entry, key: string): Promise<void> {
+  async #lay(item: CanvasItem, entry: Entry, key: string, state?: AppState): Promise<void> {
     let view: ObjectView;
     try {
-      const layout = await layoutItem(item);
+      const layout = await layoutItem(item, state);
       entry.good = { layout, key };
       view = { layout, key, stale: false };
     } catch (e) {
@@ -155,6 +179,7 @@ export class ObjectLayouts {
    * or to its width, makes this client the one that writes its next height.
    */
   noteApplied = (body: CanvasOperationBody, origin: OperationOrigin): void => {
+    this.#states = undefined;
     if (origin !== 'local') return;
     switch (body.type) {
       case 'item.create':
@@ -188,6 +213,8 @@ export class ObjectLayouts {
   #writeHeight(itemId: ItemId, view: ObjectView): void {
     const item = this.#doc.item(itemId);
     if (!item) return;
+    // An app's box is the frame its view fills: the card never resizes it.
+    if (item.content.kind === 'app') return;
     if (!this.#authored.has(itemId) && !this.#collides(item)) return;
     if (layoutKey(item) !== view.key) return; // changed again since; wait for that layout
     this.#authored.delete(itemId);

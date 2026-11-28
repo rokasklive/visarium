@@ -110,6 +110,22 @@
   --color-presence-3: oklch(0.72 0.16 85);
   --color-presence-4: oklch(0.72 0.16 355);
   --color-presence-5: oklch(0.72 0.16 185);
+
+  /*
+   * Chart series (canvas/apps): the six colours an app's chart may use for its
+   * series, through the kit's .series-1 to .series-6 (app_kit.css). Identity,
+   * in this fixed order, never cycled and never rank: a seventh series folds
+   * into "Other". Not presence (those are people) and not the accent (that is
+   * you). Validated with the dataviz palette checks against `surface`: inside
+   * the theme's lightness band, adjacent pairs apart for colour-blind and full
+   * vision, each 3:1 on the ground. tokens.test.ts holds the contrast.
+   */
+  --color-series-1: oklch(0.64 0.15 250);
+  --color-series-2: oklch(0.66 0.17 45);
+  --color-series-3: oklch(0.66 0.13 170);
+  --color-series-4: oklch(0.66 0.14 85);
+  --color-series-5: oklch(0.6 0.18 350);
+  --color-series-6: oklch(0.56 0.17 295);
 }
 
 /*
@@ -156,6 +172,14 @@
   --color-presence-3: oklch(0.52 0.12 85);
   --color-presence-4: oklch(0.54 0.18 355);
   --color-presence-5: oklch(0.52 0.1 185);
+
+  /* The same six hues, stepped for a light ground and checked again there. */
+  --color-series-1: oklch(0.56 0.15 250);
+  --color-series-2: oklch(0.62 0.17 45);
+  --color-series-3: oklch(0.6 0.13 170);
+  --color-series-4: oklch(0.66 0.14 75);
+  --color-series-5: oklch(0.6 0.18 350);
+  --color-series-6: oklch(0.5 0.17 295);
 
   /*
    * The wordmark's lit rows. White is ink here (the same value), and the four
