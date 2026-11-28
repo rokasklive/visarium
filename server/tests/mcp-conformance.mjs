@@ -29,8 +29,9 @@ assert.match(client.getInstructions() ?? '', /describes/);
 const { tools } = await client.listTools();
 const names = tools.map((t) => t.name).sort();
 assert.deepEqual(names, [
-  'arrange', 'board_read', 'changes', 'desk', 'group_create', 'item_create', 'item_delete', 'item_edit',
-  'item_read', 'item_view', 'link', 'search', 'tasks', 'trace', 'unlink',
+  'app_create', 'app_run', 'arrange', 'board_read', 'changes', 'desk', 'group_create', 'item_create',
+  'item_delete', 'item_edit', 'item_read', 'item_view', 'item_views', 'link', 'search', 'tasks', 'trace',
+  'unlink',
 ]);
 
 const desk = await client.callTool({ name: 'desk', arguments: {} });

@@ -1403,12 +1403,11 @@ fn with_kit(html: &str, kit: &str) -> String {
 pub async fn mount(
     axum::extract::State(app): axum::extract::State<crate::AppState>,
     axum::extract::Path((board, item)): axum::extract::Path<(Uuid, Uuid)>,
-    body: axum::body::Bytes,
+    look: Result<axum::Json<Option<KitTheme>>, axum::extract::rejection::JsonRejection>,
 ) -> ApiResult<axum::Json<Value>> {
-    // The board's look is optional: absent, null or unreadable, the kit uses its defaults.
-    let theme = serde_json::from_slice::<Option<KitTheme>>(&body)
-        .ok()
-        .flatten();
+    // The board's look is optional: absent, null or unreadable, the kit uses its
+    // defaults. Its values are checked again in `kit_head` before they reach a page.
+    let theme = look.ok().and_then(|axum::Json(t)| t);
     let origin = app.config.apps_origin.as_deref().ok_or_else(|| {
         ApiError::not_found(
             "apps need a sandbox origin to run, and this server has none: open the board in the desktop app, or ask its operator to set VISARIUM_APPS_ORIGIN",
