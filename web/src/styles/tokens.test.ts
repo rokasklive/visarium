@@ -335,6 +335,16 @@ for (const theme of THEMES) {
     }
   });
 
+  // Chart series (canvas/apps): a mark is a graphic, so 3:1 on the app's ground.
+  describe(`chart series (${theme})`, () => {
+    for (let n = 1; n <= 6; n++) {
+      it(`series-${n} reads on the app ground and is not the accent`, () => {
+        expect(contrast(`series-${n}`, 'surface', theme)).toBeGreaterThanOrEqual(3);
+        expect(tokens(theme).get(`series-${n}`)).not.toEqual(tokens(theme).get('accent'));
+      });
+    }
+  });
+
   describe(`link-faded (canvas/links) (${theme})`, () => {
     it('can still be found on the canvas ground', () => {
       expect(contrast('link-faded', 'surface-sunken', theme)).toBeGreaterThan(1.3);

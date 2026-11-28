@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sales by quarter</title>
+</head>
+<body>
+<!-- A canvas app fed by a note's table: link the note with view `tables`,
+     path `0`, name `sales`. The first column labels the groups; every other
+     column is a series, in the kit's series colours, in order. A legend names
+     them and the table under the chart gives the numbers. No styles of its own. -->
+<h1>Sales by quarter</h1>
+<p class="empty" id="empty">Link a note with a table to this app, view tables, path 0, name sales.</p>
+<svg class="chart" id="chart" role="img" aria-label="Sales by quarter" hidden></svg>
+<ul class="legend" id="legend"></ul>
+<details id="numbers" hidden><summary>Numbers</summary><table id="table"></table></details>
+<script>
+const ns = 'http://www.w3.org/2000/svg';
+const el = (name, attrs, text) => {
+  const e = document.createElementNS(ns, name);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  if (text !== undefined) e.textContent = text;
+  return e;
+};
+const H = 160, W = 320, LEFT = 36, BOTTOM = 20;
+
+/** { label, series: [name], rows: [{ label, values: [number] }] } from a tables-view table. */
+const read = (args) => {
+  const t = args?.sales ?? Object.entries(args || {}).find(([k]) => k.endsWith('.tables'))?.[1]?.[0];
+  if (!t?.headers?.length || !t.rows?.length) return null;
+  const [label, ...series] = t.headers;
+  const rows = t.rows.map((r) => ({ label: r[label], values: series.map((s) => Number(r[s]) || 0) }));
+  return { label, series: series.slice(0, 6), rows };
+};
+
+const draw = (args) => {
+  const d = read(args);
+  const svg = document.getElementById('chart');
+  document.getElementById('empty').hidden = !!d;
+  svg.toggleAttribute('hidden', !d); // an SVG element has no `hidden` property
+  document.getElementById('numbers').hidden = !d;
+  svg.replaceChildren();
+  document.getElementById('legend').replaceChildren();
+  if (!d) return null;
+  const top = Math.max(1, ...d.rows.flatMap((r) => r.values));
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  const plot = H - BOTTOM;
+  for (const f of [0, 0.5, 1]) {
+    const y = plot - f * (plot - 8);
+    svg.append(el('line', { class: f ? 'grid' : 'axis', x1: LEFT, x2: W, y1: y, y2: y }));
+    svg.append(el('text', { x: LEFT - 6, y: y + 4, 'text-anchor': 'end' }, String(Math.round(top * f))));
+  }
+  const group = (W - LEFT) / d.rows.length;
+  const bar = Math.min(18, (group - 12) / d.series.length - 2);
+  d.rows.forEach((r, i) => {
+    const x0 = LEFT + i * group + (group - d.series.length * (bar + 2)) / 2;
+    r.values.slice(0, 6).forEach((v, s) => {
+      const h = Math.max(0, (v / top) * (plot - 8));
+      const rect = el('rect', { class: `mark series-${s + 1}`, x: x0 + s * (bar + 2), y: plot - h, width: bar, height: h, rx: 2 });
+      rect.append(el('title', {}, `${r.label}, ${d.series[s]}: ${v}`));
+      svg.append(rect);
+    });
+    svg.append(el('text', { x: LEFT + i * group + group / 2, y: H - 4, 'text-anchor': 'middle' }, r.label));
+  });
+  for (const [s, name] of d.series.entries()) {
+    const li = document.createElement('li');
+    li.className = `series-${s + 1}`;
+    li.innerHTML = '<span class="swatch"></span>';
+    li.append(name);
+    document.getElementById('legend').append(li);
+  }
+  const table = document.getElementById('table');
+  table.replaceChildren();
+  const head = table.createTHead().insertRow();
+  for (const h of [d.label, ...d.series]) head.append(Object.assign(document.createElement('th'), { textContent: h }));
+  const body = table.createTBody();
+  for (const r of d.rows) {
+    const tr = body.insertRow();
+    tr.insertCell().textContent = r.label;
+    for (const v of r.values) Object.assign(tr.insertCell(), { textContent: v, className: 'num' });
+  }
+  for (const th of [...head.cells].slice(1)) th.className = 'num';
+  return d;
+};
+
+let n = 0;
+const pending = {};
+const send = (m) => parent.postMessage({ jsonrpc: '2.0', ...m }, '*');
+const request = (method, params) =>
+  new Promise((resolve) => { const id = ++n; pending[id] = resolve; send({ id, method, params }); });
+
+addEventListener('message', async (e) => {
+  const m = e.data;
+  if (m?.jsonrpc !== '2.0') return;
+  if (m.id !== undefined && !m.method) { pending[m.id]?.(m); delete pending[m.id]; return; }
+  if (m.method === 'ui/resource-teardown') return send({ id: m.id, result: {} });
+  if (m.method === 'ui/notifications/tool-input' || m.method === 'visarium/notifications/inputs-changed')
+    return void draw(m.params.arguments);
+  if (m.method !== 'visarium/notifications/run') return;
+  const d = draw(m.params.arguments);
+  if (!d) {
+    await request('visarium/outputs/publish', { outputs: {}, status: 'error', error: 'needs a note table fed in as sales' });
+    return;
+  }
+  const totals = Object.fromEntries(d.series.map((s, i) => [s, d.rows.reduce((t, r) => t + r.values[i], 0)]));
+  await request('visarium/outputs/publish', {
+    outputs: { totals },
+    text: d.series.map((s) => `${s} ${totals[s]}`).join(', '),
+  });
+});
+
+(async () => {
+  await request('ui/initialize', {
+    appInfo: { name: 'sales-chart', version: '1' },
+    appCapabilities: {},
+    protocolVersion: '2026-01-26',
+  });
+  send({ method: 'ui/notifications/initialized' });
+})();
+</script>
+</body>
+</html>

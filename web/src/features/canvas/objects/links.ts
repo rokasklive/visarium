@@ -81,9 +81,15 @@ export function nextView(content: CanvasItemContent, view: string): string {
   return views[(views.indexOf(view) + 1) % views.length] ?? view;
 }
 
-/** What a link's label says: its type, and for `feeds` the view it carries. */
+/**
+ * What a link's label says: its type, and for `feeds` what it carries — the
+ * view, the field within it, and the input name when one was given
+ * (`feeds · frontmatter.age → age`).
+ */
 export function linkLabel(link: Link): string {
-  return link.linkType === 'feeds' && link.view ? `feeds · ${link.view}` : link.linkType;
+  if (link.linkType !== 'feeds' || !link.view) return link.linkType;
+  const field = link.path ? `${link.view}.${link.path}` : link.view;
+  return `feeds · ${field}${link.name ? ` → ${link.name}` : ''}`;
 }
 
 /** The smallest named element of a diagram under a layout-unit point. */

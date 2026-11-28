@@ -717,6 +717,11 @@ async fn item_create(
                     title: None,
                     tasks: None,
                     html: None,
+                    literals: None,
+                    run: None,
+                    source_rev: None,
+                    setup_rev: None,
+                    mcp: None,
                 },
                 place::estimate("note", source, 0),
             )
@@ -738,6 +743,11 @@ async fn item_create(
                     title: None,
                     tasks: None,
                     html: None,
+                    literals: None,
+                    run: None,
+                    source_rev: None,
+                    setup_rev: None,
+                    mcp: None,
                 },
                 place::estimate("diagram", source, 0),
             )
@@ -775,6 +785,11 @@ async fn item_create(
                     title: Some(title),
                     tasks: Some(tasks),
                     html: None,
+                    literals: None,
+                    run: None,
+                    source_rev: None,
+                    setup_rev: None,
+                    mcp: None,
                 },
                 place::estimate("checklist", "", texts.len()),
             )
@@ -806,6 +821,11 @@ async fn item_create(
                     title: None,
                     tasks: None,
                     html: None,
+                    literals: None,
+                    run: None,
+                    source_rev: None,
+                    setup_rev: None,
+                    mcp: None,
                 },
                 (w, h),
             )
@@ -824,6 +844,7 @@ async fn item_create(
             let size = serde_json::to_string(&crate::apps::AppBody {
                 title: title.into(),
                 html: html.into(),
+                ..Default::default()
             })
             .map_or(0, |b| b.len());
             if size > boards::MAX_APP_BODY {
@@ -842,6 +863,15 @@ async fn item_create(
                     title: Some(title.into()),
                     tasks: None,
                     html: Some(html.into()),
+                    literals: match args.get("literals") {
+                        None | Some(Value::Null) => None,
+                        Some(Value::Object(m)) => Some(m.clone()),
+                        Some(_) => return Err("literals must be an object of names to values, e.g. { \"rate\": 0.05 }. Nothing was created.".into()),
+                    },
+                    run: app_run_mode(args)?,
+                    source_rev: None,
+                    setup_rev: None,
+                    mcp: None,
                 },
                 // ponytail: one default size; an app fills whatever box it is given.
                 (360.0, 240.0),
@@ -940,6 +970,8 @@ async fn item_create(
             to: to.clone(),
             link_type: ty.clone(),
             view: view.clone(),
+            path: None,
+            name: None,
             by: None,
             by_agent: None,
             at: None,
@@ -1051,6 +1083,139 @@ async fn stale_message(
     ))
 }
 
+/// `run`: `auto` (the default, stored as nothing) or `manual`.
+fn app_run_mode(args: &Value) -> Result<Option<String>, Fail> {
+    match opt_str(args, "run") {
+        None | Some("auto") => Ok(None),
+        Some("manual") => Ok(Some("manual".into())),
+        Some(other) => Err(format!(
+            "run is auto or manual, not {other:?}. Nothing was changed."
+        )),
+    }
+}
+
+/// `item_edit` of an app (agents/apps): its title, its source (one exact
+/// passage, or the whole document against `base_rev`), literals to set or
+/// clear (a null clears one), and its run mode. One `app.set`, credited to
+/// the agent; the board's checks are app_create's.
+async fn app_edit(
+    app: &AppState,
+    caller: &Caller,
+    args: &Value,
+    b: &BoardData,
+    item: &ItemRow,
+) -> Result<Out, Fail> {
+    let r = item.short_ref();
+    let body = crate::apps::AppBody::parse(item.body.as_deref());
+    let html = match (
+        args.get("old")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty()),
+        opt_str(args, "html"),
+    ) {
+        (Some(from), _) => {
+            let to = args
+                .get("new")
+                .and_then(Value::as_str)
+                .ok_or("new is required with old (it may be empty).")?;
+            match body.html.matches(from).count() {
+                0 => {
+                    return Err(format!(
+                        "old does not occur in {r}'s source. item_read it with source: true and copy the passage exactly."
+                    ));
+                }
+                1 => Some(body.html.replacen(from, to, 1)),
+                n => {
+                    return Err(format!(
+                        "old occurs {n} times in {r}'s source; nothing was changed. Give a longer passage that occurs once."
+                    ));
+                }
+            }
+        }
+        (None, Some(whole)) => {
+            // ponytail: checked here, not in the op, so a person's edit landing
+            // between this check and the commit is overwritten; old/new is safe.
+            let base = arg_i64(args, "base_rev").ok_or(
+                "base_rev is required with html: the revision item_read showed for this app.",
+            )?;
+            if base != item.revision {
+                return Err(stale_message(app, b, item, base).await?);
+            }
+            Some(whole.to_string())
+        }
+        (None, None) => None,
+    };
+    if let Some(h) = &html {
+        crate::apps::check_html(h).map_err(|e| format!("{e}. Nothing was changed."))?;
+    }
+    let literals = match args.get("literals") {
+        None | Some(Value::Null) => None,
+        Some(Value::Object(m)) => {
+            let mut now = body.literals.clone();
+            for (k, v) in m {
+                if v.is_null() {
+                    now.remove(k);
+                } else {
+                    now.insert(k.clone(), v.clone());
+                }
+            }
+            Some(now)
+        }
+        Some(_) => return Err("literals must be an object of names to values (null clears one), e.g. { \"rate\": 0.05 }.".into()),
+    };
+    let run = match opt_str(args, "run") {
+        None => None,
+        Some(_) => Some(app_run_mode(args)?.unwrap_or_else(|| "auto".into())),
+    };
+    let title = opt_str(args, "title").map(String::from);
+    if html.is_none() && literals.is_none() && run.is_none() && title.is_none() {
+        return Err(format!(
+            "Nothing to change: give {r} a title, its source (old and new, or html with base_rev), literals or run."
+        ));
+    }
+    let mut said: Vec<String> = Vec::new();
+    if title.as_deref().is_some_and(|t| *t != body.title) {
+        said.push("retitled it".into());
+    }
+    if html.as_deref().is_some_and(|h| *h != body.html) {
+        said.push("changed its source".into());
+    }
+    if literals.as_ref().is_some_and(|l| *l != body.literals) {
+        said.push("set its literals".into());
+    }
+    let was_manual = body.run.as_deref() == Some("manual");
+    match run.as_deref() {
+        Some("manual") if !was_manual => {
+            said.push("made it manual: it runs only when asked".into())
+        }
+        Some("auto") if was_manual => said.push("made it automatic".into()),
+        _ => {}
+    }
+    if said.is_empty() {
+        return Ok(Out::text(format!("{r} already is that; nothing changed.")));
+    }
+    let op = Op::AppSet {
+        item_id: Uuid::parse_str(&item.id).unwrap(),
+        title,
+        html,
+        literals,
+        run,
+        mcp_sha256: None,
+    };
+    let revision = commit(app, caller, b.id, vec![op]).await?;
+    let after = reload(app, b).await?;
+    let state = after
+        .item(&item.id)
+        .map(|i| crate::agent::read::app_state_text(&after, i))
+        .unwrap_or_default();
+    Ok(Out::text(format!(
+        "Edited {r}: {}. It is {state}. Board at rev {revision}.",
+        said.join(", ")
+    ))
+    .with(json!({ "boardRevision": revision }))
+    .touch(b.id, Some(item.id.clone()), "editing"))
+}
+
 async fn item_edit(
     app: &AppState,
     caller: &Caller,
@@ -1060,9 +1225,12 @@ async fn item_edit(
     let board = find_board(&app.db, arg_str(args, "board")?).await?;
     let b = BoardData::load(&app.db, &board).await?;
     let item = b.resolve_item(arg_str(args, "ref")?)?;
+    if item.kind == "app" {
+        return app_edit(app, caller, args, &b, item).await.map(Step::Done);
+    }
     if item.kind != "note" && item.kind != "diagram" {
         return Err(format!(
-            "{} is a {}; item_edit changes notes and diagrams.{}",
+            "{} is a {}; item_edit changes notes, diagrams and apps.{}",
             item.short_ref(),
             item.kind,
             if item.kind == "checklist" {
@@ -1373,6 +1541,15 @@ async fn link(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, Fail
     let (to, to_el) = b.resolve_anchor(arg_str(args, "to")?, true)?;
     let ty = link_type(args, "type")?;
     let view = opt_str(args, "view").map(String::from);
+    let path = opt_str(args, "path")
+        .filter(|p| !p.is_empty())
+        .map(String::from);
+    let name = opt_str(args, "name")
+        .filter(|n| !n.is_empty())
+        .map(String::from);
+    if ty != "feeds" && (path.is_some() || name.is_some()) {
+        return Err("path and name belong to a feeds link: which field of the view the app reads, and under what name.".into());
+    }
     if from.id == to.id && from_el == to_el {
         return Err("A link needs two different ends.".into());
     }
@@ -1390,13 +1567,17 @@ async fn link(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, Fail
             && l.to_element == to_el
     });
     let label = format!(
-        "{}{} {ty} {}",
+        "{}{}{} {ty} {}{}",
         b.anchor_text(&from.id, from_el.as_deref()),
         view.as_deref().map(|v| format!(".{v}")).unwrap_or_default(),
-        b.anchor_text(&to.id, to_el.as_deref())
+        path.as_deref().map(|p| format!(".{p}")).unwrap_or_default(),
+        b.anchor_text(&to.id, to_el.as_deref()),
+        name.as_deref()
+            .map(|n| format!(" as {n}"))
+            .unwrap_or_default(),
     );
     let (op, said) = match existing {
-        Some(l) if l.link_type == ty && l.view == view => {
+        Some(l) if l.link_type == ty && l.view == view && l.path == path && l.name == name => {
             return Ok(Out::text(format!(
                 "{label} already exists; nothing changed."
             )));
@@ -1406,6 +1587,9 @@ async fn link(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, Fail
                 link_id: Uuid::parse_str(&l.id).unwrap(),
                 link_type: ty.clone(),
                 view: view.clone(),
+                // On a feeds link, an empty string clears what it had.
+                path: (ty == "feeds").then(|| path.clone().unwrap_or_default()),
+                name: (ty == "feeds").then(|| name.clone().unwrap_or_default()),
             },
             format!("Changed the link from {} to {ty}: {label}.", link_word(l)),
         ),
@@ -1416,6 +1600,8 @@ async fn link(app: &AppState, caller: &Caller, args: &Value) -> Result<Out, Fail
                 to: anchor(to, to_el.clone()),
                 link_type: ty.clone(),
                 view: view.clone(),
+                path: path.clone(),
+                name: name.clone(),
                 by: None,
                 by_agent: None,
                 at: None,
@@ -1475,19 +1661,24 @@ pub async fn app_run(app: &AppState, caller: &Caller, args: &Value) -> Result<Ou
     }
     let needs_viewer = || {
         Out::text(format!(
-            "needs_viewer: nobody has {r} open, so it cannot run. An app runs in a person's view: ask your person to open {r} on the board (double-click it, in the desktop app), then call app_run again. Nothing changed."
+            "needs_viewer: nobody has this board open with canvas apps on, so {r} cannot run. An app runs in a person's client: ask your person to open the board (Settings → Labs → Canvas apps on), then call app_run again. Nothing changed."
         ))
         .with(json!({ "status": "needs_viewer" }))
     };
-    if !app.rooms.has_viewer(&b.id, id) {
+    // A tool-backed app runs on the server: it needs nobody's client.
+    let server = crate::mcp::tool_backed(&app.db, &b.id, &id).await.is_some();
+    if !server && !app.rooms.can_run(&b.id, id) {
         return Ok(needs_viewer());
     }
     let before = b.outputs.get(&item.id).map_or(0, |o| o.version);
     let actor = caller.actor();
-    let busy = match app
-        .rooms
-        .request_run_for(&b.id, id, (actor.user_id, actor.agent), stamps)
+    let credit = (actor.user_id, actor.agent);
+    let grant = match crate::mcp::grant(app, &b.id, id, credit.clone(), None, stamps.clone()).await
     {
+        Some(g) => g,
+        None => app.rooms.request_run_for(&b.id, id, credit, stamps),
+    };
+    let busy = match grant {
         crate::realtime::RunGrant::NoViewer => return Ok(needs_viewer()),
         crate::realtime::RunGrant::Busy(_) => true,
         crate::realtime::RunGrant::Leased(_) => false,

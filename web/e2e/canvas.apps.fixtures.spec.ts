@@ -83,3 +83,121 @@ test('the comparison judges premium against quote and sets t1 to match', async (
     .toEqual({ changes: [{ type: 'task.set', taskId: 't1', state: 'blocked' }] });
   await expect(page.frameLocator('#app').locator('#verdict')).toHaveText('mismatch');
 });
+
+test('the rack plan draws its JSON block with no inputs and publishes what is free', async ({
+  page,
+}) => {
+  const app = await host(page, 'rack');
+  const view = page.frameLocator('#app');
+  await expect(view.locator('#title')).toHaveText('Rack A1');
+  // One strip per device, each wearing its kind's series colour, and a legend.
+  await expect(view.locator('svg rect[class^="series-"]')).toHaveCount(6);
+  await expect(view.locator('.legend li')).toHaveText(['Network', 'Compute', 'Storage', 'Power']);
+  await app.run({});
+  await expect
+    .poll(() => app.calls('visarium/outputs/publish'))
+    .toEqual([{ outputs: { units: 12, used: 11, free: 1 }, text: 'Rack A1: 11 of 12 U used' }]);
+});
+
+test('the sales chart draws a fed table as series and publishes the totals', async ({ page }) => {
+  const app = await host(page, 'sales');
+  const table = {
+    headers: ['Quarter', 'North', 'South'],
+    rows: [
+      { Quarter: 'Q1', North: '120', South: '80' },
+      { Quarter: 'Q2', North: '150', South: '95' },
+    ],
+  };
+  await app.run({ sales: table });
+  await expect
+    .poll(() => app.calls('visarium/outputs/publish'))
+    .toEqual([{ outputs: { totals: { North: 270, South: 175 } }, text: 'North 270, South 175' }]);
+  const view = page.frameLocator('#app');
+  await expect(view.locator('#chart')).not.toHaveAttribute('hidden');
+  await expect(view.locator('rect.series-1')).toHaveCount(2);
+  await expect(view.locator('rect.series-2')).toHaveCount(2);
+  await expect(view.locator('.legend li')).toHaveText(['North', 'South']);
+  await expect(view.locator('#table td.num')).toHaveText(['120', '80', '150', '95']);
+
+  // Fed without a name, it takes the first table of the first tables input.
+  await app.run({ 'n1.tables': [table] });
+  await expect.poll(async () => (await app.calls('visarium/outputs/publish')).length).toBe(2);
+
+  await app.run({});
+  await expect
+    .poll(async () => (await app.calls('visarium/outputs/publish'))[2])
+    .toMatchObject({ status: 'error', outputs: {} });
+  await expect(view.locator('#empty')).toBeVisible();
+  await expect(view.locator('#chart')).toHaveAttribute('hidden');
+});
+
+/**
+ * The off-grid cabin board (a demo of canvas apps): five apps chained the way
+ * the board links them, each fed what the one before published. With the
+ * starting plan two of the four checks fail; the verdict says which tasks to
+ * block.
+ */
+test('the cabin apps chain from an appliance table to a checklist verdict', async ({ browser }) => {
+  const appliances = {
+    headers: ['Appliance', 'Category', 'Watts', 'Hours'],
+    rows: [
+      ['Fridge', 'Kitchen', '45', '24'],
+      ['Induction hob', 'Kitchen', '1800', '0.75'],
+      ['LED lights', 'Light', '60', '5'],
+      ['Laptop', 'Work', '65', '6'],
+      ['Starlink', 'Work', '50', '10'],
+      ['Water pump', 'Water', '400', '0.5'],
+      ['Ceiling fan', 'Comfort', '35', '8'],
+      ['Electric blanket', 'Comfort', '60', '6'],
+    ].map(([a, c, w, h]) => ({ Appliance: a, Category: c, Watts: w, Hours: h })),
+  };
+  const hours = [1.8, 2.6, 3.6, 4.6, 5.2, 5.6, 5.8, 5.2, 4.2, 3.0, 1.9, 1.5];
+  const sun = {
+    headers: ['Month', 'Sun hours'],
+    rows: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].map(
+      (m, i) => ({ Month: m, 'Sun hours': String(hours[i]) }),
+    ),
+  };
+  const site = { panels: 8, panel_watts: 400, battery_kwh: 10, roof_width_m: 9, roof_depth_m: 5 };
+  type Published = { outputs: Record<string, unknown> };
+  const run = async (app: string, args: unknown) => {
+    const page = await browser.newPage();
+    const h = await host(page, app);
+    await h.run(args);
+    await expect.poll(async () => (await h.calls('visarium/outputs/publish')).length).toBe(1);
+    const published = (await h.calls('visarium/outputs/publish'))[0] as Published;
+    const proposed = await h.calls('visarium/items/propose');
+    await page.close();
+    return { ...published, proposed };
+  };
+  const load = await run('cabin-load', { appliances });
+  expect(load.outputs).toMatchObject({ loadWh: 4460, largest: { name: 'Induction hob' } });
+  const solar = await run('cabin-solar', { site, sun, load: load.outputs });
+  expect(solar.outputs).toMatchObject({
+    worstMonth: 'Dec',
+    worstRatio: 0.84,
+    shortMonths: ['Dec'],
+  });
+  const battery = await run('cabin-battery', { battery_kwh: 10, load_wh: 4460, reserve: 0.2 });
+  expect(battery.outputs).toEqual({ days: 1.8, usableWh: 8000 });
+  const roof = await run('cabin-roof', { site });
+  expect(roof.outputs).toEqual({ fits: true, max: 12, wanted: 8 });
+  const verdict = await run('cabin-verdict', {
+    solar: solar.outputs,
+    battery: battery.outputs,
+    load: load.outputs,
+    roof: roof.outputs,
+    max_appliance_w: 2000,
+  });
+  expect(verdict.outputs.ready).toBe(false);
+  expect(verdict.proposed).toEqual([
+    {
+      changes: [
+        { type: 'task.set', taskId: 't1', state: 'blocked' },
+        { type: 'task.set', taskId: 't2', state: 'blocked' },
+        { type: 'task.set', taskId: 't3', state: 'done' },
+        { type: 'task.set', taskId: 't4', state: 'done' },
+      ],
+    },
+  ]);
+});

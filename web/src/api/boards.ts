@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, type components } from '@visarium/api-client';
+import { api, type components, type paths } from '@visarium/api-client';
 import {
   asCanvasId,
   asGroupId,
@@ -298,13 +298,79 @@ export async function mountApp(
 }
 
 /** One view of an item (canvas/item-views), as the server derives it now. */
-export async function itemView(
+/** What an app reads and where its outputs go, resolved by the server (canvas/apps). */
+export type AppInventory =
+  paths['/api/boards/{id}/items/{item}/inputs']['get']['responses'][200]['content']['application/json'];
+
+export async function appInventory(boardId: string, itemId: string): Promise<AppInventory | null> {
+  const { data } = await api.GET('/api/boards/{id}/items/{item}/inputs', {
+    params: { path: { id: boardId, item: itemId } },
+  });
+  return data ?? null;
+}
+
+/** What an app reads now, name → value: what its view receives. */
+/** A tool an MCP server offers, as the add menu lists it (canvas/app-sources). */
+export type McpTool = components['schemas']['McpTool'];
+
+/** The board's MCP connections, and whether local commands are allowed (the desktop). */
+export async function mcpConnections(boardId: string) {
+  const { data } = await api.GET('/api/boards/{id}/mcp', { params: { path: { id: boardId } } });
+  return data ?? { local: false, connections: [] };
+}
+
+/** Why the server said no, in its words. */
+function refusal(error: unknown, status: number): Error {
+  const detail = (error as { detail?: string } | undefined)?.detail;
+  return new Error(detail ?? `the server said ${status}`);
+}
+
+/** Adds a connection once its server answers; returns it with the tools it offers. */
+export async function mcpConnect(
+  boardId: string,
+  to: { url?: string; command?: string; token?: string },
+) {
+  const { data, error, response } = await api.POST('/api/boards/{id}/mcp', {
+    params: { path: { id: boardId } },
+    body: to,
+  });
+  if (!data) throw refusal(error, response.status);
+  return data;
+}
+
+export async function mcpTools(boardId: string, conn: string): Promise<McpTool[]> {
+  const { data, error, response } = await api.GET('/api/boards/{id}/mcp/{conn}/tools', {
+    params: { path: { id: boardId, conn } },
+  });
+  if (!data) throw refusal(error, response.status);
+  return data.tools;
+}
+
+/** Fetches and pins a tool's ui:// view; the app made from it names this hash. */
+export async function mcpPin(boardId: string, conn: string, uri: string): Promise<string> {
+  const { data, error, response } = await api.POST('/api/boards/{id}/mcp/{conn}/resource', {
+    params: { path: { id: boardId, conn } },
+    body: { uri },
+  });
+  if (!data) throw refusal(error, response.status);
+  return data.sha256;
+}
+
+/** An MCP app's view asks its own server: a tools/call or a resources/read. */
+export async function appMcp(
   boardId: string,
   itemId: string,
-  view: string,
-): Promise<{ ref: string; value: unknown } | null> {
-  const { data } = await api.GET('/api/boards/{id}/items/{item}/views/{view}', {
-    params: { path: { id: boardId, item: itemId, view } },
+  method: 'tools/call' | 'resources/read',
+  params: unknown,
+): Promise<Record<string, unknown>> {
+  const { data, error, response } = await api.POST('/api/boards/{id}/items/{item}/mcp', {
+    params: { path: { id: boardId, item: itemId } },
+    body: { method, params },
   });
-  return data ? { ref: data.ref, value: data.value } : null;
+  if (!data) throw refusal(error, response.status);
+  return data;
+}
+
+export async function appInputs(boardId: string, itemId: string): Promise<Record<string, unknown>> {
+  return (await appInventory(boardId, itemId))?.values ?? {};
 }

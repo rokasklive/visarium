@@ -207,7 +207,13 @@ impl BoardData {
                 .filter(|l| l.link_type == "feeds")
                 .map(|l| (l.from_item.as_str(), l.to_item.as_str()))
                 .collect();
-            crate::apps::status(&apps, &revs, &feeds, &outputs)
+            let own = crate::apps::own_revs(
+                items
+                    .iter()
+                    .filter(|i| i.kind == "app")
+                    .map(|i| (i.id.as_str(), i.body.as_deref())),
+            );
+            crate::apps::status(&apps, &revs, &own, &feeds, &outputs)
         };
         Ok(BoardData {
             id: board.id,
@@ -272,6 +278,28 @@ impl BoardData {
         id.and_then(|id| self.people.get(id))
             .cloned()
             .unwrap_or_else(|| "someone".into())
+    }
+
+    /// Who an app's output is credited to: "Ana", "Claude Code for Ana", or
+    /// for an automatic run "a1, after Ana's edit to n3" (canvas/apps).
+    pub fn ran_by(&self, app: &str, o: &crate::apps::Output) -> String {
+        let cause = o
+            .cause
+            .as_deref()
+            .and_then(|c| serde_json::from_str::<serde_json::Value>(c).ok())
+            .filter(|c| c["auto"] == true);
+        let Some(cause) = cause else {
+            return self.credit(o.run_by.as_deref(), o.run_by_agent.as_deref());
+        };
+        let who = self.credit(o.run_by.as_deref(), o.run_by_agent.as_deref());
+        match cause["item"].as_str() {
+            Some(item) => format!(
+                "{}, after {who}'s edit to {}",
+                self.ref_of(app),
+                self.ref_of(item)
+            ),
+            None => format!("{}, automatically for {who}", self.ref_of(app)),
+        }
     }
 
     /// "Ana", or "Claude Code for Ana" when an agent acted.

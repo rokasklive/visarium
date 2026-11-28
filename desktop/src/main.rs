@@ -455,6 +455,8 @@ fn main() {
                 version: app.package_info().version.to_string(),
                 single_user: true,
                 apps_origin: Some(format!("http://127.0.0.1:{}", sandbox.local_addr()?.port())),
+                // The person's own machine: their MCP servers, local ones included.
+                mcp_local: true,
                 ..Default::default()
             };
             // A stable port keeps the SPA's origin (and the browser storage

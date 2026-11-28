@@ -33,6 +33,10 @@ pub fn routes() -> Router<AppState> {
             get(crate::views::get_view),
         )
         .route("/boards/{id}/items/{item}/mount", post(crate::apps::mount))
+        .route(
+            "/boards/{id}/items/{item}/inputs",
+            get(crate::apps::get_inputs),
+        )
 }
 
 /// Where a browser drew a diagram's named elements, in the layout's own units
@@ -184,6 +188,19 @@ pub struct Content {
     /// An app's HTML view (canvas/apps).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub html: Option<String>,
+    /// An app's literal inputs, run mode and counters: carried so the undo of
+    /// a deletion brings the app back as it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub literals: Option<serde_json::Map<String, serde_json::Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_rev: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup_rev: Option<i64>,
+    /// An app whose view comes from an MCP server (canvas/app-sources).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp: Option<crate::apps::McpSource>,
 }
 
 /// One task of a checklist. `by` and `at` are stamped by the server from the
@@ -342,6 +359,17 @@ fn check_title(title: &str) -> ApiResult<()> {
     Ok(())
 }
 
+/// An app's run mode as stored: None for `auto`, the default.
+fn check_run(run: Option<&str>) -> ApiResult<Option<String>> {
+    match run {
+        None | Some("auto") => Ok(None),
+        Some("manual") => Ok(Some("manual".into())),
+        Some(other) => Err(ApiError::bad_request(format!(
+            "an app runs auto or manual, not '{other}'"
+        ))),
+    }
+}
+
 fn check_link_type(t: &str) -> ApiResult<()> {
     if !LINK_TYPES.contains(&t) {
         return Err(ApiError::bad_request(format!(
@@ -394,12 +422,27 @@ fn content_columns(c: &Content) -> ApiResult<ContentColumns> {
         Some("app") => {
             let title = c.title.clone().unwrap_or_default();
             check_title(&title)?;
-            let html = c
-                .html
-                .clone()
-                .filter(|h| !h.trim().is_empty())
-                .ok_or_else(|| ApiError::bad_request("an app needs its HTML"))?;
-            let body = serde_json::to_string(&crate::apps::AppBody { title, html }).unwrap();
+            // An MCP app's view is its pinned resource: it has no HTML of its own.
+            let html = match &c.mcp {
+                Some(_) => String::new(),
+                None => c
+                    .html
+                    .clone()
+                    .filter(|h| !h.trim().is_empty())
+                    .ok_or_else(|| ApiError::bad_request("an app needs its HTML"))?,
+            };
+            let literals = c.literals.clone().unwrap_or_default();
+            crate::apps::check_literals(&literals)?;
+            let body = serde_json::to_string(&crate::apps::AppBody {
+                title,
+                html,
+                literals,
+                run: check_run(c.run.as_deref())?,
+                source_rev: c.source_rev.unwrap_or(0).max(0),
+                setup_rev: c.setup_rev.unwrap_or(0).max(0),
+                mcp: c.mcp.clone(),
+            })
+            .unwrap();
             check_body_within(&body, MAX_APP_BODY)?;
             Ok(("app", None, None, Some(body)))
         }
@@ -585,6 +628,11 @@ pub enum Op {
         /// For `feeds`: the source's view the app reads (canvas/item-views).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         view: Option<String>,
+        /// For `feeds`: a field within the view, and the input name the app sees.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
         #[serde(default)]
         by: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -592,14 +640,19 @@ pub enum Op {
         #[serde(default)]
         at: Option<String>,
     },
-    /// A semantic link's type, or a `feeds` link's view; never a switch
-    /// between semantic and data types.
+    /// A semantic link's type, or a `feeds` link's view, field and input
+    /// name; never a switch between semantic and data types. An empty field
+    /// or name clears it.
     #[serde(rename = "link.set", rename_all = "camelCase")]
     LinkSet {
         link_id: Uuid,
         link_type: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         view: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
     },
     #[serde(rename = "link.delete", rename_all = "camelCase")]
     LinkDelete { link_id: Uuid },
@@ -625,12 +678,42 @@ pub enum Op {
         /// input revisions, the app's content revision); a client's is ignored.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         record: Option<serde_json::Value>,
+        /// An automatic run's cause, set by the server from the run's lease;
+        /// a client's is replaced (canvas/apps: automatic runs).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cause: Option<serde_json::Value>,
         #[serde(default)]
         by: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         by_agent: Option<String>,
         #[serde(default)]
         at: Option<String>,
+    },
+    /// An app's title, source, literals (the whole set) or run mode; absent
+    /// fields are left alone (canvas/app-inspector).
+    #[serde(rename = "app.set", rename_all = "camelCase")]
+    AppSet {
+        item_id: Uuid,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        html: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        literals: Option<serde_json::Map<String, serde_json::Value>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        run: Option<String>,
+        /// An MCP app's view, moved to a resource fetched since (applying an
+        /// `update available`, by a person).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mcp_sha256: Option<String>,
+    },
+    /// The picture the latest output version leaves on the app's card: a
+    /// snapshot of its view (canvas/apps).
+    #[serde(rename = "app.card", rename_all = "camelCase")]
+    AppCard {
+        item_id: Uuid,
+        version: i64,
+        html: String,
     },
     /// Undo of an output: an earlier version's values, committed again as the
     /// next version. History is never rewritten.
@@ -717,7 +800,9 @@ impl Op {
             | Op::TaskSet { item_id, .. }
             | Op::TaskRemove { item_id, .. }
             | Op::AppOutput { item_id, .. }
-            | Op::AppOutputRevert { item_id, .. } => Some(*item_id),
+            | Op::AppOutputRevert { item_id, .. }
+            | Op::AppSet { item_id, .. }
+            | Op::AppCard { item_id, .. } => Some(*item_id),
             Op::LinkAdd { from, .. } => Some(from.item_id),
             _ => None,
         }
@@ -826,6 +911,9 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
             check_appearance(&a)?;
             let c = crop.as_ref().map(check_crop).transpose()?.flatten();
             let (kind, asset_id, lang, body) = content_columns(content)?;
+            if let Some(m) = &content.mcp {
+                crate::apps::check_mcp(tx, board, m).await?;
+            }
             if kind != "image" && c.is_some() {
                 return Err(ApiError::bad_request("only an image can be cropped"));
             }
@@ -1184,6 +1272,8 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
             to,
             link_type,
             view,
+            path,
+            name,
             by,
             by_agent,
             at,
@@ -1213,11 +1303,20 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
             if from.item_id == to.item_id && from.element == to.element {
                 return Err(ApiError::bad_request("a link needs two different ends"));
             }
-            crate::apps::check_link(tx, board, from, to, link_type, view.as_deref()).await?;
+            crate::apps::check_link(
+                tx,
+                board,
+                from,
+                to,
+                link_type,
+                view.as_deref(),
+                (path.as_deref(), name.as_deref()),
+            )
+            .await?;
             sqlx::query(sqlx::AssertSqlSafe(format!(
                 "INSERT INTO canvas_link (id, canvas_id, from_item, from_element, to_item, to_element, link_type, created_by,
-                                          created_by_agent, created_at, view)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, coalesce(?, {NOW}), ?)
+                                          created_by_agent, created_at, view, path, name)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, coalesce(?, {NOW}), ?, ?, ?)
                  ON CONFLICT (id) DO NOTHING"
             )))
             .bind(link_id.to_string())
@@ -1231,26 +1330,118 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
             .bind(by_agent)
             .bind(at)
             .bind(view)
+            .bind(path)
+            .bind(name)
             .execute(&mut **tx)
             .await
             .map_err(integrity)?;
+            if link_type == "feeds" {
+                crate::apps::check_names(tx, board, &to.item_id.to_string()).await?;
+            }
         }
         Op::LinkSet {
             link_id,
             link_type,
             view,
+            path,
+            name,
         } => {
             check_link_type(link_type)?;
-            crate::apps::check_link_set(tx, board, link_id, link_type, view.as_deref()).await?;
-            sqlx::query(
-                "UPDATE canvas_link SET link_type = ?, view = coalesce(?, view) WHERE id = ? AND canvas_id = ?",
+            crate::apps::check_link_set(
+                tx,
+                board,
+                link_id,
+                link_type,
+                view.as_deref(),
+                (path.as_deref(), name.as_deref()),
             )
-            .bind(link_type)
-            .bind(view)
-            .bind(link_id.to_string())
+            .await?;
+            crate::apps::set_link(tx, board, link_id, link_type, view, path, name).await?;
+        }
+        Op::AppSet {
+            item_id,
+            title,
+            html,
+            literals,
+            run,
+            mcp_sha256,
+        } => {
+            let Some((kind, _)) = item_kind(tx, board, item_id).await? else {
+                return Ok(());
+            };
+            if kind != "app" {
+                return Err(ApiError::bad_request(format!(
+                    "item {item_id} is a {kind}; only an app has a source, literals and a run mode"
+                )));
+            }
+            let body: Option<String> =
+                sqlx::query_scalar("SELECT body FROM canvas_item WHERE id = ? AND canvas_id = ?")
+                    .bind(item_id.to_string())
+                    .bind(board)
+                    .fetch_one(&mut **tx)
+                    .await?;
+            let mut b = crate::apps::AppBody::parse(body.as_deref());
+            if let Some(t) = title {
+                check_title(t)?;
+                b.title = t.clone();
+            }
+            if let Some(sha) = mcp_sha256 {
+                let Some(mut m) = b.mcp.clone() else {
+                    return Err(ApiError::bad_request(
+                        "only an MCP app has a resource to update",
+                    ));
+                };
+                if m.sha256 != *sha {
+                    m.sha256 = sha.clone();
+                    crate::apps::check_mcp(tx, board, &m).await?;
+                    b.mcp = Some(m);
+                    b.source_rev += 1;
+                }
+            }
+            if let Some(h) = html {
+                if b.mcp.is_some() {
+                    return Err(ApiError::bad_request(
+                        "an MCP app's view comes from its server; it has no HTML to edit",
+                    ));
+                }
+                crate::apps::check_html(h).map_err(ApiError::bad_request)?;
+                if *h != b.html {
+                    b.html = h.clone();
+                    b.source_rev += 1;
+                }
+            }
+            if let Some(l) = literals {
+                crate::apps::check_literals(l)?;
+                if *l != b.literals {
+                    b.literals = l.clone();
+                    b.setup_rev += 1;
+                }
+            }
+            if run.is_some() {
+                b.run = check_run(run.as_deref())?;
+            }
+            let body = serde_json::to_string(&b).unwrap();
+            check_body_within(&body, MAX_APP_BODY)?;
+            // What the app shows is its outputs: a new source or new literals
+            // make it stale (its own counters) without moving anything it feeds.
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE canvas_item SET body = ?, {bump} WHERE id = ? AND canvas_id = ?"
+            )))
+            .bind(&body)
+            .bind(item_id.to_string())
             .bind(board)
             .execute(&mut **tx)
             .await?;
+            if literals.is_some() {
+                crate::apps::check_names(tx, board, &item_id.to_string()).await?;
+            }
+        }
+        Op::AppCard {
+            item_id,
+            version,
+            html,
+        } => {
+            crate::apps::set_card(tx, board, item_id, *version, html).await?;
         }
         Op::AppOutput {
             item_id,
@@ -1258,15 +1449,18 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
             text,
             status,
             error,
+            cause,
             by,
             by_agent,
             at,
             ..
         } => {
+            let cause = cause.as_ref().map(|c| c.to_string());
             let run = crate::apps::Run {
                 by: by.as_deref(),
                 by_agent: by_agent.as_deref(),
                 at: at.as_deref(),
+                cause: cause.as_deref(),
             };
             crate::apps::commit_output(
                 tx,
@@ -1292,6 +1486,7 @@ async fn apply_one(tx: &mut Transaction<'_, Sqlite>, board: &str, op: &Op) -> Ap
                 by: by.as_deref(),
                 by_agent: by_agent.as_deref(),
                 at: at.as_deref(),
+                cause: None,
             };
             crate::apps::revert_output(tx, board, item_id, *to_version, &run).await?;
         }
@@ -1572,6 +1767,8 @@ pub async fn apply(
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
+    // What this batch changed may make automatic apps run (canvas/apps).
+    crate::apps::schedule(app, board, ops, actor);
     Ok((to - ops.len() as i64, to))
 }
 
@@ -1913,8 +2110,46 @@ pub async fn duplicate_board(
         .bind(&source.id)
         .fetch_all(&mut *tx)
         .await?;
+    // MCP connections travel with the board, so its apps still reach their
+    // servers (canvas/app-sources); each app's body names the copy.
+    let conns: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM mcp_connection WHERE canvas_id = ?")
+            .bind(&source.id)
+            .fetch_all(&mut *tx)
+            .await?;
+    let mut conn_map = std::collections::HashMap::new();
+    for old in conns {
+        let new = Uuid::now_v7().to_string();
+        sqlx::query(
+            "INSERT INTO mcp_connection (id, canvas_id, url, command, token, created_by)
+             SELECT ?, ?, url, command, token, created_by FROM mcp_connection WHERE id = ?",
+        )
+        .bind(&new)
+        .bind(&copy)
+        .bind(&old)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO mcp_resource_head (connection_id, uri, sha256)
+             SELECT ?, uri, sha256 FROM mcp_resource_head WHERE connection_id = ?",
+        )
+        .bind(&new)
+        .bind(&old)
+        .execute(&mut *tx)
+        .await?;
+        conn_map.insert(old, new);
+    }
     let mut item_map = std::collections::HashMap::new();
-    for i in items {
+    for mut i in items {
+        if i.kind == "app" {
+            let mut b = crate::apps::AppBody::parse(i.body.as_deref());
+            if let Some(m) = b.mcp.as_mut()
+                && let Some(c) = conn_map.get(&m.connection)
+            {
+                m.connection = c.clone();
+                i.body = serde_json::to_string(&b).ok();
+            }
+        }
         let new = new_id();
         item_map.insert(i.id.clone(), new.clone());
         sqlx::query(
@@ -1956,8 +2191,8 @@ pub async fn duplicate_board(
     for l in links_of(&mut tx, &source.id).await? {
         sqlx::query(
             "INSERT INTO canvas_link (id, canvas_id, from_item, from_element, to_item, to_element, link_type, created_by,
-                                      created_by_agent, created_at, view)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                      created_by_agent, created_at, view, path, name)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(new_id())
         .bind(&copy)
@@ -1970,6 +2205,8 @@ pub async fn duplicate_board(
         .bind(&l.created_by_agent)
         .bind(&l.created_at)
         .bind(&l.view)
+        .bind(&l.path)
+        .bind(&l.name)
         .execute(&mut *tx)
         .await?;
     }
@@ -1982,7 +2219,15 @@ pub async fn duplicate_board(
         let revs: serde_json::Map<String, serde_json::Value> = o
             .revs()
             .into_iter()
-            .filter_map(|(k, v)| item_map.get(&k).map(|n| (n.clone(), json!(v))))
+            .filter_map(|(k, v)| {
+                // The app's own counters travel with its body, unchanged.
+                let k = if k.starts_with('#') {
+                    k
+                } else {
+                    item_map.get(&k)?.clone()
+                };
+                Some((k, json!(v)))
+            })
             .collect();
         sqlx::query(
             "INSERT INTO app_output (item_id, version, outputs, text, input_revs, status, error, run_by, run_by_agent, run_at)
@@ -2016,13 +2261,17 @@ pub struct LinkRow {
     pub created_by: Option<String>,
     pub created_by_agent: Option<String>,
     pub created_at: String,
-    /// A `feeds` link's view (canvas/item-views).
+    /// A `feeds` link's view (canvas/item-views), field within it, and the
+    /// input name the app sees.
     pub view: Option<String>,
+    pub path: Option<String>,
+    pub name: Option<String>,
 }
 
 pub async fn links_of(tx: &mut Transaction<'_, Sqlite>, board: &str) -> sqlx::Result<Vec<LinkRow>> {
     sqlx::query_as(
-        "SELECT id, from_item, from_element, to_item, to_element, link_type, created_by, created_by_agent, created_at, view
+        "SELECT id, from_item, from_element, to_item, to_element, link_type, created_by, created_by_agent, created_at, view,
+                path, name
            FROM canvas_link WHERE canvas_id = ? ORDER BY created_at, id",
     )
     .bind(board)
@@ -2088,12 +2337,26 @@ impl ItemRow {
                 });
                 json!({ "kind": "checklist", "title": list.title, "tasks": list.tasks })
             }
-            "app" => match serde_json::from_str::<crate::apps::AppBody>(
-                self.body.as_deref().unwrap_or_default(),
-            ) {
-                Ok(b) => json!({ "kind": "app", "title": b.title, "html": b.html }),
-                Err(_) => json!({ "kind": "app", "title": "", "html": "" }),
-            },
+            "app" => {
+                let b = crate::apps::AppBody::parse(self.body.as_deref());
+                let mut c = json!({ "kind": "app", "title": b.title, "html": b.html });
+                if !b.literals.is_empty() {
+                    c["literals"] = json!(b.literals);
+                }
+                if let Some(r) = b.run {
+                    c["run"] = json!(r);
+                }
+                if b.source_rev != 0 {
+                    c["sourceRev"] = json!(b.source_rev);
+                }
+                if b.setup_rev != 0 {
+                    c["setupRev"] = json!(b.setup_rev);
+                }
+                if let Some(m) = b.mcp {
+                    c["mcp"] = json!(m);
+                }
+                c
+            }
             _ => json!({ "kind": "image", "asset": {
                 "assetId": self.asset_id, "intrinsicWidth": self.intrinsic_width, "intrinsicHeight": self.intrinsic_height,
                 "mimeType": self.mime_type } }),
@@ -2185,7 +2448,12 @@ pub async fn snapshot_of(db: &sqlx::SqlitePool, id: &str) -> ApiResult<serde_jso
         .filter(|l| l.link_type == "feeds")
         .map(|l| (l.from_item.as_str(), l.to_item.as_str()))
         .collect();
-    let states = crate::apps::status(&apps, &content_revs, &feeds, &outputs);
+    let own = crate::apps::own_revs(
+        rows.iter()
+            .filter(|r| r.kind == "app")
+            .map(|r| (r.id.as_str(), r.body.as_deref())),
+    );
+    let states = crate::apps::status(&apps, &content_revs, &own, &feeds, &outputs);
     let items: Vec<_> = items
         .into_iter()
         .map(|(r, content)| {
@@ -2223,7 +2491,7 @@ pub async fn snapshot_of(db: &sqlx::SqlitePool, id: &str) -> ApiResult<serde_jso
                 "from": { "itemId": l.from_item, "element": l.from_element },
                 "to": { "itemId": l.to_item, "element": l.to_element },
                 "linkType": l.link_type, "by": l.created_by, "byAgent": l.created_by_agent, "at": l.created_at,
-                "view": l.view,
+                "view": l.view, "path": l.path, "name": l.name,
             })
         })
         .collect();

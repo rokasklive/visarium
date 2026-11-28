@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Rack plan</title>
+</head>
+<body>
+<!-- A canvas app with no inputs: a rack elevation drawn as SVG from the JSON
+     block below. Edit the block to move a device; the kit's series colours tell
+     the kinds apart, and the legend names them. No styles of its own. -->
+<script type="application/json" id="rack">
+{
+  "name": "Rack A1",
+  "units": 12,
+  "kinds": ["Network", "Compute", "Storage", "Power"],
+  "devices": [
+    { "name": "Core switch", "kind": "Network", "at": 12, "size": 1 },
+    { "name": "Patch panel", "kind": "Network", "at": 11, "size": 1 },
+    { "name": "web-01", "kind": "Compute", "at": 9, "size": 2 },
+    { "name": "web-02", "kind": "Compute", "at": 7, "size": 2 },
+    { "name": "nas-01", "kind": "Storage", "at": 4, "size": 3 },
+    { "name": "UPS", "kind": "Power", "at": 1, "size": 2 }
+  ]
+}
+</script>
+<h1 id="title">Rack</h1>
+<svg class="chart" id="plan" role="img" aria-labelledby="title"><title>Rack elevation</title></svg>
+<ul class="legend" id="legend"></ul>
+<p class="muted" id="free"></p>
+<script>
+const rack = JSON.parse(document.getElementById('rack').textContent);
+const U = 18, W = 260, LABEL = 28;
+const used = rack.devices.reduce((n, d) => n + d.size, 0);
+const ns = 'http://www.w3.org/2000/svg';
+const el = (name, attrs, text) => {
+  const e = document.createElementNS(ns, name);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  if (text !== undefined) e.textContent = text;
+  return e;
+};
+
+document.getElementById('title').textContent = rack.name;
+const svg = document.getElementById('plan');
+svg.setAttribute('viewBox', `0 0 ${LABEL + W} ${rack.units * U}`);
+for (let u = 1; u <= rack.units; u++) {
+  const y = (rack.units - u) * U;
+  svg.append(el('text', { x: 0, y: y + U / 2 + 4 }, `U${u}`));
+  svg.append(el('rect', { class: 'grid', x: LABEL, y, width: W, height: U }));
+}
+for (const d of rack.devices) {
+  const y = (rack.units - (d.at + d.size - 1)) * U;
+  const series = `series-${rack.kinds.indexOf(d.kind) + 1}`;
+  // A 2px gap of ground between neighbours, so stacked devices stay apart. The
+  // kind is the strip's colour; the name stays in ink, on the raised body.
+  const h = d.size * U - 2;
+  svg.append(el('rect', { x: LABEL + 1, y: y + 1, width: W - 2, height: h, rx: 4, style: 'fill: var(--vk-raised); stroke: var(--vk-line-strong)' }));
+  svg.append(el('rect', { class: series, x: LABEL + 1, y: y + 1, width: 6, height: h, rx: 2 }));
+  svg.append(el('text', { x: LABEL + 16, y: y + h / 2 + 4, style: 'fill: var(--vk-ink)' }, d.name));
+}
+const legend = document.getElementById('legend');
+for (const [i, k] of rack.kinds.entries()) {
+  const li = document.createElement('li');
+  li.className = `series-${i + 1}`;
+  li.innerHTML = '<span class="swatch"></span>';
+  li.append(k);
+  legend.append(li);
+}
+document.getElementById('free').textContent = `${used} of ${rack.units} U used, ${rack.units - used} free`;
+
+let n = 0;
+const pending = {};
+const send = (m) => parent.postMessage({ jsonrpc: '2.0', ...m }, '*');
+const request = (method, params) =>
+  new Promise((resolve) => { const id = ++n; pending[id] = resolve; send({ id, method, params }); });
+
+addEventListener('message', async (e) => {
+  const m = e.data;
+  if (m?.jsonrpc !== '2.0') return;
+  if (m.id !== undefined && !m.method) { pending[m.id]?.(m); delete pending[m.id]; return; }
+  if (m.method === 'ui/resource-teardown') return send({ id: m.id, result: {} });
+  if (m.method !== 'visarium/notifications/run') return;
+  await request('visarium/outputs/publish', {
+    outputs: { units: rack.units, used, free: rack.units - used },
+    text: `${rack.name}: ${used} of ${rack.units} U used`,
+  });
+});
+
+(async () => {
+  await request('ui/initialize', {
+    appInfo: { name: 'rack-plan', version: '1' },
+    appCapabilities: {},
+    protocolVersion: '2026-01-26',
+  });
+  send({ method: 'ui/notifications/initialized' });
+})();
+</script>
+</body>
+</html>

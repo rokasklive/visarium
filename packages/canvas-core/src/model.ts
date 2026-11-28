@@ -73,14 +73,54 @@ export type CanvasItemContent =
       readonly kind: 'app';
       readonly title: string;
       readonly html: string;
+      /** Named values the app reads with no link (canvas/app-inspector). */
+      readonly literals?: Readonly<Record<string, unknown>>;
+      /** Absent is `auto`: the app reruns when its inputs change. */
+      readonly run?: AppRunMode;
+      /**
+       * Count changes to the source, and to how its inputs are set up (literals,
+       * a `feeds` link's view, field or name). An output stamps both as `#source`
+       * and `#setup`, so changing either makes the app stale. Kept by the
+       * server; absent is 0.
+       */
+      readonly sourceRev?: number;
+      readonly setupRev?: number;
       /** The latest run's result; absent until the app has run. */
       readonly output?: AppOutput;
+      /**
+       * Where its view comes from instead of `html`: an MCP server's `ui://`
+       * resource, pinned by hash, and the tool that runs it on the server
+       * when there is one (canvas/app-sources).
+       */
+      readonly mcp?: AppMcpSource;
     }
   /**
    * A kind this client does not know: a newer server's. Kept so the item still
    * occupies its place and can be moved or deleted, never edited or rendered.
    */
   | { readonly kind: 'unknown'; readonly original: string };
+
+export type AppRunMode = 'auto' | 'manual';
+
+export interface AppMcpSource {
+  readonly connection: string;
+  readonly resourceUri: string;
+  readonly tool?: string;
+  readonly sha256: string;
+}
+
+function mcpFrom(v: unknown): AppMcpSource | undefined {
+  if (!v || typeof v !== 'object') return undefined;
+  const m = v as Record<string, unknown>;
+  if (typeof m.connection !== 'string' || typeof m.resourceUri !== 'string') return undefined;
+  if (typeof m.sha256 !== 'string') return undefined;
+  return {
+    connection: m.connection,
+    resourceUri: m.resourceUri,
+    sha256: m.sha256,
+    ...(typeof m.tool === 'string' ? { tool: m.tool } : {}),
+  };
+}
 
 /**
  * One run of an app, as the server stored it (canvas/apps): named values, the
@@ -90,13 +130,18 @@ export interface AppOutput {
   readonly version: number;
   readonly outputs: Readonly<Record<string, unknown>>;
   readonly text?: string | null;
-  /** Input item id → its content revision when this run committed. */
+  /**
+   * Input item id → its content revision when this run committed, plus the
+   * app's own `#source` and `#setup` counters.
+   */
   readonly inputRevs: Readonly<Record<string, number>>;
   readonly status: 'ok' | 'error';
   readonly error?: string | null;
   readonly by?: string | null;
   readonly byAgent?: string | null;
   readonly at?: string | null;
+  /** A snapshot of the view as it drew this version: no scripts, nothing from outside. */
+  readonly card?: string | null;
 }
 
 /** A stored output from the wire, or undefined when it is not one. */
@@ -118,6 +163,7 @@ export function outputFrom(raw: unknown): AppOutput | undefined {
     by: str(o.by),
     byAgent: str(o.byAgent),
     at: str(o.at),
+    ...(typeof o.card === 'string' ? { card: o.card } : {}),
   };
 }
 
@@ -190,11 +236,24 @@ export function contentFrom(raw: unknown): CanvasItemContent | undefined {
     }
     case 'app': {
       const output = outputFrom(c.output);
+      const literals =
+        c.literals && typeof c.literals === 'object' && !Array.isArray(c.literals)
+          ? (c.literals as Record<string, unknown>)
+          : undefined;
+      const count = (v: unknown) => (typeof v === 'number' ? v : undefined);
+      const sourceRev = count(c.sourceRev);
+      const setupRev = count(c.setupRev);
+      const mcp = mcpFrom(c.mcp);
       return {
         kind: 'app',
         title: str(c.title) ?? '',
         html: str(c.html) ?? '',
+        ...(literals && Object.keys(literals).length ? { literals } : {}),
+        ...(c.run === 'manual' ? { run: 'manual' as const } : {}),
+        ...(sourceRev ? { sourceRev } : {}),
+        ...(setupRev ? { setupRev } : {}),
         ...(output ? { output } : {}),
+        ...(mcp ? { mcp } : {}),
       };
     }
     default:
@@ -343,6 +402,10 @@ export interface Link {
   readonly linkType: LinkType;
   /** A `feeds` link's view of its source (canvas/item-views); absent otherwise. */
   readonly view?: string | null;
+  /** A `feeds` link's field within its view (`age`, `rows.0.total`); absent is the whole view. */
+  readonly path?: string | null;
+  /** The input name the app sees; absent is `<source ref>.<view>`. */
+  readonly name?: string | null;
   readonly by?: string | null;
   /** The agent that acted for `by`, when one did (ADR-0031). Stamped by the server. */
   readonly byAgent?: string | null;

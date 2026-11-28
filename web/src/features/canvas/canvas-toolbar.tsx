@@ -17,6 +17,7 @@ export function CanvasToolbar({
   onHistory,
   onFrame,
   onChecklist,
+  onMcpApp,
   linksOnFocus,
   onLinksOnFocus,
 }: {
@@ -26,6 +27,8 @@ export function CanvasToolbar({
   onFrame: () => void;
   /** Makes an empty checklist mid-view, its title open: the one object type a person could not otherwise discover how to make. */
   onChecklist: () => void;
+  /** Opens "Add MCP app…" (canvas/app-sources); absent while Canvas apps are off. */
+  onMcpApp?: (() => void) | undefined;
   /** Links drawn only for what is hovered or selected (canvas/links): a view setting, never a commit. */
   linksOnFocus: boolean;
   onLinksOnFocus: (on: boolean) => void;
@@ -46,6 +49,11 @@ export function CanvasToolbar({
       <Button onClick={onChecklist} title="New checklist">
         Checklist
       </Button>
+      {onMcpApp ? (
+        <Button onClick={onMcpApp} title="Add an app from an MCP server">
+          MCP app…
+        </Button>
+      ) : null}
       <Divider />
       <Button
         onClick={() => {

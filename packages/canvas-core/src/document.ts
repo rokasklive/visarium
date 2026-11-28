@@ -257,13 +257,30 @@ export class CanvasDocument {
     return last;
   }
 
-  /** Every item feeding an app, with its content revision now. */
+  /** Every item feeding an app, with its content revision now, and the app's own counters. */
   #inputRevs(app: ItemId): Record<string, number> {
     const revs: Record<string, number> = {};
     for (const l of this.#links.values())
       if (l.linkType === 'feeds' && l.to.itemId === app)
         revs[l.from.itemId] = this.#items.get(l.from.itemId)?.contentRev ?? 0;
+    const c = this.#items.get(app)?.content;
+    if (c?.kind === 'app') {
+      revs['#source'] = c.sourceRev ?? 0;
+      revs['#setup'] = c.setupRev ?? 0;
+    }
     return revs;
+  }
+
+  /** A change to how an app's inputs are set up: its `#setup` counter moves. */
+  #setupChanged(app: ItemId): void {
+    const item = this.#items.get(app);
+    if (item?.content.kind !== 'app') return;
+    this.#items.set(
+      app,
+      this.#bumped(item, {
+        content: { ...item.content, setupRev: (item.content.setupRev ?? 0) + 1 },
+      }),
+    );
   }
 
   #checklist(id: ItemId) {
@@ -571,6 +588,8 @@ export class CanvasDocument {
           to: body.to,
           linkType: body.linkType,
           ...(body.view !== undefined ? { view: body.view } : {}),
+          ...(body.path ? { path: body.path } : {}),
+          ...(body.name ? { name: body.name } : {}),
           ...(body.by !== undefined ? { by: body.by } : {}),
           ...(body.byAgent !== undefined ? { byAgent: body.byAgent } : {}),
           ...(body.at !== undefined ? { at: body.at } : {}),
@@ -584,16 +603,29 @@ export class CanvasDocument {
         // The server refuses these; a client never applies one either.
         if (isDataLink(existing.linkType) !== isDataLink(body.linkType)) return undefined;
         if (isDataLink(existing.linkType) && existing.linkType !== body.linkType) return undefined;
+        const { path: _p, name: _n, ...rest } = existing;
+        const path = body.path !== undefined ? body.path : (existing.path ?? '');
+        const name = body.name !== undefined ? body.name : (existing.name ?? '');
         this.#links.set(body.linkId, {
-          ...existing,
+          ...rest,
           linkType: body.linkType,
           ...(body.view !== undefined ? { view: body.view } : {}),
+          ...(path ? { path } : {}),
+          ...(name ? { name } : {}),
         });
+        // What a feeds link carries changed: the app it feeds is behind.
+        const moved =
+          (body.view !== undefined && body.view !== existing.view) ||
+          (body.path !== undefined && body.path !== (existing.path ?? '')) ||
+          (body.name !== undefined && body.name !== (existing.name ?? ''));
+        if (existing.linkType === 'feeds' && moved) this.#setupChanged(existing.to.itemId);
         return {
           type: 'link.set',
           linkId: body.linkId,
           linkType: existing.linkType,
           ...(body.view !== undefined && existing.view ? { view: existing.view } : {}),
+          ...(body.path !== undefined ? { path: existing.path ?? '' } : {}),
+          ...(body.name !== undefined ? { name: existing.name ?? '' } : {}),
         };
       }
 
@@ -623,6 +655,64 @@ export class CanvasDocument {
         return was
           ? { type: 'app.output.revert', itemId: body.itemId, toVersion: was.version, was }
           : { type: 'app.output.revert', itemId: body.itemId, toVersion: 0 };
+      }
+
+      case 'app.set': {
+        const app = this.#items.get(body.itemId);
+        if (app?.content.kind !== 'app') return undefined;
+        const c = app.content;
+        const { literals: _l, run: _r, ...base } = c;
+        const literals = body.literals ?? c.literals ?? {};
+        const run = body.run ?? c.run ?? 'auto';
+        const shaMoved =
+          body.mcpSha256 !== undefined && c.mcp !== undefined && body.mcpSha256 !== c.mcp.sha256;
+        const sourceMoved = (body.html !== undefined && body.html !== c.html) || shaMoved;
+        const setupMoved =
+          body.literals !== undefined &&
+          JSON.stringify(body.literals) !== JSON.stringify(c.literals ?? {});
+        this.#items.set(
+          app.id,
+          this.#bumped(app, {
+            content: {
+              ...base,
+              ...(body.title !== undefined ? { title: body.title } : {}),
+              ...(body.html !== undefined ? { html: body.html } : {}),
+              ...(Object.keys(literals).length ? { literals } : {}),
+              ...(run === 'manual' ? { run } : {}),
+              ...(sourceMoved ? { sourceRev: (c.sourceRev ?? 0) + 1 } : {}),
+              ...(setupMoved ? { setupRev: (c.setupRev ?? 0) + 1 } : {}),
+              ...(shaMoved && c.mcp ? { mcp: { ...c.mcp, sha256: body.mcpSha256 as string } } : {}),
+            },
+          }),
+        );
+        return {
+          type: 'app.set',
+          itemId: body.itemId,
+          ...(body.title !== undefined ? { title: c.title } : {}),
+          ...(body.html !== undefined ? { html: c.html } : {}),
+          ...(body.literals !== undefined ? { literals: c.literals ?? {} } : {}),
+          ...(body.run !== undefined ? { run: c.run ?? 'auto' } : {}),
+          ...(body.mcpSha256 !== undefined && c.mcp ? { mcpSha256: c.mcp.sha256 } : {}),
+        };
+      }
+
+      case 'app.card': {
+        const app = this.#items.get(body.itemId);
+        if (app?.content.kind !== 'app') return undefined;
+        const output = app.content.output;
+        if (output?.version !== body.version) return undefined;
+        // A picture of what is already there: no revision. Its inverse puts
+        // the last picture back; nothing puts a card on anyone's undo stack.
+        this.#items.set(app.id, {
+          ...app,
+          content: { ...app.content, output: { ...output, card: body.html } },
+        });
+        return {
+          type: 'app.card',
+          itemId: app.id,
+          version: output.version,
+          html: output.card ?? '',
+        };
       }
 
       case 'app.output.revert': {
@@ -671,6 +761,8 @@ export class CanvasDocument {
           to: existing.to,
           linkType: existing.linkType,
           ...(existing.view ? { view: existing.view } : {}),
+          ...(existing.path ? { path: existing.path } : {}),
+          ...(existing.name ? { name: existing.name } : {}),
           ...(existing.by !== undefined ? { by: existing.by } : {}),
           ...(existing.byAgent !== undefined ? { byAgent: existing.byAgent } : {}),
           ...(existing.at !== undefined ? { at: existing.at } : {}),

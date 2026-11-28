@@ -7,7 +7,15 @@
 import type { CanvasDocument } from './document';
 import type { ItemId } from './ids';
 
-/** An input that moved since the output: `was` absent if connected since, `now` if disconnected. */
+/** The stamps of an app's own source and input setup, beside its inputs' item ids. */
+export const OWN_SOURCE = '#source';
+export const OWN_SETUP = '#setup';
+
+/**
+ * An input that moved since the output: `was` absent if connected since, `now`
+ * if disconnected. `itemId` is {@link OWN_SOURCE} or {@link OWN_SETUP} when the
+ * app's own source or input setup changed.
+ */
 export interface Moved {
   readonly itemId: string;
   readonly was?: number;
@@ -58,7 +66,18 @@ export function appStates(doc: CanvasDocument): Map<ItemId, AppState> {
           });
       }
       for (const k of Object.keys(output.inputRevs).sort())
-        if (!sources.includes(k)) moved.push({ itemId: k, was: output.inputRevs[k] as number });
+        if (!k.startsWith('#') && !sources.includes(k))
+          moved.push({ itemId: k, was: output.inputRevs[k] as number });
+      // The app's own source and setup. An output stamped before they were
+      // counted has neither, and matches.
+      const c = item?.content.kind === 'app' ? item.content : undefined;
+      for (const [k, now] of [
+        [OWN_SOURCE, c?.sourceRev ?? 0],
+        [OWN_SETUP, c?.setupRev ?? 0],
+      ] as const) {
+        const was = output.inputRevs[k];
+        if (was !== undefined && was !== now) moved.push({ itemId: k, was, now });
+      }
       if (moved.length) state = { state: 'stale', moved };
       else if (output.status === 'error') state = { state: 'error', error: output.error ?? '' };
       else {

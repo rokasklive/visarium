@@ -177,6 +177,8 @@ export class BoardRealtime {
   #runs = new Map<ItemId, string>();
   /** Apps whose views this client has open, re-stated on every welcome. */
   #mounted = new Set<ItemId>();
+  /** Whether this client runs apps in hidden views, re-stated on every welcome. */
+  #ready = false;
 
   #lastCursorAt = 0;
   #lastPreviewAt = 0;
@@ -339,6 +341,13 @@ export class BoardRealtime {
     this.#send({ t: open ? 'app.mounted' : 'app.unmounted', itemIds: [itemId] });
   }
 
+  /** This client can (or no longer can) run apps in hidden views. */
+  ready(on: boolean): void {
+    if (on === this.#ready) return;
+    this.#ready = on;
+    this.#send({ t: 'apps.ready', ready: on });
+  }
+
   /** Ask to run an app; the answer comes as a run event. */
   requestRun(itemId: ItemId): void {
     this.#send({ t: 'run.request', itemIds: [itemId] });
@@ -383,6 +392,7 @@ export class BoardRealtime {
         if (frame.revision !== this.#options.doc.revision) void this.#options.resync();
         // A new socket is a new actor: its open views say so again.
         if (this.#mounted.size > 0) this.#send({ t: 'app.mounted', itemIds: [...this.#mounted] });
+        if (this.#ready) this.#send({ t: 'apps.ready', ready: true });
         this.#publish();
         return;
       }

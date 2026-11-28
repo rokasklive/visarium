@@ -59,6 +59,7 @@ import {
   type VisibleItem,
   visibleEdges,
   visibleWorldRect,
+  worldToScreen,
   zoomAt,
 } from '@visarium/canvas-core';
 import {
@@ -96,6 +97,7 @@ import { assetsById } from '~/api/assets';
 import { loadSnapshotInto, reportElements } from '~/api/boards';
 import { type SessionState, sessionKey } from '~/api/session';
 import { loadSharedSnapshotInto } from '~/api/sharing';
+import { canvasAppsOn } from '~/app/labs';
 import { useTheme } from '~/app/theme';
 import { useUiStore } from '~/app/ui-store';
 import { DEVTOOLS, INSPECTOR_WIDTH } from '~/devtools';
@@ -117,9 +119,11 @@ import {
 } from './capture';
 import { useGifs } from './gif';
 import { copySelection, NO_ORIGINALS, NOTICES } from './interchange';
+import { useAppInspector } from './objects/app-inspector';
 import { useAppViews } from './objects/app-view';
 import { nameBlock } from './objects/blocks';
 import { type Block, type Layout, noteHtml } from './objects/layout';
+import { LinkPopover } from './objects/link-popover';
 import {
   anchorAt,
   anchorBox,
@@ -138,10 +142,10 @@ import {
   linkNear,
   midpoint,
   nextLinkType,
-  nextView,
   segmentBetween,
 } from './objects/links';
 import { loadMarkdown, loaded as objectRenderersLoaded } from './objects/loaders';
+import { AddMcpApp } from './objects/mcp-add';
 import { drawnHeight, isObject, layoutKey, ObjectLayouts, type ObjectView } from './objects/store';
 import { useObjectEditing } from './objects/use-editing';
 import {
@@ -426,6 +430,11 @@ export function CanvasSurface({
   // --- links (spec: canvas/links) ---------------------------------------------
   /** The selected link. Selecting a link clears the item selection and back. */
   const [selectedLink, setSelectedLink] = useState<LinkId | null>(null);
+  /** The data link whose popover is open (canvas/links), and a tick it reads the board again on. */
+  const [linkPopover, setLinkPopover] = useState<LinkId | null>(null);
+  const [linkPopoverTick, setLinkPopoverTick] = useState(0);
+  const linkPopoverRef = useRef(linkPopover);
+  linkPopoverRef.current = linkPopover;
   const [hoveredLink, setHoveredLink] = useState<LinkId | null>(null);
   /**
    * The item under the pointer: its links come forward (canvas/links). A ref,
@@ -433,6 +442,7 @@ export function CanvasSurface({
    */
   const hoveredItem = useRef<ItemId | null>(null);
   const [linksOnFocus, setLinksOnFocus] = useLinksOnFocus();
+  const [addingMcp, setAddingMcp] = useState(false);
   /** For the key handler, which is bound once: flips the setting as it is now. */
   const toggleLinksOnFocus = useRef(() => {});
   toggleLinksOnFocus.current = () => setLinksOnFocus(!linksOnFocus);
@@ -704,7 +714,6 @@ export function CanvasSurface({
     size,
     boardId: readOnly ? undefined : boardId,
     selection,
-    select: (ids) => setSelection(ids),
     notify: (message) => setInterchangeNotice(message),
     settled: () => syncRef.current?.settled() ?? Promise.resolve(),
     realtime: () => realtimeRef.current,
@@ -716,11 +725,28 @@ export function CanvasSurface({
       for (const body of bodies) if (doc.apply(body)) changed = true;
       if (changed) redraw();
     },
+    edit: commit,
     runs: presence.runs,
     nameOf: (actorId) => presence.actors.get(actorId)?.displayName ?? 'someone',
   });
   const appViewsRef = useRef(appViews);
   appViewsRef.current = appViews;
+  /** An app under the hood: its source, inputs and outputs (canvas/app-inspector). */
+  const appInspector = useAppInspector({
+    doc,
+    camera,
+    size,
+    boardId,
+    readOnly,
+    select: (ids) => setSelection(ids),
+    notify: (message) => setInterchangeNotice(message),
+    settled: () => syncRef.current?.settled() ?? Promise.resolve(),
+    commit,
+    noSandbox: appViews.noSandbox,
+    run: (id) => appViewsRef.current.requestRun(id),
+  });
+  const appInspectorRef = useRef(appInspector);
+  appInspectorRef.current = appInspector;
   /** Where the pointer last was over the board, for a paste to land under it (spec). */
   const lastPointer = useRef<{ x: number; y: number } | null>(null);
   /** A press that began on a control inside an object: it must not become a drag. */
@@ -797,6 +823,8 @@ export function CanvasSurface({
       sync.applied(body, origin);
       objects.noteApplied(body, origin);
       appViewsRef.current.noteApplied(body, origin);
+      appInspectorRef.current.noteApplied();
+      if (linkPopoverRef.current) setLinkPopoverTick((n) => n + 1);
       opLog?.record(body, origin);
     });
     syncRef.current = sync;
@@ -1986,17 +2014,9 @@ export function CanvasSurface({
       at.y <= label.maxY;
     if (selected && onLabel && !readOnly) {
       const l = selected.link;
-      const source = doc.item(l.from.itemId);
-      // A feeds link's label cycles the views of its source; a semantic one its type.
-      if (l.linkType === 'feeds' && l.view && source)
-        commit({
-          type: 'link.set',
-          linkId: l.id,
-          linkType: 'feeds',
-          view: nextView(source.content, l.view),
-        });
-      else if (l.linkType !== 'updates')
-        commit({ type: 'link.set', linkId: l.id, linkType: nextLinkType(l.linkType) });
+      // A data link's label opens what it carries; a semantic one cycles its type.
+      if (l.linkType === 'feeds' || l.linkType === 'updates') setLinkPopover(l.id);
+      else commit({ type: 'link.set', linkId: l.id, linkType: nextLinkType(l.linkType) });
       return;
     }
     const near = linkNear(drawnLinks.current, at, 8 / camera.zoom);
@@ -2202,7 +2222,7 @@ export function CanvasSurface({
   const onItemDoubleClick = (item: CanvasItem) => {
     if (item.content.kind === 'image') enterCrop(item);
     else if (item.content.kind === 'app') {
-      if (!readOnly && tool === 'select') void appViews.open(item);
+      if (tool === 'select') appInspector.inspect(item);
     } else if (!readOnly && tool === 'select') objectEditing.doubleClick(item);
   };
 
@@ -2996,6 +3016,26 @@ export function CanvasSurface({
         {/* In-place editors and the task hover, over the canvas while they last. */}
         {objectEditing.overlays}
         {appViews.overlay}
+        {appInspector.overlay}
+        {(() => {
+          const d = drawnLinks.current.find((x) => x.link.id === linkPopover);
+          if (!d || linkPopover !== selectedLink || readOnly || !boardId) return null;
+          const m = midpoint(d.segment);
+          return (
+            <LinkPopover
+              key={d.link.id}
+              link={d.link}
+              doc={doc}
+              boardId={boardId}
+              at={worldToScreen(camera, size, m)}
+              size={size}
+              revision={linkPopoverTick}
+              settled={() => syncRef.current?.settled() ?? Promise.resolve()}
+              commit={commit}
+              onClose={() => setLinkPopover(null)}
+            />
+          );
+        })()}
 
         <RemoteCursors presence={presence} camera={camera} size={size} theme={theme} />
         <AgentFocusLabels marks={focusMarks} presence={presence} camera={camera} size={size} />
@@ -3016,8 +3056,21 @@ export function CanvasSurface({
                 screenToWorld(camera, size, { x: size.width / 2, y: size.height / 3 }),
               )
             }
+            onMcpApp={boardId && canvasAppsOn() ? () => setAddingMcp(true) : undefined}
           />
         )}
+        {addingMcp && boardId ? (
+          <AddMcpApp
+            boardId={boardId}
+            onClose={() => setAddingMcp(false)}
+            onCreate={(content) =>
+              objectEditing.newApp(
+                content,
+                screenToWorld(camera, size, { x: size.width / 2, y: size.height / 2 }),
+              )
+            }
+          />
+        ) : null}
         <SearchBar onClose={closeSearchOnResult} />
         <ShortcutLegend readOnly={readOnly} width={width} />
         {!readOnly && (

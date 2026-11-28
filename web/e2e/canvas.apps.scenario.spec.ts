@@ -1,87 +1,18 @@
-import { readFileSync } from 'node:fs';
-import { type APIRequestContext, expect, type Page, test } from '@playwright/test';
-import { canvasBox } from './session';
+import { expect, test } from '@playwright/test';
+import { call, fixture, SERVER, xsrf } from './apps-server';
 
 /**
  * The reduced insurance scenario (openspec canvas-apps-poc 7.2, agents/apps),
  * against a real server with its app sandbox and the built bundle: nothing is
  * stubbed. An agent builds the board over /mcp: a note feeds a premium
  * calculator a1, a1 feeds a comparison a2, a2 updates checklist c1. A person
- * has the apps open; the agent runs them, the person edits the note, the
+ * has the board open, so the apps on screen are live; the agent runs them, the person edits the note, the
  * agent sees both stale, runs them again and c1's task follows the verdict.
  *
  * Run with `just e2e-apps`, which starts the server and sets VISARIUM_E2E_SERVER.
  */
 
-const SERVER = process.env.VISARIUM_E2E_SERVER ?? '';
 test.skip(!SERVER, 'needs a real server with an app sandbox: run `just e2e-apps`');
-
-const fixture = (name: string) =>
-  readFileSync(new URL(`./fixtures/apps/${name}.html`, import.meta.url), 'utf8');
-
-/** One tool call over /mcp, as an agent makes it. */
-async function call(request: APIRequestContext, name: string, args: Record<string, unknown>) {
-  const res = await request.post(`${SERVER}/mcp`, {
-    headers: { accept: 'application/json, text/event-stream' },
-    data: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } },
-  });
-  expect(res.ok(), await res.text()).toBe(true);
-  const { result } = (await res.json()) as {
-    result: { isError: boolean; content: { text: string }[] };
-  };
-  const text = result.content[0]?.text ?? '';
-  expect(result.isError, `${name}: ${text}`).toBe(false);
-  return text;
-}
-
-async function xsrf(page: Page) {
-  const c = (await page.context().cookies(SERVER)).find((c) => c.name === 'XSRF-TOKEN');
-  if (!c) throw new Error('no XSRF cookie');
-  return { 'x-xsrf-token': c.value };
-}
-
-async function centreOf(page: Page, id: string) {
-  const box = await canvasBox(page);
-  const r = await page.evaluate(
-    (i) =>
-      (
-        window as unknown as {
-          Konva: {
-            stages: {
-              findOne(
-                s: string,
-              ):
-                | { getClientRect(): { x: number; y: number; width: number; height: number } }
-                | undefined;
-            }[];
-          };
-        }
-      ).Konva.stages[0]
-        ?.findOne(`#${i}`)
-        ?.getClientRect(),
-    id,
-  );
-  if (!r) throw new Error(`${id} is not drawn`);
-  return { x: box.x + r.x + r.width / 2, y: box.y + r.y + r.height / 2 };
-}
-
-/** The id of the board node a click at this page point lands on. */
-async function hitAt(page: Page, at: { x: number; y: number }) {
-  return page.evaluate(({ x, y }) => {
-    const stage = (
-      window as unknown as {
-        Konva: {
-          stages: {
-            container(): HTMLElement;
-            getIntersection(p: { x: number; y: number }): { id(): string } | null;
-          }[];
-        };
-      }
-    ).Konva.stages[0];
-    const c = stage?.container().getBoundingClientRect();
-    return c ? (stage?.getIntersection({ x: x - c.x, y: y - c.y })?.id() ?? '') : '';
-  }, at);
-}
 
 test('an agent sees apps go stale after a person edits their input, and repairs them', async ({
   page,
@@ -142,7 +73,7 @@ test('an agent sees apps go stale after a person edits their input, and repairs 
   // A person opens the board on the desktop (here: the bundle the desktop embeds).
   await page.goto(`${SERVER}/boards/${board}`);
   await expect(page.getByTestId('canvas-stats')).toBeVisible();
-  // The whole board in view: only what is on screen is drawn, and an app stays open only there.
+  // The whole board in view: only what is on screen is drawn, and an app is live only there.
   await page.getByRole('button', { name: 'Fit' }).click();
   for (const ref of ['n1', 'c1', 'a1', 'a2'])
     await page
@@ -158,30 +89,20 @@ test('an agent sees apps go stale after a person edits their input, and repairs 
         throw new Error(`${ref} (${id(ref)}) not drawn: ${e}`);
       });
 
-  /** The person opens an app; the agent runs it once the room knows it is open. */
+  /** An app on the person's screen is live; the agent runs it once the room knows. */
   const openAndRun = async (ref: string) => {
-    // Its card may be re-rendering (it just went stale): wait until the card
-    // itself is what a click there lands on.
-    let at = await centreOf(page, id(ref));
-    await expect
-      .poll(async () => {
-        at = await centreOf(page, id(ref));
-        return hitAt(page, at);
-      })
-      .toBe(id(ref));
-    await page.mouse.dblclick(at.x, at.y);
-    await expect(page.getByTestId('app-view')).toBeVisible();
+    const live = page.locator(`[data-testid="app-view"][data-item-id="${id(ref)}"]`);
+    await expect(live).toBeVisible();
     // The room hears the view open a moment after it shows.
     for (let tries = 0; tries < 50; tries++) {
       const text = await call(request, 'app_run', { ...b, ref });
       if (!text.startsWith('needs_viewer')) return text;
       await page.waitForTimeout(200);
     }
-    const shown = await page.locator('[data-testid="app-view"] iframe').getAttribute('title');
     const stats = await page.getByTestId('canvas-stats').textContent();
-    throw new Error(`${ref} never reached the room as open (view shows ${shown}; ${stats})`);
+    throw new Error(`${ref} never reached the room as open (${stats})`);
   };
-  const view = page.frameLocator('[data-testid="app-view"] iframe');
+  const view = page.frameLocator(`[data-testid="app-view"][data-item-id="${id('a2')}"] iframe`);
 
   let ran = await openAndRun('a1');
   expect(ran).toContain('Ran a1.');
@@ -226,6 +147,15 @@ test('an agent sees apps go stale after a person edits their input, and repairs 
   ran = await openAndRun('a2');
   expect(ran).toContain('verdict="mismatch"');
   await expect(view.locator('#verdict')).toHaveText('mismatch');
+  // The view's picture of v2 becomes a2's card, for everyone (canvas/apps).
+  const cardOf = async (ref: string) => {
+    const s = (await (await request.get(`${SERVER}/api/boards/${board}/snapshot`)).json()) as {
+      items: { ref: string; output?: { version: number; card?: string | null } }[];
+    };
+    const o = s.items.find((i) => i.ref === ref)?.output;
+    return o ? `v${o.version}:${o.card ?? ''}` : '';
+  };
+  await expect.poll(() => cardOf('a2'), { timeout: 10_000 }).toMatch(/^v2:[\s\S]*mismatch/);
 
   overview = await call(request, 'board_read', b);
   expect(overview).toMatch(/a1 +app "Premium" · fresh · v2/);

@@ -20,6 +20,7 @@ import type {
   Anchor,
   Appearance,
   AppOutput,
+  AppRunMode,
   CanvasItemContent,
   Centerpiece,
   Crop,
@@ -169,20 +170,27 @@ export type CanvasOperationBody =
       readonly linkType: LinkType;
       /** A `feeds` link's view; required there, absent on every other type. */
       readonly view?: string;
+      /** A `feeds` link's field within its view, and the input name the app sees. */
+      readonly path?: string;
+      readonly name?: string;
       /** Stamped by the server. */
       readonly by?: string | null;
       readonly byAgent?: string | null;
       readonly at?: string | null;
     }
   /**
-   * A semantic link's type, or a `feeds` link's view. Never moves a link
-   * between semantic and data types: that would grant or revoke access.
+   * A semantic link's type, or a `feeds` link's view, field and input name.
+   * Absent leaves a field alone; an empty `path` or `name` clears it. Never
+   * moves a link between semantic and data types: that would grant or revoke
+   * access.
    */
   | {
       readonly type: 'link.set';
       readonly linkId: LinkId;
       readonly linkType: LinkType;
       readonly view?: string;
+      readonly path?: string;
+      readonly name?: string;
     }
   | { readonly type: 'link.delete'; readonly linkId: LinkId }
   /** The board's centerpiece, or none (canvas/centerpiece). Absolute state. */
@@ -208,6 +216,31 @@ export type CanvasOperationBody =
       readonly by?: string | null;
       readonly byAgent?: string | null;
       readonly at?: string | null;
+    }
+  /**
+   * An app's title, source, literals or run mode (canvas/app-inspector).
+   * Absent fields are left alone; `literals` is the whole set. A new source
+   * or new literals make the app stale; neither changes its outputs.
+   */
+  | {
+      readonly type: 'app.set';
+      readonly itemId: ItemId;
+      readonly title?: string;
+      readonly html?: string;
+      readonly literals?: Readonly<Record<string, unknown>>;
+      readonly run?: AppRunMode;
+      /** An MCP app's view, moved to a newer fetched resource (an update, applied). */
+      readonly mcpSha256?: string;
+    }
+  /**
+   * The picture an output version leaves on the app's card: a snapshot of its
+   * view (canvas/apps). For the latest version only; never on an undo stack.
+   */
+  | {
+      readonly type: 'app.card';
+      readonly itemId: ItemId;
+      readonly version: number;
+      readonly html: string;
     }
   /** Undo of an output: an earlier version's values, committed as the next version. */
   | {

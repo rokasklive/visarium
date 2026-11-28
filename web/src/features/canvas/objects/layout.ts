@@ -20,10 +20,11 @@ import {
 } from '@visarium/canvas-core';
 import { resolvedTheme, type Theme } from '~/app/theme';
 import { measureIn, textIndex } from '../search';
+import { cardPicture } from './app-card';
 import { slug } from './blocks';
 import { loadMarkdown, loadMermaid, loadPlantUml, type MermaidPalette } from './loaders';
 import { noteStatus, statusLabel, stripFrontmatter } from './status';
-import { type ObjectPalette, objectCss } from './style';
+import { APP_BAND, type ObjectPalette, objectCss } from './style';
 
 export interface LocalRect {
   readonly x: number;
@@ -154,12 +155,29 @@ export async function layoutItem(item: CanvasItem, appState?: AppState): Promise
       return layoutDiagram(c.lang, c.source, width);
     case 'app': {
       // The card fills the app's box: the box is the frame its view mounts in.
-      const card = await layoutHtml(appCardHtml(c.title, c.output, appState), width, (root) => {
-        root.style.height = `${item.transform.height}px`;
-        root.style.boxSizing = 'border-box';
-      });
+      const height = item.transform.height;
+      const picture = c.output?.card
+        ? await cardPicture(c.output.card, {
+            x: 1,
+            y: APP_BAND + 1,
+            width: width - 2,
+            height: height - APP_BAND - 2,
+          }).catch(() => undefined)
+        : undefined;
+      const card = await layoutHtml(
+        appCardHtml(c.title, c.output, appState, picture !== undefined),
+        width,
+        (root) => {
+          root.style.height = `${height}px`;
+          root.style.boxSizing = 'border-box';
+        },
+      );
       // Its frame is what is drawn, so links meet the frame, not its text.
-      return { ...card, ink: undefined };
+      // The app's own picture goes over the empty body, inside the same image.
+      const svg = picture
+        ? (scale: number) => card.svg(scale).replace(/<\/svg>$/, `${picture}</svg>`)
+        : card.svg;
+      return { ...card, svg, ink: undefined };
     }
     default:
       throw new Error(`no layout for ${c.kind}`);
@@ -201,7 +219,11 @@ export function appCardHtml(
   title: string,
   output: AppOutput | undefined,
   state?: AppState,
+  /** Its body is the app's own picture, drawn over it: leave it empty. */
+  pictured = false,
 ): string {
+  if (pictured)
+    return `<div class="vo-app">${appBandHtml(title, state)}<div class="vo-app-body"></div></div>`;
   const entries = Object.entries(output?.outputs ?? {});
   const short = (v: unknown) => {
     const t = typeof v === 'string' ? v : JSON.stringify(v);

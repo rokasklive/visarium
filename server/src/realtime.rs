@@ -105,7 +105,21 @@ struct RunLease {
     proposals: u32,
     /// The account and agent the run is credited to, when an agent asked for it.
     credit: Option<(String, Option<String>)>,
+    /// An automatic run's cause (`{ auto, by, agent?, item? }`) and how deep in
+    /// a chain of automatic runs it is (canvas/apps: automatic runs).
+    auto: Option<(Value, u32)>,
 }
+
+/// An automatic run waiting for its app's inputs to settle.
+struct AutoPending {
+    token: u64,
+    cause: Value,
+    depth: u32,
+}
+
+/// The holder of a run the server makes itself: a tool-backed app's
+/// (canvas/app-sources). No client has this id.
+pub const SERVER: Uuid = Uuid::nil();
 
 /// What a request to run an app came to.
 #[derive(Debug, PartialEq, Eq)]
@@ -114,7 +128,7 @@ pub enum RunGrant {
     Leased(Uuid),
     /// Someone is running it already.
     Busy(Uuid),
-    /// Nobody has the app open, so nobody can run it.
+    /// No client with Canvas apps on has the board open, so nobody can run it.
     NoViewer,
 }
 
@@ -144,6 +158,15 @@ struct Room {
     mounts: HashMap<Uuid, Vec<Uuid>>,
     /// App id → who is running it.
     runs: HashMap<Uuid, RunLease>,
+    /// Clients that can run any app in a hidden view (Canvas apps on, a
+    /// sandbox origin), most recently ready last (canvas/apps: background runs).
+    ready: Vec<Uuid>,
+    /// App id → its automatic run, waiting for its inputs to settle.
+    auto: HashMap<Uuid, AutoPending>,
+    /// When this board's recent automatic runs started, for the rate cap.
+    auto_starts: std::collections::VecDeque<u64>,
+    /// App id → why it was not run automatically, until it runs again.
+    held: HashMap<Uuid, String>,
 }
 
 impl Room {
@@ -333,11 +356,12 @@ impl Rooms {
         input_revs: serde_json::Map<String, Value>,
         now: u64,
     ) -> RunGrant {
-        self.lease(board, app, requester, input_revs, now, None)
+        self.lease(board, app, requester, input_revs, now, None, None)
     }
 
     /// The lease is made whole, credit included, before anyone hears of it:
     /// the holder may post its output the moment `run.lease` arrives.
+    #[allow(clippy::too_many_arguments)]
     fn lease(
         &self,
         board: &Uuid,
@@ -346,16 +370,20 @@ impl Rooms {
         input_revs: serde_json::Map<String, Value>,
         now: u64,
         credit: Option<(String, Option<String>)>,
+        auto: Option<(Value, u32)>,
     ) -> RunGrant {
         self.with(board, |r| {
             r.lapse_runs(now);
             if let Some(run) = r.runs.get(&app) {
                 return RunGrant::Busy(run.holder);
             }
+            // The client that asked, if it can run it; else one that shows it
+            // live; else whoever became ready last, in a hidden view.
             let open = r.mounts.get(&app).cloned().unwrap_or_default();
             let Some(holder) = requester
-                .filter(|q| open.contains(q))
+                .filter(|q| *q == SERVER || open.contains(q) || r.ready.contains(q))
                 .or_else(|| open.last().copied())
+                .or_else(|| r.ready.last().copied())
             else {
                 return RunGrant::NoViewer;
             };
@@ -368,8 +396,10 @@ impl Rooms {
                     until,
                     proposals: 0,
                     credit,
+                    auto,
                 },
             );
+            r.held.remove(&app);
             r.broadcast(
                 None,
                 &json!({ "t": "run.lease", "itemId": app, "holder": holder, "until": until }),
@@ -387,7 +417,110 @@ impl Rooms {
         credit: (String, Option<String>),
         input_revs: serde_json::Map<String, Value>,
     ) -> RunGrant {
-        self.lease(board, app, None, input_revs, now_ms(), Some(credit))
+        self.lease(board, app, None, input_revs, now_ms(), Some(credit), None)
+    }
+
+    /// An automatic run: granted like an agent's, credited to whoever caused
+    /// it, and carrying its cause and its depth in a chain of automatic runs.
+    pub fn request_auto(
+        &self,
+        board: &Uuid,
+        app: Uuid,
+        credit: (String, Option<String>),
+        cause: Value,
+        depth: u32,
+        input_revs: serde_json::Map<String, Value>,
+    ) -> RunGrant {
+        self.lease(
+            board,
+            app,
+            None,
+            input_revs,
+            now_ms(),
+            Some(credit),
+            Some((cause, depth)),
+        )
+    }
+
+    /// A tool-backed app's run, held by the server itself, however it was
+    /// asked for: a person's Run, an agent's, or an automatic one.
+    pub fn lease_server(
+        &self,
+        board: &Uuid,
+        app: Uuid,
+        credit: (String, Option<String>),
+        auto: Option<(Value, u32)>,
+        input_revs: serde_json::Map<String, Value>,
+    ) -> RunGrant {
+        self.lease(
+            board,
+            app,
+            Some(SERVER),
+            input_revs,
+            now_ms(),
+            Some(credit),
+            auto,
+        )
+    }
+
+    /// The cause and depth of `app`'s run now, when it is an automatic one.
+    pub fn run_auto(&self, board: &Uuid, app: Uuid) -> Option<(Value, u32)> {
+        self.with(board, |r| r.runs.get(&app).and_then(|l| l.auto.clone()))
+    }
+
+    /// Arms `app`'s automatic run, replacing one already waiting: its token,
+    /// which [`Rooms::take_auto`] must show to fire it.
+    pub fn arm_auto(&self, board: &Uuid, app: Uuid, cause: Value, depth: u32) -> u64 {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let token = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.with(board, |r| {
+            r.auto.insert(
+                app,
+                AutoPending {
+                    token,
+                    cause,
+                    depth,
+                },
+            )
+        });
+        token
+    }
+
+    /// The automatic run armed with `token`, unless a later change re-armed it.
+    pub fn take_auto(&self, board: &Uuid, app: Uuid, token: u64) -> Option<(Value, u32)> {
+        self.with(board, |r| match r.auto.get(&app) {
+            Some(p) if p.token == token => r.auto.remove(&app).map(|p| (p.cause, p.depth)),
+            _ => None,
+        })
+    }
+
+    /// Counts an automatic run against the board's cap: false when `max`
+    /// started within the last minute already.
+    pub fn auto_allowed_at(&self, board: &Uuid, max: usize, now: u64) -> bool {
+        self.with(board, |r| {
+            while r.auto_starts.front().is_some_and(|t| *t + 60_000 <= now) {
+                r.auto_starts.pop_front();
+            }
+            if r.auto_starts.len() >= max {
+                return false;
+            }
+            r.auto_starts.push_back(now);
+            true
+        })
+    }
+
+    /// `app` was not run automatically, and why.
+    pub fn hold(&self, board: &Uuid, app: Uuid, why: &str) {
+        self.with(board, |r| r.held.insert(app, why.to_string()));
+    }
+
+    /// Why `app` was last held back from running automatically, until it runs.
+    pub fn held(&self, board: &Uuid, app: Uuid) -> Option<String> {
+        self.0
+            .lock()
+            .unwrap()
+            .get(board)
+            .and_then(|r| r.held.get(&app).cloned())
     }
 
     /// Who `actor`'s run of `app` is credited to, when an agent asked for it.
@@ -467,9 +600,26 @@ impl Rooms {
         });
     }
 
-    /// Whether anyone has `app` open: an agent's run needs a viewer (canvas/apps).
-    pub fn has_viewer(&self, board: &Uuid, app: Uuid) -> bool {
-        self.with(board, |r| r.mounts.get(&app).is_some_and(|m| !m.is_empty()))
+    /// `actor` can (or can no longer) run apps in a hidden view.
+    /// True when this made a board that nobody could run apps on runnable:
+    /// then its stale automatic apps run (canvas/apps: nobody watching).
+    pub fn set_ready(&self, board: &Uuid, actor: Uuid, ready: bool) -> bool {
+        self.with(board, |r| {
+            let before = r.ready.is_empty();
+            r.ready.retain(|a| *a != actor);
+            if ready && r.actors.iter().any(|a| a.id == actor) {
+                r.ready.push(actor);
+            }
+            before && !r.ready.is_empty()
+        })
+    }
+
+    /// Whether some client could run `app` now: one shows it live, or one
+    /// can run it hidden. An agent's run needs one (canvas/apps).
+    pub fn can_run(&self, board: &Uuid, app: Uuid) -> bool {
+        self.with(board, |r| {
+            r.mounts.get(&app).is_some_and(|m| !m.is_empty()) || !r.ready.is_empty()
+        })
     }
 
     fn with<R>(&self, board: &Uuid, f: impl FnOnce(&mut Room) -> R) -> R {
@@ -483,6 +633,7 @@ impl Rooms {
             return;
         };
         room.actors.retain(|a| a.id != actor);
+        room.ready.retain(|a| *a != actor);
         for open in room.mounts.values_mut() {
             open.retain(|a| *a != actor);
         }
@@ -991,6 +1142,13 @@ impl Connection {
                     }
                 });
             }
+            "apps.ready" => {
+                let ready = frame.get("ready").and_then(Value::as_bool).unwrap_or(false);
+                if rooms.set_ready(&self.board, actor, ready) {
+                    let user = rooms.socket_user(&self.board, actor).unwrap_or_default();
+                    crate::apps::run_stale(&self.app, &self.board, &user);
+                }
+            }
             "app.mounted" | "app.unmounted" => {
                 for app in item_ids(&frame, "itemIds")? {
                     rooms.mount(&self.board, app, actor, t == "app.mounted");
@@ -1008,7 +1166,21 @@ impl Connection {
                     let reply = if fresh {
                         Some(json!({ "t": "run.done", "itemId": app }))
                     } else {
-                        match rooms.request_run(&self.board, app, Some(actor), input_revs) {
+                        let user = rooms.socket_user(&self.board, actor).unwrap_or_default();
+                        let grant = match crate::mcp::grant(
+                            &self.app,
+                            &self.board,
+                            app,
+                            (user, None),
+                            None,
+                            input_revs.clone(),
+                        )
+                        .await
+                        {
+                            Some(g) => g,
+                            None => rooms.request_run(&self.board, app, Some(actor), input_revs),
+                        };
+                        match grant {
                             RunGrant::Leased(_) => None,
                             RunGrant::Busy(holder) => {
                                 Some(json!({ "t": "run.busy", "itemId": app, "holder": holder }))
@@ -1198,6 +1370,96 @@ mod tests {
         assert_eq!(
             rooms.request_run_at(&board, app, None, revs(), t + 2),
             RunGrant::Leased(bo)
+        );
+    }
+
+    /// A connected actor, as `hello` makes one, so readiness has someone to belong to.
+    fn join(rooms: &Rooms, board: &Uuid, id: Uuid) {
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        rooms.with(board, |r| {
+            r.actors.push(Actor {
+                id,
+                user: "u".into(),
+                display_name: "A".into(),
+                colour: 0,
+                tx,
+                too_slow: Arc::new(Notify::new()),
+            })
+        });
+    }
+
+    #[test]
+    fn a_run_goes_to_a_ready_client_when_nobody_shows_the_app() {
+        let rooms = Rooms::default();
+        let (board, app, ada, bo) = (
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        let t = now_ms();
+        let none = serde_json::Map::new;
+        // Nobody ready, nobody showing it: nobody can run it.
+        assert!(!rooms.can_run(&board, app));
+        assert_eq!(
+            rooms.request_run_at(&board, app, None, none(), t),
+            RunGrant::NoViewer
+        );
+        // Bo has the board open with apps on, the app off his screen.
+        join(&rooms, &board, ada);
+        join(&rooms, &board, bo);
+        rooms.set_ready(&board, bo, true);
+        assert!(rooms.can_run(&board, app));
+        assert_eq!(
+            rooms.request_run_at(&board, app, None, none(), t),
+            RunGrant::Leased(bo)
+        );
+        rooms.end_run(&board, app);
+        // Ada asks, ready herself: she runs it.
+        rooms.set_ready(&board, ada, true);
+        assert_eq!(
+            rooms.request_run_at(&board, app, Some(ada), none(), t),
+            RunGrant::Leased(ada)
+        );
+        rooms.end_run(&board, app);
+        // Someone showing it live comes before whoever is ready.
+        rooms.mount(&board, app, bo, true);
+        assert_eq!(
+            rooms.request_run_at(&board, app, None, none(), t),
+            RunGrant::Leased(bo)
+        );
+        rooms.end_run(&board, app);
+        rooms.mount(&board, app, bo, false);
+        // Leaving takes readiness with it; turning it off too.
+        rooms.leave(&board, ada);
+        rooms.set_ready(&board, bo, false);
+        assert!(!rooms.can_run(&board, app));
+        // Readiness belongs to someone connected.
+        rooms.set_ready(&board, Uuid::new_v4(), true);
+        assert!(!rooms.can_run(&board, app));
+    }
+
+    #[test]
+    fn automatic_runs_are_capped_per_board_and_say_why_they_wait() {
+        let rooms = Rooms::default();
+        let (board, other, app) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let t = 1_000_000;
+        for i in 0..3 {
+            assert!(rooms.auto_allowed_at(&board, 3, t + i));
+        }
+        assert!(!rooms.auto_allowed_at(&board, 3, t + 10));
+        // Another board has its own allowance; a minute later this one has again.
+        assert!(rooms.auto_allowed_at(&other, 3, t + 10));
+        assert!(rooms.auto_allowed_at(&board, 3, t + 60_001));
+        rooms.hold(&board, app, "the cap");
+        assert_eq!(rooms.held(&board, app).as_deref(), Some("the cap"));
+        // A later change re-arms the run: the earlier token no longer fires it.
+        let first = rooms.arm_auto(&board, app, json!({ "auto": true }), 0);
+        let second = rooms.arm_auto(&board, app, json!({ "auto": true }), 2);
+        assert!(rooms.take_auto(&board, app, first).is_none());
+        assert_eq!(
+            rooms.take_auto(&board, app, second).map(|(_, d)| d),
+            Some(2)
         );
     }
 

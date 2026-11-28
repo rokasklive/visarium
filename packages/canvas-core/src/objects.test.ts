@@ -53,9 +53,13 @@ const tasks = (d: CanvasDocument) => {
   return c?.kind === 'checklist' ? c.tasks : [];
 };
 
-/** Everything an undo must restore, without the revision counter (it only counts up). */
+/** Everything an undo must restore, without the counters (they only count up). */
 const state = (d: CanvasDocument) => ({
-  items: [...d.items()].map(({ revision: _, ...rest }) => rest),
+  items: [...d.items()].map(({ revision: _, content, ...rest }) => {
+    if (content.kind !== 'app') return { ...rest, content };
+    const { sourceRev: _s, setupRev: _u, ...c } = content;
+    return { ...rest, content: c };
+  }),
   links: [...d.links()],
 });
 

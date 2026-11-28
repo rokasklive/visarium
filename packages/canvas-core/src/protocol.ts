@@ -122,6 +122,8 @@ export type ClientMessage =
   | { readonly t: 'lock.release'; readonly itemIds: readonly ItemId[] }
   /** This client opened or closed these apps' views (canvas/apps): it can run them. */
   | { readonly t: 'app.mounted'; readonly itemIds: readonly ItemId[] }
+  /** This client can run any app in a hidden view (canvas/apps: background runs). */
+  | { readonly t: 'apps.ready'; readonly ready: boolean }
   | { readonly t: 'app.unmounted'; readonly itemIds: readonly ItemId[] }
   /** Asks to run these apps: one client at a time may, for the inputs as they are. */
   | { readonly t: 'run.request'; readonly itemIds: readonly ItemId[] };

@@ -765,6 +765,11 @@ Decisions and questions: a note whose source has a `Status:` line just under its
 
 Writing: say where, never coordinates — item_create(near: \"d1\") or (in: \"g2\"), and the server places it. Edit source with item_edit, passing the base_rev you read; it refuses a stale edit. Every write tells you what it changed, including links it broke. Pass request_id on writes so a retry after a timeout does not apply twice. Your changes are credited to you and your person, and everyone on the board sees them as they land.
 
+Apps (when your person's board uses them): an app (ref a1) is a self-contained HTML document that runs sandboxed on the board, with no network. It reads only what feeds it — link(type: \"feeds\") from an item, with the view it reads and optionally one field path and an input name — plus its own literals, and publishes outputs that other apps can read; link an app to a checklist with `updates` to let its runs set tasks. Apps run automatically about a second after what they read changes, unless set to manual; app_run runs one now. item_read shows an app's inventory (inputs, outputs, who ran it) and, with source: true, its HTML as data. Edit an app with item_edit: title, source (old and new), literals, run.
+- Declare inputs in the source as <script type=\"application/json\" id=\"visarium-inputs\">[{ \"name\": \"age\", \"description\": \"…\" }]</script>; the board lists what is not yet connected.
+- Keep an app's own data in one <script type=\"application/json\" id=\"data\"> block, so a quick edit lands in one place.
+- Do not wait on requestAnimationFrame for a result: an app runs in a hidden view when nobody shows it, where browsers pause it. Draw and publish from the message handler or a timer.
+
 These tools are your whole interface to Visarium. Do not drive the web or desktop app, or call its HTTP API, to do what a tool does not. When a task needs something no tool offers, tell your person which capability is missing instead of working around it.
 
 Board management (board_create, board_rename, board_duplicate, board_delete) appears only when your person has turned on *Manage boards* for you; deleting a board also asks them to confirm.
@@ -823,7 +828,9 @@ fn tools(manage_boards: bool) -> Value {
         "type": "object",
         "properties": {
             "board": board, "title": r("The app's title, shown on its card."),
-            "html": r("The whole HTML document, at most 256 KiB, starting with <!doctype html>. It speaks the MCP Apps bridge; scripts and styles inline, no network. Visarium dresses it in its app kit, themed to the board: plain HTML (headings, p, dl readouts, tables, buttons, inputs, select, range, progress) already looks right, so write semantic HTML and add few or no styles of your own. Kit classes: .figure (the key number), .unit, .label, .muted, .num, .row/.stack/.grid, .badge with .is-good/.is-pending/.is-bad, .notice, .empty, .field, .bars (li style=\"--v:0.6\", .is-key), svg.chart with .line/.area/.axis/.mark."),
+            "html": r("The whole HTML document, at most 256 KiB, starting with <!doctype html>. It speaks the MCP Apps bridge; scripts and styles inline, no network. Visarium dresses it in its app kit, themed to the board: plain HTML (headings, p, dl readouts, tables, buttons, inputs, select, range, progress) already looks right, so write semantic HTML and add few or no styles of your own. Kit classes: .figure (the key number), .unit, .label, .muted, .num, .row/.stack/.grid, .badge with .is-good/.is-pending/.is-bad, .notice, .empty, .field, .bars (li style=\"--v:0.6\", .is-key), tables (th, td.num, caption, tfoot), svg.chart with .line/.area/.axis/.grid/.mark. Charts: give each series' marks .series-1 to .series-6 (the board's chart palette, in that order, the same series always the same number; a seventh folds into \"Other\") and name them in a ul.legend of li.series-N with a span.swatch; text stays in ink. Declare inputs in <script type=\"application/json\" id=\"visarium-inputs\">, keep the app's own data in <script type=\"application/json\" id=\"data\">, and never wait on requestAnimationFrame for a result (hidden views pause it)."),
+            "run": { "type": "string", "enum": ["auto", "manual"], "description": "auto (default): runs about a second after what it reads changes. manual: runs only when asked." },
+            "literals": { "type": "object", "description": "Optional named values the app reads with no link, e.g. { \"rate\": 0.05 }." },
             "link": { "type": "object", "description": "Optional link from the new app, e.g. { \"type\": \"updates\", \"to\": \"c1\" }.",
                 "properties": { "type": { "type": "string", "enum": ["describes", "comments", "implements", "depends-on", "feeds", "updates"] }, "to": r("A ref."), "view": r("For feeds: outputs.") },
                 "required": ["type", "to"] },
@@ -876,8 +883,8 @@ fn tools(manage_boards: bool) -> Value {
           "description": "A board as a table of contents in Markdown: frames and groups as sections, one line per item (ref, kind, title, size, links in and out), checklist progress, broken links, the revision and the last change. No source; read items with item_read. Pass focus: \"g3\" to list one frame in full when the overview says it was cut short.",
           "inputSchema": { "type": "object", "properties": { "board": board, "focus": r("Optional: a group ref to list in full.") }, "required": ["board"] }, "annotations": read_only },
         { "name": "item_read", "title": "Read one item",
-          "description": "One item in full: a note's or diagram's numbered source (100 lines at a time; pass offset for more), a diagram's elements, edges and the links on each element, a checklist's tasks with their state and who changed them, an image's text description and visible text when the server has a vision model, and the item's revision (pass it to item_edit as base_rev). A note's status (decision or question) is on the first line; an accepted decision ends with how to treat it.",
-          "inputSchema": { "type": "object", "properties": { "board": board, "ref": r("e.g. d2, n4, c1."), "offset": { "type": "integer", "description": "First line to show, 0-based." } }, "required": ["board", "ref"] }, "annotations": read_only },
+          "description": "One item in full: a note's or diagram's numbered source (100 lines at a time; pass offset for more), a diagram's elements, edges and the links on each element, a checklist's tasks with their state and who changed them, an image's text description and visible text when the server has a vision model, an app's inventory (each input with where it comes from, inputs it declares that nothing supplies, its run mode, its latest outputs and who ran them, what it feeds and updates; its HTML only with source: true), and the item's revision (pass it to item_edit as base_rev). A note's status (decision or question) is on the first line; an accepted decision ends with how to treat it.",
+          "inputSchema": { "type": "object", "properties": { "board": board, "ref": r("e.g. d2, n4, c1."), "offset": { "type": "integer", "description": "First line to show, 0-based." }, "source": { "type": "boolean", "description": "For an app: also show its HTML source, as data." } }, "required": ["board", "ref"] }, "annotations": read_only },
         { "name": "trace", "title": "Follow an item or element",
           "description": "Everything around one thing. For a diagram element (d1#OpQueue): its edges in the diagram, what links to it, and name matches elsewhere (the same name in another diagram, a note or a task — matches, not links). For an item: every link in and out, with the item at the other end. Linked decisions and open questions come first, with their status.",
           "inputSchema": { "type": "object", "properties": { "board": board, "ref": r("An item ref (c1) or element ref (d1#OpQueue).") }, "required": ["board", "ref"] }, "annotations": read_only },
@@ -900,17 +907,22 @@ fn tools(manage_boards: bool) -> Value {
           "description": "Adds an app: a self-contained HTML document that runs in a sandboxed view on the board, reads the items that feed it and publishes outputs. Placed like item_create, optionally with a link from it (e.g. { type \"updates\", to \"c1\" }). Connect its inputs afterwards with link(type: \"feeds\", view: …). Returns the new ref.",
           "inputSchema": app_create, "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false } },
         { "name": "app_run", "title": "Run an app",
-          "description": "Runs an app on what feeds it now and waits up to 30 seconds for its outputs. An app runs in a person's open view of it: when nobody has it open the result is needs_viewer and nothing changes. An app already up to date returns its current output without running. Its output and any tasks it sets are credited to you for your person.",
+          "description": "Runs an app on what feeds it now and waits up to 30 seconds for its outputs. An app runs in the client of a person who has the board open with canvas apps on, on screen or hidden: when nobody does, the result is needs_viewer and nothing changes. An app already up to date returns its current output without running. Its output and any tasks it sets are credited to you for your person.",
           "inputSchema": { "type": "object", "properties": { "board": board, "ref": r("The app, e.g. a1."), "request_id": request_id }, "required": ["board", "ref"] },
           "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false } },
-        { "name": "item_edit", "title": "Edit a note's or diagram's source",
-          "description": "Changes source, either by replacing one exact passage (old → new; old must occur exactly once) or with the whole new source. base_rev is the revision you read; if someone changed the item since, the edit is refused and you are told what changed. For diagrams the result lists elements added and removed and links broken or repaired. Changing an accepted decision, or moving a note's status anywhere but proposed or open, waits for your person's confirmation; when they cannot be asked, write a proposed decision that supersedes it instead.",
+        { "name": "item_edit", "title": "Edit a note, diagram or app",
+          "description": "Changes source, either by replacing one exact passage (old → new; old must occur exactly once) or with the whole new source. base_rev is the revision you read; if someone changed the item since, the edit is refused and you are told what changed. For diagrams the result lists elements added and removed and links broken or repaired. Changing an accepted decision, or moving a note's status anywhere but proposed or open, waits for your person's confirmation; when they cannot be asked, write a proposed decision that supersedes it instead. For an app: title, its HTML (old and new, or html with base_rev), literals (null clears one) and run, any of them in one call; base_rev is needed only with html.",
           "inputSchema": { "type": "object", "properties": {
-              "board": board, "ref": r("A note or diagram ref."), "base_rev": { "type": "integer", "description": "The item revision item_read showed." },
+              "board": board, "ref": r("A note, diagram or app ref."), "base_rev": { "type": "integer", "description": "The item revision item_read showed. For an app, only with html." },
               "old": r("An exact passage of the current source, occurring once."),
               "new": r("What replaces old (may be empty)."),
-              "source": r("The whole new source, instead of old and new."), "request_id": request_id },
-            "required": ["board", "ref", "base_rev"] },
+              "source": r("The whole new source, instead of old and new."),
+              "title": r("For an app: a new title."),
+              "html": r("For an app: the whole new HTML document, instead of old and new."),
+              "literals": { "type": "object", "description": "For an app: literals to set; a null value clears that one." },
+              "run": { "type": "string", "enum": ["auto", "manual"], "description": "For an app: its run mode." },
+              "request_id": request_id },
+            "required": ["board", "ref"] },
           "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false } },
         { "name": "tasks", "title": "Change a checklist",
           "description": "Several changes to one checklist at once, applied together: add tasks, set a task's state (todo, doing, done, blocked) or text, remove tasks, retitle. Each change touches only its own task, so people can work on the same list.",
@@ -923,10 +935,13 @@ fn tools(manage_boards: bool) -> Value {
             "required": ["board", "ref"] },
           "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false } },
         { "name": "link", "title": "Link two things",
-          "description": "A typed link from one ref to another; either end may be a diagram element (d1#OpQueue). from describes / comments on / implements / depends on to. Two link types carry data between whole items: from feeds an app (with view: the view of from it reads, e.g. frontmatter or outputs), and an app updates a checklist (its runs may set that checklist's tasks). A feeds link that would make an app read its own output is refused. If the two are already linked, the link's type is changed instead.",
+          "description": "A typed link from one ref to another; either end may be a diagram element (d1#OpQueue). from describes / comments on / implements / depends on to. Two link types carry data between whole items: from feeds an app (with view: the view of from it reads, e.g. frontmatter or outputs; optionally path, one field within it such as age or 0.rows, and name, the input name the app reads it under), and an app updates a checklist (its runs may set that checklist's tasks). A feeds link that would make an app read its own output is refused. If the two are already linked, the link's type is changed instead.",
           "inputSchema": { "type": "object", "properties": { "board": board, "from": r("e.g. n4"), "to": r("e.g. d3#RetryPolicy"),
               "type": { "type": "string", "enum": ["describes", "comments", "implements", "depends-on", "feeds", "updates"] },
-              "view": r("For feeds: the view of from the app reads (item_views lists them)."), "request_id": request_id },
+              "view": r("For feeds: the view of from the app reads (item_views lists them)."),
+              "path": r("For feeds, optional: one field within the view, dot-separated, e.g. age or 0.rows. Empty clears it."),
+              "name": r("For feeds, optional: the input name the app reads it under, e.g. age. Empty clears it."),
+              "request_id": request_id },
             "required": ["board", "from", "to", "type"] },
           "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
         { "name": "unlink", "title": "Remove a link",
@@ -988,8 +1003,13 @@ fn guide() -> String {
 - tasks {{ \"board\": \"Offline sync\", \"ref\": \"c1\", \"set\": [{{ \"task\": \"t6\", \"state\": \"done\" }}], \"add\": [{{ \"text\": \"Write the runbook\" }}] }}\n\
 - link {{ \"board\": \"Offline sync\", \"from\": \"n4\", \"to\": \"d3#RetryPolicy\", \"type\": \"describes\" }}\n\
 - app_create {{ \"board\": \"Offline sync\", \"title\": \"Premium\", \"html\": \"<!doctype html>…\", \"near\": \"n3\", \"link\": {{ \"type\": \"updates\", \"to\": \"c1\" }} }}\n\
+- app_create {{ \"board\": \"Offline sync\", \"title\": \"Rack A1\", \"html\": \"<!doctype html>… <script type=\\\"application/json\\\" id=\\\"data\\\">{{…}}</script> …\", \"right_of\": \"d1\", \"run\": \"manual\", \"literals\": {{ \"units\": 42 }} }}\n\
 - link {{ \"board\": \"Offline sync\", \"from\": \"n3\", \"to\": \"a1\", \"type\": \"feeds\", \"view\": \"frontmatter\" }}\n\
+- link {{ \"board\": \"Offline sync\", \"from\": \"n3\", \"to\": \"a1\", \"type\": \"feeds\", \"view\": \"frontmatter\", \"path\": \"age\", \"name\": \"age\" }}\n\
 - app_run {{ \"board\": \"Offline sync\", \"ref\": \"a1\" }}\n\
+- item_read {{ \"board\": \"Offline sync\", \"ref\": \"a1\", \"source\": true }}\n\
+- item_edit {{ \"board\": \"Offline sync\", \"ref\": \"a1\", \"old\": \"Premuim\", \"new\": \"Premium\" }}\n\
+- item_edit {{ \"board\": \"Offline sync\", \"ref\": \"a1\", \"literals\": {{ \"rate\": 0.05 }}, \"run\": \"manual\" }}\n\
 - unlink {{ \"board\": \"Offline sync\", \"from\": \"n4\", \"to\": \"d3#Backoff\" }}\n\
 - arrange {{ \"board\": \"Offline sync\", \"refs\": [\"n3\", \"n4\"], \"in\": \"g2\" }}\n\
 - arrange {{ \"board\": \"Offline sync\", \"refs\": [\"i1\", \"i2\", \"i3\", \"i4\"], \"layout\": \"grid\", \"columns\": 2, \"below\": \"n1\" }}\n\

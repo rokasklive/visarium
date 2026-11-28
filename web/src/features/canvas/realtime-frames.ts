@@ -241,6 +241,19 @@ function operation(value: unknown): unknown | null {
         stamp(value)
         ? value
         : null;
+    case 'app.set':
+      return str(value.itemId) &&
+        (value.title === undefined || typeof value.title === 'string') &&
+        (value.html === undefined || typeof value.html === 'string') &&
+        (value.literals === undefined || isObject(value.literals)) &&
+        (value.run === undefined || value.run === 'auto' || value.run === 'manual') &&
+        (value.mcpSha256 === undefined || typeof value.mcpSha256 === 'string')
+        ? value
+        : null;
+    case 'app.card':
+      return str(value.itemId) && int(value.version) && typeof value.html === 'string'
+        ? value
+        : null;
     case 'board.centerpiece':
       return value.target === null ||
         (typeof value.target === 'string' && /^(item|group):./.test(value.target))

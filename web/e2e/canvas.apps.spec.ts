@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { expect, type Page, test } from '@playwright/test';
 import { canvasBox, signedIn } from './session';
 
@@ -61,7 +62,15 @@ async function stubBoard(
     links = [],
     mount = true,
     html = ECHO,
-  }: { links?: unknown[]; mount?: boolean; html?: string } = {},
+    extra = [],
+    output,
+  }: {
+    links?: unknown[];
+    mount?: boolean;
+    html?: string;
+    extra?: unknown[];
+    output?: unknown;
+  } = {},
 ) {
   const posted: Op[] = [];
   let age = 34;
@@ -71,12 +80,16 @@ async function stubBoard(
         revision: 1,
         items: [
           at(NOTE, -300, 0, 200, 100, { kind: 'note', source: '---\nage: 34\n---\n# Policy' }),
-          at(APP, 100, 0, 300, 200, { kind: 'app', title: 'Premium', html }),
+          {
+            ...at(APP, 100, 0, 300, 200, { kind: 'app', title: 'Premium', html }),
+            ...(output ? { output } : {}),
+          },
           at(LIST, 100, 260, 200, 100, {
             kind: 'checklist',
             title: 'Regression',
             tasks: [{ id: 't1', text: 'Young driver', state: 'todo' }],
           }),
+          ...extra,
         ],
         groups: [],
         links,
@@ -91,14 +104,59 @@ async function stubBoard(
       json: { revision: 1 + posted.length, operations: body.operations.map((o) => o.body) },
     });
   });
-  await page.route(`**/api/boards/${BOARD}/items/${APP}/mount`, (route) =>
+  // The server says where app views load from, or that it has nowhere.
+  await page.route('**/api/meta', (route) =>
+    route.fulfill({
+      json: {
+        name: 'visarium',
+        version: '0.0.0',
+        protocolVersion: 4,
+        appsOrigin: mount ? SANDBOX : null,
+      },
+    }),
+  );
+  await page.route(`**/api/boards/${BOARD}/items/*/mount`, (route) =>
     mount
       ? route.fulfill({ json: { url: `${SANDBOX}/app/token`, origin: SANDBOX } })
-      : route.fulfill({ status: 404, json: { detail: 'apps run in the desktop app' } }),
+      : route.fulfill({ status: 404, json: { detail: 'apps need a sandbox origin to run' } }),
   );
-  await page.route(`**/api/boards/${BOARD}/items/${NOTE}/views/frontmatter`, (route) =>
+  // What the server resolves for the app: the note's frontmatter, by its default
+  // name, while a feeds link from the note carries it (canvas/apps).
+  await page.route(`**/api/boards/${BOARD}/items/${APP}/inputs`, (route) => {
+    const fed = [...(links as Op[]), ...posted.filter((o) => o.type === 'link.add')].some(
+      (l) => l.linkType === 'feeds' && (l.from as { itemId: string }).itemId === NOTE,
+    );
     route.fulfill({
-      json: { ref: 'n1', kind: 'note', revision: 1, view: 'frontmatter', value: { age } },
+      json: {
+        values: fed ? { 'n1.frontmatter': { age } } : {},
+        inputs: fed
+          ? [
+              {
+                name: 'n1.frontmatter',
+                origin: 'link',
+                linkId: FEED,
+                itemId: NOTE,
+                ref: 'n1',
+                view: 'frontmatter',
+                path: null,
+                value: { age },
+                fields: ['age'],
+              },
+            ]
+          : [],
+        declared: [],
+        stamps: {},
+        feeds: [],
+        updates: [],
+        ranBy: null,
+      },
+    });
+  });
+  // The kit's script, as the sandbox serves it: it sends the board snapshots.
+  await page.route(`${SANDBOX}/kit.js`, (route) =>
+    route.fulfill({
+      body: readFileSync(new URL('../../server/src/app_kit.js', import.meta.url), 'utf8'),
+      headers: { 'content-type': 'text/javascript' },
     }),
   );
   await page.route(`${SANDBOX}/app/token`, (route) =>
@@ -163,6 +221,18 @@ const centreOf = async (page: Page, id: string) => {
 };
 
 const frame = (page: Page) => page.frameLocator('[data-testid="app-view"] iframe');
+
+/** An app on screen at a readable size is live: its view is up over its card. */
+async function openView(page: Page, _c?: { x: number; y: number }) {
+  await expect(page.getByTestId('app-view')).toBeVisible();
+}
+
+/** Selecting a live app gives its band Run and its run mode. */
+async function selectApp(page: Page) {
+  const at = await centreOf(page, APP);
+  await page.mouse.click(at.x, at.y + 40);
+  await expect(page.getByTestId('app-run')).toBeVisible();
+}
 const appLog = async (page: Page): Promise<[string, unknown][]> =>
   JSON.parse((await frame(page).locator('#log').textContent()) ?? '[]');
 const logged = (page: Page, key: string) =>
@@ -178,7 +248,9 @@ async function expectAligned(page: Page) {
     expect(Math.abs(view[k] - card[k]), `${k}: view ${view[k]}, card ${card[k]}`).toBeLessThan(2);
 }
 
-test('double-click mounts the view over its card, aligned at every zoom', async ({ page }) => {
+test('an app on screen is live over its card, follows it as the board zooms, and is a card again zoomed out', async ({
+  page,
+}) => {
   await stubBoard(page, {
     links: [
       {
@@ -191,13 +263,12 @@ test('double-click mounts the view over its card, aligned at every zoom', async 
     ],
   });
   const c = await open(page);
-  await page.mouse.dblclick(c.x + 100, c.y);
-  await expect(page.getByTestId('app-view')).toBeVisible();
+  await openView(page, c);
   await logged(page, 'ui/notifications/tool-input');
   await expectAligned(page);
 
-  // Zoom in and out away from the view: it follows its card.
-  for (const dy of [-240, 480]) {
+  // Zoom in and back, away from the view: it follows its card.
+  for (const dy of [-240, 240]) {
     await page.mouse.move(c.x - 300, c.y + 200);
     await page.mouse.wheel(0, dy);
     await page.waitForTimeout(150);
@@ -205,8 +276,113 @@ test('double-click mounts the view over its card, aligned at every zoom', async 
     await expectAligned(page);
   }
 
-  await page.getByTestId('app-close').click();
+  // Too small to read: its card, and no view running.
+  await page.mouse.move(c.x - 300, c.y + 200);
+  await page.mouse.wheel(0, 1200);
   await expect(page.getByTestId('app-view')).toHaveCount(0);
+});
+
+/** An app that draws a block and a figure, and tries everything a card must not keep. */
+const HOSTILE = `<!doctype html><html><head><script src="/kit.js"></script>
+<style>.chart{background:#c00;height:80px}.leak{background:url(https://x.example/bg.png)}</style></head>
+<body><div class="chart" onclick="steal()"></div><p class="figure">1200</p>
+<img src="https://x.example/pixel.gif"><div class="leak">x</div>
+<svg width="10" height="10"><foreignObject><p>nested</p></foreignObject></svg>
+<script>window.steal = () => {};</script></body></html>`;
+
+test("an app's card is a cleaned snapshot of its view, drawn as an image that reaches nothing", async ({
+  page,
+}) => {
+  // What the board itself asks for: the live view is the app's own (its CSP blocks it).
+  const outside: string[] = [];
+  page.on('request', (r) => {
+    if (r.frame() === page.mainFrame() && r.url().includes('x.example')) outside.push(r.url());
+  });
+  const { posted } = await stubBoard(page, {
+    html: HOSTILE,
+    output: { version: 1, outputs: { premium: 1200 }, inputRevs: {}, status: 'ok' },
+  });
+  const c = await open(page);
+  await openView(page, c);
+  // The view settles; its picture becomes the card of output v1.
+  await expect.poll(() => posted.find((op) => op.type === 'app.card')).toBeTruthy();
+  const card = posted.find((op) => op.type === 'app.card') as Op & { html: string };
+  expect(card).toMatchObject({ itemId: APP, version: 1 });
+  expect(card.html).toContain('1200');
+  expect(card.html).toContain('#c00');
+  expect(card.html).toMatch(/data-card-width="\d+"/);
+  for (const gone of ['x.example', 'onclick', 'steal', '<script', 'foreignObject'])
+    expect(card.html, gone).not.toContain(gone);
+  // Only one card per version.
+  await page.waitForTimeout(800);
+  expect(posted.filter((op) => op.type === 'app.card')).toHaveLength(1);
+
+  // Zoomed out, the card shows that picture, drawn inside the card's own image.
+  await page.mouse.move(c.x - 300, c.y + 200);
+  await page.mouse.wheel(0, 1200);
+  await expect(page.getByTestId('app-view')).toHaveCount(0);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (id) =>
+          (
+            window as unknown as { __objects: { layout(i: string): { svg: string } | undefined } }
+          ).__objects.layout(id)?.svg ?? '',
+        APP,
+      ),
+    )
+    .toContain('#c00');
+  expect(outside).toEqual([]);
+});
+
+test('of six apps on screen, the four largest are live', async ({ page }) => {
+  const others = [5, 6, 7, 8, 9].map((n, i) =>
+    at(`${APP.slice(0, -1)}${n}`, -700 + i * 330, -330, 240 + i * 10, 160, {
+      kind: 'app',
+      title: `App ${n}`,
+      html: ECHO,
+    }),
+  );
+  await stubBoard(page, { extra: others });
+  await open(page);
+  await expect(page.getByTestId('app-view')).toHaveCount(4);
+  const live = await page
+    .getByTestId('app-view')
+    .evaluateAll((views) => views.map((v) => v.getAttribute('data-item-id')));
+  // The original app (300 wide) and the three widest of the others.
+  expect(live.sort()).toEqual(
+    [APP, `${APP.slice(0, -1)}7`, `${APP.slice(0, -1)}8`, `${APP.slice(0, -1)}9`].sort(),
+  );
+});
+
+test('a live app takes the pointer only once it is selected', async ({ page }) => {
+  const { posted } = await stubBoard(page);
+  const c = await open(page);
+  await openView(page, c);
+  const iframe = page.locator('[data-testid="app-view"] iframe');
+  const pointer = () => iframe.evaluate((f) => getComputedStyle(f).pointerEvents);
+  expect(await pointer()).toBe('none');
+  await expect(page.getByTestId('app-run')).toHaveCount(0);
+
+  // The wheel over it moves the board, not the app.
+  const before = await rectOf(page, APP);
+  const centre = await centreOf(page, APP);
+  await page.mouse.move(centre.x, centre.y);
+  await page.mouse.wheel(0, -120);
+  await expect.poll(async () => (await rectOf(page, APP)).width).not.toBe(before.width);
+  await expectAligned(page);
+
+  // One click selects it; then the view takes the pointer, and the band its controls.
+  const now = await centreOf(page, APP);
+  await page.mouse.click(now.x, now.y + 40);
+  await expect(page.getByTestId('canvas-stats')).toContainText('1 selected');
+  await expect.poll(pointer).toBe('auto');
+  await expect(page.getByTestId('app-run')).toBeVisible();
+  await page.getByTestId('app-mode').click();
+  await expect
+    .poll(() => posted.find((op) => op.type === 'app.set'))
+    .toMatchObject({ itemId: APP, run: 'manual' });
+  await expect(page.getByTestId('app-mode')).toHaveText('manual');
 });
 
 test('the view speaks the MCP Apps bridge, reads only what feeds it, and reaches nothing', async ({
@@ -224,7 +400,7 @@ test('the view speaks the MCP Apps bridge, reads only what feeds it, and reaches
     ],
   });
   const c = await open(page);
-  await page.mouse.dblclick(c.x + 100, c.y);
+  await openView(page, c);
 
   await logged(page, 'initialize');
   await logged(page, 'unknown');
@@ -289,7 +465,7 @@ test('dragging onto an app feeds it; from an app onto a checklist lets it update
   });
 });
 
-test("a feeds link's label cycles the views of its source", async ({ page }) => {
+test("a feeds link's label opens what it carries: view, field and name", async ({ page }) => {
   const { posted } = await stubBoard(page, {
     links: [
       {
@@ -314,22 +490,40 @@ test("a feeds link's label cycles the views of its source", async ({ page }) => 
   await page.mouse.click(m.x, m.y);
   await page.waitForTimeout(500);
   await page.mouse.click(m.x, m.y - 8);
-  await expect.poll(() => posted.filter((op) => op.type === 'link.set').length).toBe(1);
-  expect(posted.find((op) => op.type === 'link.set')).toMatchObject({
-    linkId: FEED,
-    linkType: 'feeds',
-    view: 'tables',
-  });
+  const popover = page.getByTestId('link-popover');
+  await expect(popover).toBeVisible();
+  expect(posted.filter((op) => op.type === 'link.set')).toEqual([]);
+  // The field picker offers what the view holds now.
+  await expect(popover.locator('datalist option')).toHaveAttribute('value', 'age');
+  await popover.getByLabel('Field').fill('age');
+  await popover.getByLabel('Field').press('Enter');
+  await expect
+    .poll(() => posted.find((op) => op.type === 'link.set'))
+    .toMatchObject({ linkId: FEED, linkType: 'feeds', path: 'age' });
+  await popover.getByLabel('View').selectOption('tables');
+  await expect
+    .poll(() => posted.filter((op) => op.type === 'link.set').at(-1))
+    .toMatchObject({ linkId: FEED, view: 'tables' });
+  // A name another input has is refused before anything is sent.
+  const sent = posted.length;
+  await popover.getByLabel('Input name').fill('a b');
+  await popover.getByLabel('Input name').press('Enter');
+  await expect(popover.getByRole('alert')).toContainText('An input name is');
+  expect(posted.length).toBe(sent);
+  // Escape puts the field back first, then closes.
+  await page.keyboard.press('Escape');
+  await expect(popover.getByLabel('Input name')).toHaveValue('n1.frontmatter');
+  await page.keyboard.press('Escape');
+  await expect(popover).toHaveCount(0);
 });
 
-test('without a sandbox, or with the experiment off, the app says why it will not open', async ({
-  page,
-}) => {
+test('without a sandbox origin, apps stay cards and the inspector says why', async ({ page }) => {
   await stubBoard(page, { mount: false });
   const c = await open(page);
-  await page.mouse.dblclick(c.x + 100, c.y);
-  await expect(page.getByTestId('interchange-notice')).toContainText('runs in the desktop app');
+  await page.waitForTimeout(500);
   await expect(page.getByTestId('app-view')).toHaveCount(0);
+  await page.mouse.dblclick(c.x + 100, c.y);
+  await expect(page.getByTestId('no-sandbox')).toContainText('Apps need a sandbox origin to run');
 });
 
 test('canvas apps stay shut until Labs turns them on', async ({ page }) => {
@@ -342,6 +536,42 @@ test('canvas apps stay shut until Labs turns them on', async ({ page }) => {
 
 test.beforeEach(async ({ page }) => {
   await signedIn(page);
+});
+
+test('on a board shared read-only, the inspector shows the source and changes nothing', async ({
+  page,
+}) => {
+  await page.addInitScript(() => localStorage.setItem('visarium.labs.canvasApps', 'on'));
+  await page.route('**/api/shared/session', (route) =>
+    route.fulfill({ json: { member: false, boardId: BOARD, title: 'Apps', sharedBy: 'Ada' } }),
+  );
+  await page.route('**/api/shared/board', (route) =>
+    route.fulfill({
+      json: {
+        revision: 1,
+        groups: [],
+        links: [],
+        items: [at(APP, 0, 0, 300, 200, { kind: 'app', title: 'Premium', html: ECHO })],
+        id: BOARD,
+        title: 'Apps',
+        sharedBy: 'Ada',
+        expiresAt: null,
+      },
+    }),
+  );
+  await page.goto('/s#share-token');
+  await expect(page.getByText('Shared by Ada · view only')).toBeVisible();
+  await expect.poll(() => rectOf(page, APP).catch(() => null)).not.toBeNull();
+  const c = await centreOf(page, APP);
+  await page.mouse.dblclick(c.x, c.y);
+  const inspector = page.getByTestId('app-inspector');
+  await expect(inspector).toBeVisible();
+  await expect(inspector.getByTestId('inspector-source')).toHaveValue(ECHO);
+  await expect(inspector.getByTestId('inspector-source')).toHaveAttribute('readonly', '');
+  await expect(inspector.getByRole('button', { name: '+ Literal' })).toHaveCount(0);
+  await expect(inspector.getByTestId('output-status')).toHaveText('never run');
+  await page.keyboard.press('Escape');
+  await expect(inspector).toHaveCount(0);
 });
 
 // --- runs (canvas/apps: one executor per run) --------------------------------
@@ -453,7 +683,7 @@ test('two viewers have an app open: one runs it, once, and the other sees who', 
     await stubRuns(page, room, posted, undefined, false);
     await room.attach(page, actor);
     const c = await open(page);
-    await page.mouse.dblclick(c.x + 100, c.y);
+    await openView(page, c);
     await expect(page.getByTestId('app-view')).toBeVisible();
     pages.push(page);
   }
@@ -461,6 +691,8 @@ test('two viewers have an app open: one runs it, once, and the other sees who', 
   // Publishing before any run is refused by the host.
   await expect.poll(async () => (await appLog(ada)).find(([k]) => k === 'early')?.[1]).toBe(-32001);
 
+  await selectApp(bo);
+  await selectApp(ada);
   await ada.getByTestId('app-run').click();
   await expect
     .poll(async () => (await appLog(ada)).find(([k]) => k === 'published')?.[1])
@@ -506,11 +738,12 @@ test('an input changed mid-run: the output does not count, and the app says so',
   );
   await room.attach(page, 'ada');
   const c = await open(page);
-  await page.mouse.dblclick(c.x + 100, c.y);
+  await openView(page, c);
   await expect(page.getByTestId('app-view')).toBeVisible();
   await expect
     .poll(async () => (await appLog(page)).find(([k]) => k === 'early')?.[1])
     .toBe(-32001);
+  await selectApp(page);
   await page.getByTestId('app-run').click();
   await expect(page.getByTestId('interchange-notice')).toContainText('superseded');
   expect(posted.filter((op) => op.type === 'app.output')).toEqual([]);

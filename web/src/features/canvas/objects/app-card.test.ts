@@ -67,6 +67,9 @@ describe('data links (canvas/links)', () => {
     expect(nextView(item('note').content, 'tables')).toBe('text');
     const l = { id: asLinkId('l'), from: { itemId: asItemId('n') }, to: { itemId: asItemId('a') } };
     expect(linkLabel({ ...l, linkType: 'feeds', view: 'tables' })).toBe('feeds · tables');
+    expect(
+      linkLabel({ ...l, linkType: 'feeds', view: 'frontmatter', path: 'age', name: 'age' }),
+    ).toBe('feeds · frontmatter.age → age');
     expect(linkLabel({ ...l, linkType: 'describes' })).toBe('describes');
   });
 });

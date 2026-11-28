@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::{self, client::IntoClientRequest};
 use tower::ServiceExt;
 
+mod fake_mcp;
 mod issuer;
 use issuer::{Issuer, Person};
 
@@ -4982,6 +4983,104 @@ async fn migration_0014_keeps_every_item_and_link() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+#[tokio::test]
+async fn migration_0015_keeps_every_link_and_output() {
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePool};
+    let (config, dir) = config(true);
+    std::fs::create_dir_all(&dir).unwrap();
+    // A library as 0014 left it: an app fed by a note, with an output.
+    let pool = SqlitePool::connect_with(
+        SqliteConnectOptions::new()
+            .filename(&config.database)
+            .create_if_missing(true)
+            .foreign_keys(true),
+    )
+    .await
+    .unwrap();
+    let mut before = sqlx::migrate!("./migrations");
+    before.migrations = before
+        .migrations
+        .iter()
+        .filter(|m| m.version < 15)
+        .cloned()
+        .collect::<Vec<_>>()
+        .into();
+    before.run(&pool).await.unwrap();
+    for sql in [
+        "INSERT INTO canvas (id, title) VALUES ('b1', 'Apps')",
+        "INSERT INTO canvas_item (id, canvas_id, kind, body, x, y, width, height, ref_no, content_rev)
+         VALUES ('n1', 'b1', 'note', '---\nage: 40\n---', 0, 0, 200, 100, 1, 3)",
+        "INSERT INTO canvas_item (id, canvas_id, kind, body, x, y, width, height, ref_no)
+         VALUES ('a1', 'b1', 'app', '{\"title\":\"Calc\",\"html\":\"<html></html>\"}', 0, 0, 200, 100, 1)",
+        "INSERT INTO canvas_item (id, canvas_id, kind, body, x, y, width, height, ref_no)
+         VALUES ('c1', 'b1', 'checklist', '{\"title\":\"T\",\"tasks\":[]}', 0, 0, 200, 100, 1)",
+        "INSERT INTO canvas_link (id, canvas_id, from_item, to_item, link_type, view) VALUES ('l1', 'b1', 'n1', 'a1', 'feeds', 'frontmatter')",
+        "INSERT INTO canvas_link (id, canvas_id, from_item, to_item, link_type) VALUES ('l2', 'b1', 'a1', 'c1', 'updates')",
+        "INSERT INTO app_output (item_id, version, outputs, input_revs, status, run_at)
+         VALUES ('a1', 1, '{\"premium\":1200}', '{\"n1\":3}', 'ok', '2026-11-26T10:00:00Z')",
+    ] {
+        sqlx::query(sql).execute(&pool).await.unwrap();
+    }
+    pool.close().await;
+
+    let app = visarium::open(config).await.unwrap();
+    type LinkCols = (
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    );
+    let links: Vec<LinkCols> =
+        sqlx::query_as("SELECT id, link_type, view, name, path FROM canvas_link ORDER BY id")
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(
+        links,
+        vec![
+            (
+                "l1".into(),
+                "feeds".into(),
+                Some("frontmatter".into()),
+                None,
+                None
+            ),
+            ("l2".into(), "updates".into(), None, None, None),
+        ]
+    );
+    type OutCols = (i64, String, String, Option<String>, Option<String>);
+    let out: OutCols = sqlx::query_as(
+        "SELECT version, outputs, input_revs, card, cause FROM app_output WHERE item_id = 'a1'",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        out,
+        (
+            1,
+            "{\"premium\":1200}".into(),
+            "{\"n1\":3}".into(),
+            None,
+            None
+        )
+    );
+    // Only a feeds link may carry a name or a path.
+    for sql in [
+        "UPDATE canvas_link SET name = 'x' WHERE id = 'l2'",
+        "UPDATE canvas_link SET path = 'x' WHERE id = 'l2'",
+        "UPDATE app_output SET cause = '[1]' WHERE item_id = 'a1'",
+    ] {
+        assert!(sqlx::query(sql).execute(&app.db).await.is_err(), "{sql}");
+    }
+    sqlx::query("UPDATE canvas_link SET name = 'age', path = 'age' WHERE id = 'l1'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 fn link(id: &str, from: &str, to: &str, ty: &str, view: Option<&str>) -> Value {
     let mut l = json!({ "type": "link.add", "linkId": id, "from": { "itemId": from }, "to": { "itemId": to }, "linkType": ty });
     if let Some(v) = view {
@@ -5340,9 +5439,550 @@ async fn outputs_are_versioned_and_staleness_is_derived() {
 }
 
 #[tokio::test]
+async fn an_apps_source_literals_and_link_setup_make_it_stale() {
+    let (mut c, app, _dir) = signed_in().await;
+    let (b, [_n, a1, _a2, k]) = app_board(&mut c).await;
+    let refused = |r: Reply, needle: &str| {
+        assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.json());
+        let d = r.json().to_string();
+        assert!(d.contains(needle), "{needle} not in {d}");
+    };
+    let r = run_and_post(
+        &mut c,
+        &app,
+        &b,
+        &a1,
+        vec![output(&a1, json!({ "premium": 1200 }), "ok")],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json());
+    let s = snap(&mut c, &b).await;
+    assert_eq!(item(&s, &a1)["appState"]["state"], "fresh");
+    let stamps = &item(&s, &a1)["output"]["inputRevs"];
+    assert_eq!(
+        (stamps["#source"].clone(), stamps["#setup"].clone()),
+        (json!(0), json!(0))
+    );
+    let moved = |s: &Value| -> Vec<String> {
+        item(s, &a1)["appState"]["moved"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["itemId"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let set = |fields: Value| {
+        let mut op = json!({ "type": "app.set", "itemId": a1 });
+        op.as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        op
+    };
+
+    // Not a document: refused, nothing changed.
+    refused(
+        post_ops(&mut c, &b, vec![set(json!({ "html": "<p>no</p>" }))]).await,
+        "whole HTML document",
+    );
+    // A quick edit to the source makes it stale; its outputs and what it feeds do not move.
+    let rev = item(&snap(&mut c, &b).await, &a1)["contentRev"].clone();
+    let r = post_ops(
+        &mut c,
+        &b,
+        vec![set(
+            json!({ "html": "<!doctype html><html><body>v2</body></html>" }),
+        )],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json());
+    let s = snap(&mut c, &b).await;
+    assert_eq!(item(&s, &a1)["content"]["sourceRev"], 1);
+    assert_eq!(item(&s, &a1)["contentRev"], rev);
+    assert_eq!(moved(&s), vec!["#source"]);
+
+    // Literals: named like inputs, unique among them, at most 4 KiB each.
+    refused(
+        post_ops(
+            &mut c,
+            &b,
+            vec![set(json!({ "literals": { "n1.frontmatter": 1 } }))],
+        )
+        .await,
+        "already has an input named 'n1.frontmatter'",
+    );
+    refused(
+        post_ops(&mut c, &b, vec![set(json!({ "literals": { "a b": 1 } }))]).await,
+        "an input name is",
+    );
+    refused(
+        post_ops(
+            &mut c,
+            &b,
+            vec![set(json!({ "literals": { "big": "x".repeat(5000) } }))],
+        )
+        .await,
+        "at most 4096 bytes",
+    );
+    refused(
+        post_ops(&mut c, &b, vec![set(json!({ "run": "sometimes" }))]).await,
+        "auto or manual",
+    );
+    let r = post_ops(
+        &mut c,
+        &b,
+        vec![set(
+            json!({ "literals": { "rate": 0.05 }, "run": "manual" }),
+        )],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json());
+    let s = snap(&mut c, &b).await;
+    assert_eq!(
+        item(&s, &a1)["content"]["literals"],
+        json!({ "rate": 0.05 })
+    );
+    assert_eq!(item(&s, &a1)["content"]["run"], "manual");
+    assert_eq!(moved(&s), vec!["#source", "#setup"]);
+
+    // Running again makes it fresh, stamped with both counters.
+    let r = run_and_post(
+        &mut c,
+        &app,
+        &b,
+        &a1,
+        vec![output(&a1, json!({ "premium": 1200 }), "ok")],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json());
+    let s = snap(&mut c, &b).await;
+    assert_eq!(item(&s, &a1)["appState"]["state"], "fresh");
+
+    // A feeds link narrowed to one field, under a name: stale, and labelled.
+    let feed = s["links"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|l| l["linkType"] == "feeds" && l["to"]["itemId"] == a1)
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let link_set = |fields: Value| {
+        let mut op = json!({ "type": "link.set", "linkId": feed, "linkType": "feeds" });
+        op.as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        op
+    };
+    refused(
+        post_ops(&mut c, &b, vec![link_set(json!({ "path": "a..b" }))]).await,
+        "a field path is",
+    );
+    refused(
+        post_ops(&mut c, &b, vec![link_set(json!({ "name": "rate" }))]).await,
+        "already has an input named 'rate'",
+    );
+    let r = post_ops(
+        &mut c,
+        &b,
+        vec![link_set(json!({ "path": "age", "name": "age" }))],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json());
+    let s = snap(&mut c, &b).await;
+    let l = s["links"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|l| l["id"] == feed)
+        .unwrap();
+    assert_eq!(
+        (l["path"].clone(), l["name"].clone()),
+        (json!("age"), json!("age"))
+    );
+    assert_eq!(moved(&s), vec!["#setup"]);
+    // Undo clears both: the whole view again, under its default name.
+    let r = post_ops(
+        &mut c,
+        &b,
+        vec![link_set(json!({ "path": "", "name": "" }))],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json());
+    let s = snap(&mut c, &b).await;
+    let l = s["links"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|l| l["id"] == feed)
+        .unwrap();
+    assert_eq!(
+        (l["path"].clone(), l["name"].clone()),
+        (json!(null), json!(null))
+    );
+    // Only a feeds link carries a field or a name.
+    refused(
+        post_ops(
+            &mut c,
+            &b,
+            vec![{
+                let mut l = link(
+                    &uuid::Uuid::now_v7().to_string(),
+                    &a1,
+                    &k,
+                    "describes",
+                    None,
+                );
+                l["name"] = json!("x");
+                l
+            }],
+        )
+        .await,
+        "only a feeds link carries a field or an input name",
+    );
+
+    // A card attaches to the latest version only, and is capped.
+    let version = item(&s, &a1)["output"]["version"].as_i64().unwrap();
+    let card = |v: i64, html: &str| json!({ "type": "app.card", "itemId": a1, "version": v, "html": html });
+    let r = post_ops(
+        &mut c,
+        &b,
+        vec![card(version - 1, "<p>old</p>"), card(version, "<p>pic</p>")],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json());
+    assert_eq!(
+        item(&snap(&mut c, &b).await, &a1)["output"]["card"],
+        "<p>pic</p>"
+    );
+    refused(
+        post_ops(&mut c, &b, vec![card(version, &"x".repeat(70_000))]).await,
+        "at most 65536 bytes",
+    );
+}
+
+#[tokio::test]
+async fn an_app_reads_its_inputs_by_name_field_and_literal() {
+    let (mut c, _app, _dir) = signed_in().await;
+    let (b, [n, a1, a2, _k]) = app_board(&mut c).await;
+    let url = |item: &str| format!("/api/boards/{b}/items/{item}/inputs");
+    // By default an input is named after its source and view, and is the whole view.
+    let r = c.get(&url(&a1)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json());
+    let i = r.json();
+    assert_eq!(i["values"], json!({ "n1.frontmatter": { "age": 34 } }));
+    assert_eq!(i["inputs"][0]["ref"], "n1");
+    assert_eq!(i["stamps"]["#source"], 0);
+    assert!(i["stamps"][&n].is_number());
+
+    // Narrowed to one field, named; a literal beside it; inputs declared in the source.
+    let feed = snap(&mut c, &b).await["links"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|l| l["linkType"] == "feeds" && l["to"]["itemId"] == a1)
+        .unwrap()["id"]
+        .clone();
+    let html = r#"<!doctype html><html><head>
+<script type="application/json" id="visarium-inputs">[{ "name": "age", "description": "Insured's age" }, { "name": "sum" }]</script>
+</head><body>calc</body></html>"#;
+    let r = post_ops(
+        &mut c,
+        &b,
+        vec![
+            json!({ "type": "link.set", "linkId": feed, "linkType": "feeds", "path": "age", "name": "age" }),
+            json!({ "type": "app.set", "itemId": a1, "html": html, "literals": { "rate": 0.05 } }),
+        ],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json());
+    let i = c.get(&url(&a1)).await.json();
+    assert_eq!(i["values"], json!({ "age": 34, "rate": 0.05 }));
+    assert_eq!(
+        i["inputs"],
+        json!([
+            { "name": "age", "origin": "link", "linkId": feed, "itemId": n, "ref": "n1", "view": "frontmatter",
+              "path": "age", "revision": i["inputs"][0]["revision"], "value": 34, "fields": ["age"] },
+            { "name": "rate", "origin": "literal", "value": 0.05 },
+        ])
+    );
+    assert_eq!(
+        i["declared"],
+        json!([
+            { "name": "age", "description": "Insured's age", "connected": true },
+            { "name": "sum", "connected": false },
+        ])
+    );
+    assert_eq!(
+        (
+            i["stamps"]["#source"].clone(),
+            i["stamps"]["#setup"].clone()
+        ),
+        (json!(1), json!(2))
+    );
+    // Where its outputs go, and who ran it last (nobody yet).
+    assert_eq!(i["feeds"], json!([{ "itemId": a2, "ref": "a2" }]));
+    assert_eq!(
+        (i["ranBy"].clone(), i["ranAt"].clone()),
+        (json!(null), json!(null))
+    );
+    assert_eq!(c.get(&url(&a2)).await.json()["updates"][0]["ref"], "c1");
+
+    // A field the view does not have: null, and said so.
+    post_ops(
+        &mut c,
+        &b,
+        vec![json!({ "type": "link.set", "linkId": feed, "linkType": "feeds", "path": "premium" })],
+    )
+    .await;
+    let i = c.get(&url(&a1)).await.json();
+    assert_eq!(
+        (
+            i["values"]["age"].clone(),
+            i["inputs"][0]["missing"].clone()
+        ),
+        (json!(null), json!(true))
+    );
+
+    // An app's outputs feed the next by the same rule.
+    assert_eq!(
+        c.get(&url(&a2)).await.json()["values"],
+        json!({ "a1.outputs": {} })
+    );
+    // Only apps have inputs; unknown items and boards are not found; strangers are not let in.
+    assert_eq!(c.get(&url(&n)).await.status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        c.get(&url(&uuid::Uuid::now_v7().to_string())).await.status,
+        StatusCode::NOT_FOUND
+    );
+    let mut stranger = Client::new(c.router.clone());
+    assert_eq!(
+        stranger.get(&url(&a1)).await.status,
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+/// The next app this socket is granted a run of, within `ms`.
+async fn next_lease(ws: &mut Socket, ms: u64) -> Option<String> {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(ms);
+    loop {
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let Ok(Some(Ok(tungstenite::Message::Text(t)))) =
+            tokio::time::timeout(left, ws.next()).await
+        else {
+            return None;
+        };
+        let f: Value = serde_json::from_str(&t).unwrap();
+        if f["t"] == "run.lease" {
+            return f["itemId"].as_str().map(str::to_string);
+        }
+    }
+}
+
+async fn cause_of(app: &visarium::AppState, item: &str) -> Value {
+    let c: Option<String> = sqlx::query_scalar(
+        "SELECT cause FROM app_output WHERE item_id = ? ORDER BY version DESC LIMIT 1",
+    )
+    .bind(item)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    c.map_or(Value::Null, |c| serde_json::from_str(&c).unwrap())
+}
+
+#[tokio::test]
+async fn automatic_apps_run_after_an_edit_settles_in_order_and_within_limits() {
+    let (mut c, app, _dir) = signed_in().await;
+    let (b, [n, a1, a2, _k]) = app_board(&mut c).await;
+    let board = uuid::Uuid::parse_str(&b).unwrap();
+    let me: String = sqlx::query_scalar("SELECT id FROM app_user LIMIT 1")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    let out = |id: &str, v: i64| output(id, json!({ "v": v }), "ok");
+
+    // Nobody watching: an edit leaves a1 behind, and nothing runs.
+    post_ops(
+        &mut c,
+        &b,
+        vec![json!({ "type": "item.source", "itemId": n, "source": "---\nage: 35\n---" })],
+    )
+    .await;
+    // A client that can run apps joins: what is behind runs, a1 before a2.
+    let (mut ws, socket) = live_socket(&c, &app, &b).await;
+    assert!(app.rooms.set_ready(&board, socket, true));
+    let mut leased = vec![];
+    while let Some(id) = next_lease(&mut ws, 3000).await {
+        leased.push(id.clone());
+        let r = post_ops_from(&mut c, &b, Some(socket), vec![out(&id, 1)]).await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.json());
+        if leased.len() == 2 {
+            break;
+        }
+    }
+    assert_eq!(
+        leased.first().map(String::as_str),
+        Some(a1.as_str()),
+        "{leased:?}"
+    );
+    assert!(leased.contains(&a2), "{leased:?}");
+    let first = cause_of(&app, &a1).await;
+    assert_eq!(
+        (first["auto"].clone(), first["by"].clone()),
+        (json!(true), json!(me))
+    );
+    // Edit, then fresh: a1 runs on its own, credited to the edit, then a2 on a1's outputs.
+    while next_lease(&mut ws, 1500).await.is_some() {}
+    post_ops(
+        &mut c,
+        &b,
+        vec![json!({ "type": "item.source", "itemId": n, "source": "---\nage: 45\n---" })],
+    )
+    .await;
+    assert_eq!(
+        next_lease(&mut ws, 3000).await.as_deref(),
+        Some(a1.as_str())
+    );
+    let r = post_ops_from(&mut c, &b, Some(socket), vec![out(&a1, 2)]).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json());
+    assert_eq!(
+        cause_of(&app, &a1).await,
+        json!({ "auto": true, "by": me, "item": n })
+    );
+    // Credited as automatic, after the edit that caused it.
+    let ran_by = c
+        .get(&format!("/api/boards/{b}/items/{a1}/inputs"))
+        .await
+        .json()["ranBy"]
+        .clone();
+    assert!(
+        ran_by
+            .as_str()
+            .is_some_and(|r| r.starts_with("a1, after ") && r.ends_with("'s edit to n1")),
+        "{ran_by}"
+    );
+    assert_eq!(
+        next_lease(&mut ws, 3000).await.as_deref(),
+        Some(a2.as_str())
+    );
+    let r = post_ops_from(&mut c, &b, Some(socket), vec![out(&a2, 2)]).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json());
+    assert_eq!(cause_of(&app, &a2).await["item"], json!(a1));
+    let s = snap(&mut c, &b).await;
+    assert_eq!(item(&s, &a1)["appState"]["state"], "fresh");
+    assert_eq!(item(&s, &a2)["appState"]["state"], "fresh");
+
+    // An error stops the chain: a2 does not run on a failed a1.
+    post_ops(
+        &mut c,
+        &b,
+        vec![json!({ "type": "item.source", "itemId": n, "source": "---\nage: 50\n---" })],
+    )
+    .await;
+    assert_eq!(
+        next_lease(&mut ws, 3000).await.as_deref(),
+        Some(a1.as_str())
+    );
+    let r = post_ops_from(
+        &mut c,
+        &b,
+        Some(socket),
+        vec![output(&a1, json!({}), "error")],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json());
+    assert_eq!(next_lease(&mut ws, 2000).await, None);
+    assert_eq!(
+        item(&snap(&mut c, &b).await, &a2)["appState"]["state"],
+        "upstream error"
+    );
+
+    // Manual stays stale.
+    post_ops(
+        &mut c,
+        &b,
+        vec![json!({ "type": "app.set", "itemId": a1, "run": "manual" })],
+    )
+    .await;
+    post_ops(
+        &mut c,
+        &b,
+        vec![json!({ "type": "item.source", "itemId": n, "source": "---\nage: 55\n---" })],
+    )
+    .await;
+    assert_eq!(next_lease(&mut ws, 2000).await, None);
+    assert_eq!(
+        item(&snap(&mut c, &b).await, &a1)["appState"]["state"],
+        "stale"
+    );
+
+    // A chain stops at its depth: a run 16 deep leaves what it feeds stale, saying why.
+    post_ops(
+        &mut c,
+        &b,
+        vec![json!({ "type": "app.set", "itemId": a1, "run": "auto" })],
+    )
+    .await;
+    while next_lease(&mut ws, 1500).await.is_some() {}
+    app.rooms
+        .end_run(&board, uuid::Uuid::parse_str(&a1).unwrap());
+    let (revs, _) =
+        visarium::apps::run_state(&app.db, &board, &uuid::Uuid::parse_str(&a1).unwrap())
+            .await
+            .unwrap()
+            .unwrap();
+    app.rooms.request_auto(
+        &board,
+        uuid::Uuid::parse_str(&a1).unwrap(),
+        (me.clone(), None),
+        json!({ "auto": true, "by": me }),
+        visarium::apps::AUTO_DEPTH,
+        revs,
+    );
+    assert_eq!(
+        next_lease(&mut ws, 1000).await.as_deref(),
+        Some(a1.as_str())
+    );
+    let r = post_ops_from(&mut c, &b, Some(socket), vec![out(&a1, 99)]).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json());
+    assert_eq!(next_lease(&mut ws, 2000).await, None);
+    let held = app
+        .rooms
+        .held(&board, uuid::Uuid::parse_str(&a2).unwrap())
+        .unwrap_or_default();
+    assert!(held.contains("chain of 16"), "{held}");
+    let said = c
+        .get(&format!("/api/boards/{b}/items/{a2}/inputs"))
+        .await
+        .json()["held"]
+        .clone();
+    assert!(
+        said.as_str().is_some_and(|s| s.contains("chain of 16")),
+        "{said}"
+    );
+}
+
+#[tokio::test]
 async fn a_duplicated_board_keeps_its_apps_outputs_and_data_links() {
     let (mut c, app, _dir) = signed_in().await;
     let (b, [n, a1, _a2, _k]) = app_board(&mut c).await;
+    // Name and narrow the note's link, and give a1 a literal, before it runs.
+    let feed = snap(&mut c, &b).await["links"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|l| l["linkType"] == "feeds" && l["to"]["itemId"] == a1)
+        .unwrap()["id"]
+        .clone();
+    post_ops(
+        &mut c,
+        &b,
+        vec![
+            json!({ "type": "link.set", "linkId": feed, "linkType": "feeds", "path": "age", "name": "age" }),
+            json!({ "type": "app.set", "itemId": a1, "literals": { "rate": 0.05 } }),
+        ],
+    )
+    .await;
     run_and_post(
         &mut c,
         &app,
@@ -5383,8 +6023,20 @@ async fn a_duplicated_board_keeps_its_apps_outputs_and_data_links() {
         .find(|i| i["ref"] == "n1")
         .unwrap();
     assert_eq!(
-        app["appState"]["moved"][0]["itemId"], note["id"],
-        "inputs renamed to the copies"
+        app["appState"]["moved"],
+        json!([{ "itemId": note["id"], "was": 0, "now": 1 }]),
+        "inputs renamed to the copies; its own source and setup kept and matching"
+    );
+    assert_eq!(app["content"]["literals"], json!({ "rate": 0.05 }));
+    let fed = s["links"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|l| l["linkType"] == "feeds" && l["to"]["itemId"] == app["id"])
+        .unwrap();
+    assert_eq!(
+        (fed["path"].clone(), fed["name"].clone()),
+        (json!("age"), json!("age"))
     );
     let kinds: Vec<(&str, Option<&str>)> = s["links"]
         .as_array()
@@ -5396,6 +6048,59 @@ async fn a_duplicated_board_keeps_its_apps_outputs_and_data_links() {
         kinds.contains(&("feeds", Some("frontmatter"))) && kinds.contains(&("updates", None)),
         "{kinds:?}"
     );
+}
+
+#[tokio::test]
+async fn a_self_hosted_sandbox_hostname_is_framed_only_from_its_board() {
+    // On the board's own origin, app views could reach its pages: refused.
+    let (mut same, dir) = config(false);
+    same.public_url = Some("https://board.example.net".into());
+    same.apps_origin = Some("https://BOARD.example.net/".into());
+    let refused = visarium::open(same).await.err().unwrap().to_string();
+    assert!(refused.contains("must differ"), "{refused}");
+    let _ = std::fs::remove_dir_all(dir);
+
+    let (mut config, dir) = config(true);
+    config.public_url = Some("https://board.example.net".into());
+    config.apps_origin = Some("https://apps.example.net".into());
+    let app = visarium::open(config).await.unwrap();
+    let mut c = Client::new(visarium::router(app.clone()));
+    assert_eq!(
+        c.get("/api/meta").await.json()["appsOrigin"],
+        "https://apps.example.net"
+    );
+    let (b, [_n, a1, _a2, _k]) = app_board(&mut c).await;
+    let m = c
+        .json(
+            "POST",
+            &format!("/api/boards/{b}/items/{a1}/mount"),
+            json!(null),
+        )
+        .await
+        .json();
+    let path = m["url"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("https://apps.example.net")
+        .unwrap()
+        .to_string();
+    let res = visarium::apps::sandbox_router(app.clone())
+        .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let csp = res.headers()["content-security-policy"]
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        csp.ends_with(
+            "frame-ancestors http://127.0.0.1:* http://localhost:* https://board.example.net"
+        ),
+        "{csp}"
+    );
+    assert!(res.headers().get("set-cookie").is_none());
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[tokio::test]
@@ -5416,7 +6121,7 @@ async fn app_views_load_only_from_the_sandbox_origin_with_a_mount_token() {
         .await;
     assert_eq!(refused.status, StatusCode::NOT_FOUND);
     assert!(
-        refused.json().to_string().contains("desktop app"),
+        refused.json().to_string().contains("need a sandbox origin"),
         "{}",
         refused.json()
     );
@@ -5476,8 +6181,20 @@ async fn app_views_load_only_from_the_sandbox_origin_with_a_mount_token() {
     // that is not a colour is left out.
     assert_eq!(
         body,
-        "<!doctype html><html><meta name=\"color-scheme\" content=\"light\"><style>:root{--vk-ink:oklch(0.24 0.008 265);}</style><link rel=\"stylesheet\" href=\"/kit.css\"><body>calc</body></html>"
+        "<!doctype html><html><meta name=\"color-scheme\" content=\"light\"><style data-visarium-kit>:root{--vk-ink:oklch(0.24 0.008 265);}</style><link rel=\"stylesheet\" href=\"/kit.css\"><script src=\"/kit.js\"></script><body>calc</body></html>"
     );
+    // The kit's script, which sends the board snapshots for the card.
+    let (js_status, js_headers, js) = fetch("/kit.js".into()).await;
+    assert_eq!(js_status, StatusCode::OK);
+    assert_eq!(
+        js_headers[header::CONTENT_TYPE],
+        "text/javascript; charset=utf-8"
+    );
+    assert!(js.contains("visarium/card"), "{js}");
+    // The style sheet is on the board's own origin too, for drawing cards, signed in or not.
+    let mut stranger = Client::new(c.router.clone());
+    let board_kit = stranger.get("/api/apps/kit.css").await;
+    assert_eq!(board_kit.status, StatusCode::OK);
     let (kit_status, kit_headers, kit) = fetch("/kit.css".into()).await;
     assert_eq!(kit_status, StatusCode::OK);
     assert_eq!(kit_headers[header::CONTENT_TYPE], "text/css; charset=utf-8");
@@ -5652,4 +6369,373 @@ async fn a_run_ticks_tasks_only_on_the_checklists_its_app_updates() {
     let s = snap(&mut c, &b).await;
     assert_eq!(item(&s, &k)["content"]["tasks"][0].get("byApp"), None);
     let _ = n;
+}
+
+// --- MCP servers as a source (canvas/app-sources) ------------------------------
+
+use fake_mcp::{FakeMcp, fake_mcp};
+
+/// Signed in on an instance whose operator allows these MCP hosts.
+async fn signed_in_allowing(allow: &[&str]) -> (Client, visarium::AppState) {
+    let (mut config, _dir) = config(false);
+    config.mcp_allow = allow.iter().map(|h| h.to_string()).collect();
+    config.apps_origin = Some("http://127.0.0.1:18081".into());
+    let app = visarium::open(config).await.unwrap();
+    let mut c = Client::new(visarium::router(app.clone()));
+    c.get("/api/session").await;
+    let claimed = c
+        .json(
+            "POST",
+            "/api/setup",
+            json!({ "username": "ada", "displayName": "Ada", "password": "correct horse battery" }),
+        )
+        .await;
+    assert_eq!(claimed.status, StatusCode::CREATED);
+    (c, app)
+}
+
+#[tokio::test]
+async fn mcp_connections_reach_only_allowed_hosts_and_keep_their_tokens() {
+    let server = fake_mcp().await;
+    // Host not allowed: refused, naming the allowlist, and nothing is contacted.
+    let (mut c, _app) = signed_in_allowing(&["mcp.example.com"]).await;
+    let (b, _) = app_board(&mut c).await;
+    let r = c
+        .json(
+            "POST",
+            &format!("/api/boards/{b}/mcp"),
+            json!({ "url": server.url }),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.json());
+    assert!(
+        r.json()["detail"]
+            .as_str()
+            .unwrap()
+            .contains("VISARIUM_MCP_ALLOW: mcp.example.com")
+    );
+    // A local command is the desktop's alone.
+    let r = c
+        .json(
+            "POST",
+            &format!("/api/boards/{b}/mcp"),
+            json!({ "command": "node server.js" }),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+
+    // Private address: an allowed name resolving to loopback is refused...
+    let (mut c, _app) = signed_in_allowing(&["localhost"]).await;
+    let (b, _) = app_board(&mut c).await;
+    let r = c
+        .json(
+            "POST",
+            &format!("/api/boards/{b}/mcp"),
+            json!({ "url": server.url }),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.json());
+    assert!(
+        r.json()["detail"]
+            .as_str()
+            .unwrap()
+            .contains("private address"),
+        "{}",
+        r.json()
+    );
+
+    // ...unless the operator lists that address too.
+    let (mut c, app) = signed_in_allowing(&["localhost", "127.0.0.1", "::1"]).await;
+    let (b, _) = app_board(&mut c).await;
+    let r = c
+        .json(
+            "POST",
+            &format!("/api/boards/{b}/mcp"),
+            json!({ "url": server.url, "token": "Bearer s3cret-token" }),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json());
+    let tools = r.json()["tools"].clone();
+    assert_eq!(tools[0]["resourceUri"], "ui://price/view");
+    // The token never comes back.
+    let listed = c.get(&format!("/api/boards/{b}/mcp")).await;
+    assert_eq!(listed.json()["connections"][0]["hasToken"], true);
+    assert!(!String::from_utf8_lossy(&listed.body).contains("s3cret"));
+    let snap = c.get(&format!("/api/boards/{b}/snapshot")).await;
+    assert!(!String::from_utf8_lossy(&snap.body).contains("s3cret"));
+    assert_eq!(count(&app, "SELECT count(*) FROM mcp_connection").await, 1);
+    server.stop.abort();
+}
+
+/// A board with an MCP connection to `server`, and app `a` made from its
+/// `price` tool and view, fed n's frontmatter age: what the add menu does.
+async fn mcp_app(c: &mut Client, server: &FakeMcp, tool: &str) -> (String, String, String, String) {
+    let (b, ids) = app_board(c).await;
+    let conn = c
+        .json(
+            "POST",
+            &format!("/api/boards/{b}/mcp"),
+            json!({ "url": server.url }),
+        )
+        .await
+        .json()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let sha = c
+        .json(
+            "POST",
+            &format!("/api/boards/{b}/mcp/{conn}/resource"),
+            json!({ "uri": "ui://price/view" }),
+        )
+        .await
+        .json()["sha256"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let a = uuid::Uuid::now_v7().to_string();
+    let r = post_ops(
+        c,
+        &b,
+        vec![
+            create(&a, json!({ "kind": "app", "title": "Price", "run": "manual",
+                "mcp": { "connection": conn, "resourceUri": "ui://price/view", "tool": tool, "sha256": sha } })),
+            json!({ "type": "link.add", "linkId": uuid::Uuid::now_v7(), "from": { "itemId": ids[0] },
+                    "to": { "itemId": a }, "linkType": "feeds", "view": "frontmatter", "path": "age", "name": "age" }),
+        ],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json());
+    (b, a, conn, sha)
+}
+
+#[tokio::test]
+async fn an_mcp_apps_view_is_pinned_and_calls_only_tools_visible_to_apps() {
+    let server = fake_mcp().await;
+    let (mut c, app) = signed_in_allowing(&["localhost", "127.0.0.1", "::1"]).await;
+    let (b, a, _conn, sha) = mcp_app(&mut c, &server, "price").await;
+
+    // Its view is the pinned HTML, under a policy widened only by what it declares.
+    let mount = c
+        .json(
+            "POST",
+            &format!("/api/boards/{b}/items/{a}/mount"),
+            json!(null),
+        )
+        .await;
+    assert_eq!(mount.status, StatusCode::OK, "{}", mount.json());
+    let pinned = visarium::mcp::view_of(
+        &app.db,
+        &visarium::apps::McpSource {
+            connection: String::new(),
+            resource_uri: String::new(),
+            tool: None,
+            sha256: sha.clone(),
+        },
+    )
+    .await
+    .unwrap();
+    assert!(pinned.0.contains("<p>v1</p>"));
+    let csp = visarium::mcp::view_csp(None, &pinned.1);
+    assert!(csp.contains("connect-src https://api.example.com"), "{csp}");
+
+    // Resource changed upstream: a3 keeps v1 and offers the update.
+    *server.html.lock().unwrap() = "<!doctype html><title>Price</title><p>v2</p>".into();
+    c.json(
+        "POST",
+        &format!("/api/boards/{b}/items/{a}/mount"),
+        json!(null),
+    )
+    .await;
+    let mut update = Value::Null;
+    for _ in 0..100 {
+        update = c
+            .get(&format!("/api/boards/{b}/items/{a}/inputs"))
+            .await
+            .json()["mcp"]["updateAvailable"]
+            .clone();
+        if update.is_string() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let new = update.as_str().expect("an update is offered").to_string();
+    let snap = c.get(&format!("/api/boards/{b}/snapshot")).await.json();
+    let item = snap["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["id"] == a)
+        .unwrap()
+        .clone();
+    assert_eq!(item["content"]["mcp"]["sha256"], sha, "still pinned");
+    // A person applies it.
+    let r = post_ops(
+        &mut c,
+        &b,
+        vec![json!({ "type": "app.set", "itemId": a, "mcpSha256": new })],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json());
+    let inputs = c
+        .get(&format!("/api/boards/{b}/items/{a}/inputs"))
+        .await
+        .json();
+    assert_eq!(inputs["mcp"]["sha256"], new);
+    assert_eq!(inputs["mcp"]["updateAvailable"], Value::Null);
+    assert!(!inputs.to_string().contains("token"));
+
+    // Tool not visible to apps: refused, and the server is not called.
+    let before = server.calls.load(std::sync::atomic::Ordering::SeqCst);
+    let r = c
+        .json(
+            "POST",
+            &format!("/api/boards/{b}/items/{a}/mcp"),
+            json!({ "method": "tools/call", "params": { "name": "secret", "arguments": {} } }),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.json());
+    assert_eq!(
+        server.calls.load(std::sync::atomic::Ordering::SeqCst),
+        before
+    );
+    let r = c
+        .json("POST", &format!("/api/boards/{b}/items/{a}/mcp"),
+            json!({ "method": "tools/call", "params": { "name": "price", "arguments": { "age": 40 } } }))
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json());
+    assert_eq!(r.json()["structuredContent"]["premium"], 1200);
+    server.stop.abort();
+}
+
+async fn until_output(
+    app: &visarium::AppState,
+    item: &str,
+    version: i64,
+) -> (String, String, Option<String>) {
+    for _ in 0..200 {
+        let row: Option<(String, String, Option<String>)> = sqlx::query_as(
+            "SELECT status, outputs, error FROM app_output WHERE item_id = ? AND version = ?",
+        )
+        .bind(item)
+        .bind(version)
+        .fetch_optional(&app.db)
+        .await
+        .unwrap();
+        if let Some(r) = row {
+            return r;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    panic!("no output v{version} for {item}");
+}
+
+#[tokio::test]
+async fn a_tool_backed_app_runs_on_the_server_with_nobody_around() {
+    let server = fake_mcp().await;
+    let (mut c, app) = signed_in_allowing(&["localhost", "127.0.0.1", "::1"]).await;
+    let (b, a, _conn, _) = mcp_app(&mut c, &server, "price").await;
+    let board = uuid::Uuid::parse_str(&b).unwrap();
+    let id = uuid::Uuid::parse_str(&a).unwrap();
+    // Nobody has the board open, and nobody can run an inline app...
+    assert!(!app.rooms.can_run(&board, id));
+    // ...but a tool-backed one runs on the server: inputs in, structured content out.
+    let (stamps, _) = visarium::apps::run_state(&app.db, &board, &id)
+        .await
+        .unwrap()
+        .unwrap();
+    let user: String = sqlx::query_scalar("SELECT id FROM app_user LIMIT 1")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    let g = visarium::mcp::grant(
+        &app,
+        &board,
+        id,
+        (user.clone(), Some("Claude".into())),
+        None,
+        stamps,
+    )
+    .await;
+    assert!(
+        matches!(g, Some(visarium::realtime::RunGrant::Leased(h)) if h == visarium::realtime::SERVER)
+    );
+    let (status, outputs, _) = until_output(&app, &a, 1).await;
+    assert_eq!(status, "ok");
+    assert_eq!(
+        serde_json::from_str::<Value>(&outputs).unwrap(),
+        json!({ "premium": 1020 })
+    );
+
+    // Tool error: an error version, and the ok outputs before it stay readable.
+    sqlx::query("UPDATE canvas_item SET body = json_set(body, '$.mcp.tool', 'fail') WHERE id = ?")
+        .bind(&a)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let edit = post_ops(
+        &mut c,
+        &b,
+        vec![json!({ "type": "app.set", "itemId": a, "literals": { "x": 1 } })],
+    )
+    .await;
+    assert_eq!(edit.status, StatusCode::OK, "{}", edit.json());
+    let (stamps, _) = visarium::apps::run_state(&app.db, &board, &id)
+        .await
+        .unwrap()
+        .unwrap();
+    visarium::mcp::grant(&app, &board, id, (user.clone(), None), None, stamps).await;
+    let (status, _, error) = until_output(&app, &a, 2).await;
+    assert_eq!(
+        (status.as_str(), error.as_deref()),
+        ("error", Some("rates are down"))
+    );
+    let (_, outputs, _) = until_output(&app, &a, 1).await;
+    assert!(outputs.contains("1020"));
+
+    // Server gone: the run ends unavailable.
+    server.stop.abort();
+    let _ = server.stop.await;
+    let edit = post_ops(
+        &mut c,
+        &b,
+        vec![json!({ "type": "app.set", "itemId": a, "literals": { "x": 2 } })],
+    )
+    .await;
+    assert_eq!(edit.status, StatusCode::OK);
+    let (stamps, _) = visarium::apps::run_state(&app.db, &board, &id)
+        .await
+        .unwrap()
+        .unwrap();
+    visarium::mcp::grant(&app, &board, id, (user, None), None, stamps).await;
+    let (status, _, error) = until_output(&app, &a, 3).await;
+    assert_eq!(status, "error");
+    assert!(error.unwrap().starts_with("unavailable"));
+}
+
+#[tokio::test]
+async fn the_desktop_runs_a_local_mcp_server_the_person_names() {
+    let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../web/e2e/fixtures/mcp/server.mjs")
+        .canonicalize()
+        .unwrap();
+    let (mut config, _dir) = config(true);
+    config.mcp_local = true;
+    let app = visarium::open(config).await.unwrap();
+    let mut c = Client::new(visarium::router(app.clone()));
+    c.get("/api/session").await;
+    let (b, _) = app_board(&mut c).await;
+    let r = c
+        .json(
+            "POST",
+            &format!("/api/boards/{b}/mcp"),
+            json!({ "command": format!("node {} --stdio", script.display()) }),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json());
+    assert_eq!(r.json()["tools"][0]["name"], "quote");
+    assert_eq!(
+        c.get(&format!("/api/boards/{b}/mcp")).await.json()["local"],
+        true
+    );
 }

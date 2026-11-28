@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Quote</title></head>
+<body>
+<!-- An MCP app's view (MCP Apps): shows the quote tool's latest result, and
+     calls the server's tools from inside the view through the host. -->
+<p class="label">Premium</p>
+<p class="figure" id="premium">–</p>
+<div class="row">
+  <button type="button" id="roll">Roll</button>
+  <button type="button" id="secret">Secret</button>
+</div>
+<p class="muted" id="said"></p>
+<script>
+let n = 0;
+const pending = {};
+const send = (m) => parent.postMessage({ jsonrpc: '2.0', ...m }, '*');
+const request = (method, params) =>
+  new Promise((resolve) => { const id = ++n; pending[id] = resolve; send({ id, method, params }); });
+
+addEventListener('message', (e) => {
+  const m = e.data;
+  if (m?.jsonrpc !== '2.0') return;
+  if (m.id !== undefined && !m.method) { pending[m.id]?.(m); delete pending[m.id]; return; }
+  if (m.method === 'ui/resource-teardown') return send({ id: m.id, result: {} });
+  if (m.method === 'ui/notifications/tool-result') {
+    const p = m.params?.structuredContent?.premium;
+    document.getElementById('premium').textContent = p ?? '–';
+  }
+});
+
+const call = async (name) => {
+  const r = await request('tools/call', { name, arguments: {} });
+  document.getElementById('said').textContent = r.error
+    ? `refused: ${r.error.message}`
+    : `${name}: ${r.result.structuredContent?.value ?? JSON.stringify(r.result.structuredContent)}`;
+};
+document.getElementById('roll').onclick = () => call('roll');
+document.getElementById('secret').onclick = () => call('secret');
+
+(async () => {
+  await request('ui/initialize', {
+    appInfo: { name: 'quote-view', version: '1' },
+    appCapabilities: {},
+    protocolVersion: '2026-01-26',
+  });
+  send({ method: 'ui/notifications/initialized' });
+})();
+</script>
+</body>
+</html>

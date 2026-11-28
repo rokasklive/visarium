@@ -43,6 +43,14 @@ export function isObject(item: CanvasItem): boolean {
  * `request` then lays each out again while its last drawing stays on screen,
  * and the bitmap cache, keyed off this, keeps one bitmap per theme.
  */
+/** A short, stable stand-in for a card's picture in a layout key. */
+function cardKey(card: string | null | undefined): string {
+  if (!card) return '';
+  let h = 0x811c9dc5;
+  for (let i = 0; i < card.length; i++) h = Math.imul(h ^ card.charCodeAt(i), 0x01000193);
+  return `${card.length}:${(h >>> 0).toString(36)}`;
+}
+
 export function layoutKey(item: CanvasItem, appState?: AppState): string {
   const c = item.content;
   // The width it is laid out at: a corner resize that scales the text keeps
@@ -57,7 +65,7 @@ export function layoutKey(item: CanvasItem, appState?: AppState): string {
       return `${w}|c|${JSON.stringify([c.title, c.tasks.map((t) => [t.id, t.text, t.state])])}`;
     case 'app':
       // Its box is its frame, so its height is part of what is drawn.
-      return `${w}|a|${item.transform.height}|${c.title}|${c.output?.version ?? 0}|${JSON.stringify(appState ?? null)}`;
+      return `${w}|a|${item.transform.height}|${c.title}|${c.output?.version ?? 0}|${cardKey(c.output?.card)}|${JSON.stringify(appState ?? null)}`;
     default:
       return `${w}|${c.kind}`;
   }

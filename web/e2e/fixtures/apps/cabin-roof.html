@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Roof layout</title></head>
+<body>
+<script type="application/json" id="visarium-inputs">
+[{ "name": "site", "description": "The site's frontmatter: panels, roof_width_m, roof_depth_m" }]
+</script>
+<div class="row" style="justify-content: space-between">
+  <span class="label">South roof, to scale</span>
+  <span class="badge" id="fit">–</span>
+</div>
+<svg class="chart" id="roof" style="height: 122px; margin-top: 6px" role="img" aria-label="Panels laid out on the roof"><title>Roof layout</title></svg>
+<p class="muted" id="note"></p>
+<script>
+const PW = 1.13, PH = 1.72, GAP = 0.05, EDGE = 0.4; // a 400 W panel, metres; fire setback at the edges
+function compute(a) {
+  const want = num(a.site?.panels), w = num(a.site?.roof_width_m), d = num(a.site?.roof_depth_m);
+  if (!want || !w || !d) return { missing: 'link the site note\'s frontmatter as site' };
+  const cols = Math.max(0, Math.floor((w - 2 * EDGE + GAP) / (PW + GAP)));
+  const rows = Math.max(0, Math.floor((d - 2 * EDGE + GAP) / (PH + GAP)));
+  const max = cols * rows;
+  return { want, w, d, cols, rows, max, outputs: { fits: want <= max, max, wanted: want },
+    text: want <= max ? `${want} panels fit; room for ${max}` : `Only ${max} of ${want} panels fit` };
+}
+function draw(r) {
+  const svg = document.getElementById('roof');
+  if (!r || r.missing) { document.getElementById('note').textContent = r?.missing ?? ''; return; }
+  const k = Math.min(330 / r.w, 100 / r.d), H = r.d * k;
+  let s = `<title>Roof layout</title><rect x="0" y="0" width="${r.w * k}" height="${H}" rx="4" style="fill:var(--vk-sunken);stroke:var(--vk-line-strong)"/>`;
+  s += `<rect x="${EDGE * k}" y="${EDGE * k}" width="${(r.w - 2 * EDGE) * k}" height="${(r.d - 2 * EDGE) * k}" class="grid" style="fill:none;stroke-dasharray:4 3"/>`;
+  let placed = 0;
+  for (let row = 0; row < r.rows; row++)
+    for (let col = 0; col < r.cols; col++) {
+      const used = placed < r.want;
+      const x = (EDGE + col * (PW + GAP)) * k, y = (EDGE + row * (PH + GAP)) * k;
+      s += used
+        ? `<rect class="mark series-1" x="${x}" y="${y}" width="${PW * k}" height="${PH * k}" rx="2"><title>Panel ${placed + 1}</title></rect>` +
+          `<line x1="${x}" x2="${x + PW * k}" y1="${y + (PH * k) / 2}" y2="${y + (PH * k) / 2}" style="stroke:var(--vk-surface);stroke-width:1"/>`
+        : `<rect x="${x}" y="${y}" width="${PW * k}" height="${PH * k}" rx="2" class="grid" style="fill:none;stroke-dasharray:2 2"/>`;
+      if (used) placed++;
+    }
+  s += `<text x="${(r.w * k) / 2}" y="${H + 14}" text-anchor="middle">${fmt(r.w, 1)} m</text>`;
+  svg.setAttribute('viewBox', `-2 -2 ${r.w * k + 4} ${H + 20}`);
+  svg.innerHTML = s;
+  const f = document.getElementById('fit');
+  f.textContent = r.want <= r.max ? `${r.want} of ${r.max} spaces` : `${r.max} fit, ${r.want} wanted`;
+  f.className = `badge ${r.want <= r.max ? 'is-good' : 'is-bad'}`;
+  document.getElementById('note').textContent = `${r.cols} across, ${r.rows} up, 40 cm kept clear at the edges.`;
+}
+</script>
+<script>
+// The MCP Apps bridge every demo app shares: inputs arrive as tool-input or
+// inputs-changed; a run computes, publishes outputs and may propose tasks.
+let n = 0;
+const pending = {};
+const send = (m) => parent.postMessage({ jsonrpc: '2.0', ...m }, '*');
+const request = (method, params) =>
+  new Promise((resolve) => { const id = ++n; pending[id] = resolve; send({ id, method, params }); });
+let args = {};
+const num = (v) => { const x = Number(String(v ?? '').replace(/[^0-9.-]/g, '')); return Number.isFinite(x) ? x : 0; };
+const fmt = (x, d = 0) => x.toLocaleString('en-US', { maximumFractionDigits: d, minimumFractionDigits: d });
+addEventListener('message', async (e) => {
+  const m = e.data;
+  if (m?.jsonrpc !== '2.0') return;
+  if (m.id !== undefined && !m.method) { pending[m.id]?.(m); delete pending[m.id]; return; }
+  if (m.method === 'ui/resource-teardown') return send({ id: m.id, result: {} });
+  if (m.method === 'ui/notifications/tool-input' || m.method === 'visarium/notifications/inputs-changed') {
+    args = m.params.arguments || {}; draw(compute(args)); return;
+  }
+  if (m.method !== 'visarium/notifications/run') return;
+  args = m.params.arguments || {};
+  const r = compute(args);
+  draw(r);
+  if (!r || r.missing) {
+    await request('visarium/outputs/publish', { outputs: {}, status: 'error', error: r?.missing ?? 'nothing to compute from' });
+    return;
+  }
+  await request('visarium/outputs/publish', { outputs: r.outputs, text: r.text });
+  if (r.changes) await request('visarium/items/propose', { changes: r.changes });
+});
+(async () => {
+  await request('ui/initialize', { appInfo: { name: document.title, version: '1' }, appCapabilities: {}, protocolVersion: '2026-01-26' });
+  send({ method: 'ui/notifications/initialized' });
+})();
+</script>
+</body>
+</html>
