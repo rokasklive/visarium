@@ -18,10 +18,10 @@
 <script>
 const RATE = 30; // per year of age
 let n = 0;
-const pending = {};
+const pending = new Map();
 const send = (m) => parent.postMessage({ jsonrpc: '2.0', ...m }, '*');
 const request = (method, params) =>
-  new Promise((resolve) => { const id = ++n; pending[id] = resolve; send({ id, method, params }); });
+  new Promise((resolve) => { const id = ++n; pending.set(id, resolve); send({ id, method, params }); });
 
 /** The fed note's frontmatter, whatever its ref: the first `*.frontmatter` input. */
 const policy = (args) => {
@@ -40,7 +40,7 @@ const show = (args) => {
 addEventListener('message', async (e) => {
   const m = e.data;
   if (m?.jsonrpc !== '2.0') return;
-  if (m.id !== undefined && !m.method) { pending[m.id]?.(m); delete pending[m.id]; return; }
+  if (m.id !== undefined && !m.method) { pending.get(m.id)?.(m); pending.delete(m.id); return; }
   if (m.method === 'ui/resource-teardown') return send({ id: m.id, result: {} });
   if (m.method === 'ui/notifications/tool-input' || m.method === 'visarium/notifications/inputs-changed')
     return show(m.params.arguments);
